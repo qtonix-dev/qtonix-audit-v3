@@ -1708,7 +1708,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         const LOW_QUALITY = new Set(['ni', 'cold', 'release']);
         const CONVERTED = new Set(['converted', 'won']);
         const stats = {};
-        for (const m of team) stats[m.name] = { name: m.name, monthlyTarget: m.monthlyTarget || 0, today: 0, month: 0, total: 0, convertedMonth: 0, qualityMonth: 0 };
+        for (const m of team) stats[m.name] = { name: m.name, monthlyTarget: m.monthlyTarget || 0, today: 0, month: 0, total: 0, convertedMonth: 0, qualityMonth: 0, transferredMonth: 0 };
         for (const l of leads) {
           if (!isPresales(l.leadSource)) continue;
           const g = normG(l.generatedBy);
@@ -1722,6 +1722,12 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
             if (!LOW_QUALITY.has(l.status)) stats[g].qualityMonth++;
           }
           if (genAt >= startOfDay) stats[g].today++;
+          // Transferred: a pre-sales lead this member generated that was promoted
+          // (transferredAt) this month.
+          if (l.transferredAt) {
+            const tAt = new Date(l.transferredAt);
+            if (!Number.isNaN(tAt.getTime()) && tAt >= startOfMonth) stats[g].transferredMonth++;
+          }
         }
         const members = Object.values(stats)
           .map((t) => ({ ...t, pct: t.monthlyTarget > 0 ? Math.round((t.month / t.monthlyTarget) * 100) : null }))
@@ -1732,6 +1738,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
           teamToday: members.reduce((s, m) => s + m.today, 0),
           teamConvertedMonth: members.reduce((s, m) => s + (m.convertedMonth || 0), 0),
           teamQualityMonth: members.reduce((s, m) => s + (m.qualityMonth || 0), 0),
+          teamTransferredMonth: members.reduce((s, m) => s + (m.transferredMonth || 0), 0),
           teamMonthlyTarget: members.reduce((s, m) => s + (m.monthlyTarget || 0), 0),
         };
       }
@@ -1921,6 +1928,10 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         leadsThisMonth: leadsGeneratedMonthTotal, leadsLastMonth: lastMonthLeads,
         leadsDeltaPct: lastMonthLeads > 0
           ? Math.round(((leadsGeneratedMonthTotal - lastMonthLeads) / lastMonthLeads) * 100) : null,
+        // Hero also shows Target and Pipeline (role-scoped).
+        targetUsd: Math.round(scopeTarget),
+        targetPct: scopeTarget > 0 ? Math.round((scopeAchieved / scopeTarget) * 100) : null,
+        pipelineUsd: Math.round(pipelineUsd),
       },
       rates: {
         conversionRate: pct1(conversionRate),

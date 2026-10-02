@@ -601,21 +601,31 @@ function DashHero({ greeting, name, scopeLabel, deltas }) {
       <div className="relative">
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">{greeting}, {name} 👋</h1>
         <div className="text-slate-300 text-sm mt-1">{scopeLabel}</div>
-        <div className="flex flex-wrap gap-x-8 gap-y-4 mt-5">
-          <div className="min-w-[110px]">
+        <div className="flex flex-wrap gap-x-7 gap-y-4 mt-5">
+          <div className="min-w-[108px]">
             <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Collected</div>
             <div className="text-2xl font-extrabold mt-0.5">{usd(d.collectedThisMonthUsd || 0)}</div>
-            <div className="text-[11px] mt-0.5">{deltaStr(d.collectedDeltaPct, { pct: true }) || <span className="text-slate-400">vs last month</span>} <span className="text-slate-400">vs last mo</span></div>
+            <div className="text-[11px] mt-0.5">{deltaStr(d.collectedDeltaPct, { pct: true }) || <span className="text-slate-400">—</span>} <span className="text-slate-400">vs last mo</span></div>
           </div>
-          <div className="min-w-[90px]">
+          <div className="min-w-[108px]">
+            <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Target</div>
+            <div className="text-2xl font-extrabold mt-0.5">{d.targetUsd ? usd(d.targetUsd) : '—'}</div>
+            <div className="text-[11px] mt-0.5 text-slate-300">{d.targetPct != null ? `${d.targetPct}% achieved` : 'No target set'}</div>
+          </div>
+          <div className="min-w-[88px]">
             <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Converted</div>
             <div className="text-2xl font-extrabold mt-0.5">{d.convertedThisMonth || 0}</div>
             <div className="text-[11px] mt-0.5">{deltaStr(d.convertedDelta) || <span className="text-slate-400">—</span>} <span className="text-slate-400">vs last mo</span></div>
           </div>
-          <div className="min-w-[90px]">
+          <div className="min-w-[88px]">
             <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Leads</div>
             <div className="text-2xl font-extrabold mt-0.5">{d.leadsThisMonth || 0}</div>
             <div className="text-[11px] mt-0.5">{deltaStr(d.leadsDeltaPct, { pct: true }) || <span className="text-slate-400">—</span>} <span className="text-slate-400">vs last mo</span></div>
+          </div>
+          <div className="min-w-[88px]">
+            <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Pipeline</div>
+            <div className="text-2xl font-extrabold mt-0.5">{usd(d.pipelineUsd || 0)}</div>
+            <div className="text-[11px] mt-0.5 text-slate-400">open deals</div>
           </div>
         </div>
       </div>
@@ -689,6 +699,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
   // whole team's; an agent sees only their own.
   const [missed, setMissed] = useState(null);
   const [missedModal, setMissedModal] = useState(null); // { ownerId } | null
+  const [missedFilter, setMissedFilter] = useState(null); // ownerId filter for the inline list | null = all
   const [celebrations, setCelebrations] = useState([]);
   // Refresh celebrations on load, on window focus, and hourly, so date-specific
   // cards (birthday/anniversary) clear at the day boundary without a reload.
@@ -837,41 +848,47 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
           agreed time without being completed. Surfaced prominently because a
           missed call is a lead going cold. */}
       {missed && missed.stillOpen > 0 ? (
-        <div className="rounded-xl border border-red-200 bg-red-50/60 p-4">
-          <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+        <div className="rounded-xl border border-slate-200/70 bg-white p-4">
+          <div className="flex items-center justify-between gap-3 mb-2">
             <div>
-              <div className="text-[11px] font-bold uppercase tracking-wide text-red-700">
-                ⚠️ Missed commitments · {missed.stillOpen}
-              </div>
-              <div className="text-[11px] text-red-600">
-                Scheduled calls and tasks more than an hour past their agreed time, still not completed.
-              </div>
+              <div className="text-[14px] font-bold text-slate-900">⚠️ Missed commitments</div>
+              <div className="text-[11px] text-slate-400">Calls &amp; tasks past their agreed time</div>
             </div>
-            {(isAdmin || isManager) && missed.byOwner.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1.5">
-                {missed.byOwner.slice(0, 5).map((o) => (
-                  <button key={o.ownerId} onClick={() => setMissedModal({ ownerId: o.ownerId })}
-                    className="rounded-md bg-white border border-red-200 px-2 py-1 text-[10px] font-bold text-red-700 hover:bg-red-100 transition-colors">
-                    {o.ownerName} · {o.missed}
-                  </button>
-                ))}
-                <button onClick={() => setMissedModal({ ownerId: null })}
-                  className="rounded-md bg-red-600 text-white px-2.5 py-1 text-[10px] font-bold hover:bg-red-700 transition-colors">View all →</button>
-              </div>
-            )}
+            <span className="shrink-0 text-[11px] font-bold rounded-full px-2.5 py-0.5 bg-red-50 text-red-700 ring-1 ring-red-200">{missed.stillOpen} overdue</span>
           </div>
-          <div className="space-y-1 max-h-40 overflow-auto">
-            {missed.items.filter((i) => !i.resolved).slice(0, 8).map((i) => (
-              <div key={i.activityId}
-                className="flex items-center gap-2 bg-white rounded-lg px-3 py-1.5 text-[11px] hover:bg-red-50 transition-colors group">
-                <span className="cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>{i.kind === 'call' ? '📞' : i.kind === 'draft' ? '✍️' : '✅'}</span>
-                <span className="font-bold text-[#050A1F] truncate max-w-[160px] cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>{i.leadName}</span>
-                <span className="text-slate-500 truncate flex-1 cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>{i.title}</span>
-                {(isAdmin || isManager) && <span className="text-slate-400 shrink-0">{i.ownerName}</span>}
-                <span className="font-bold text-red-600 shrink-0">{i.hoursLate}h late</span>
+          {/* Top filter tabs: All + per-owner, plus View all (admins & managers). */}
+          {(isAdmin || isManager) && missed.byOwner.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
+              <button onClick={() => setMissedFilter(null)}
+                className={`rounded-full px-2.5 py-1 text-[10px] font-bold transition ${missedFilter == null ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>All</button>
+              {missed.byOwner.slice(0, 5).map((o) => (
+                <button key={o.ownerId} onClick={() => setMissedFilter(o.ownerId)}
+                  className={`rounded-full px-2.5 py-1 text-[10px] font-bold transition ${missedFilter === o.ownerId ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                  {o.ownerName} · {o.missed}
+                </button>
+              ))}
+              <button onClick={() => setMissedModal({ ownerId: null })}
+                className="ml-auto rounded-full px-2.5 py-1 text-[10px] font-bold text-orange-700 bg-orange-50 ring-1 ring-orange-200 hover:bg-orange-100">View all →</button>
+            </div>
+          )}
+          <div className="space-y-1.5 max-h-56 overflow-auto">
+            {missed.items
+              .filter((i) => !i.resolved)
+              .filter((i) => missedFilter == null || i.ownerId === missedFilter)
+              .slice(0, 8).map((i) => (
+              <div key={i.activityId} className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-50 transition-colors">
+                <div className="w-8 h-8 rounded-[10px] flex items-center justify-center font-bold text-[12px] shrink-0 bg-red-100 text-red-800">{initials(i.leadName)}</div>
+                <div className="min-w-0 flex-1 cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>
+                  <div className="text-[13px] font-bold text-slate-900 truncate">{i.kind === 'call' ? 'Call' : i.kind === 'draft' ? 'Draft' : 'Task'} · {i.leadName}</div>
+                  <div className="text-[11px] text-slate-400 truncate">
+                    {i.title ? `${i.title} · ` : ''}{i.hoursLate}h overdue{(isAdmin || isManager) && i.ownerName ? ` · ${i.ownerName}` : ''}
+                  </div>
+                </div>
+                <button onClick={() => onViewToday && onViewToday(i.leadId)}
+                  className="shrink-0 rounded-lg bg-slate-900 text-white px-3 py-1.5 text-[11px] font-bold hover:bg-slate-700 transition">Open</button>
                 {user.role === 'admin' && (
                   <button title="Clear from missed commitments" onClick={async (e) => { e.stopPropagation(); try { await api(`/leads/missed-activities/${i.leadId}/dismiss`, { method: 'POST', body: JSON.stringify({ activityId: i.activityId }) }); setMissed((prev) => prev ? { ...prev, items: prev.items.filter((x) => x.activityId !== i.activityId), stillOpen: Math.max(0, prev.stillOpen - 1) } : prev); } catch { /* */ } }}
-                    className="shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600">×</button>
+                    className="shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-slate-300 hover:bg-red-100 hover:text-red-600">×</button>
                 )}
               </div>
             ))}
@@ -989,67 +1006,8 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
         />
       )}
 
-      <SectionLabel right={<span className="text-[11px] text-slate-400">by source</span>}>Lead generation</SectionLabel>
-      {/* Lead generation — Leads this month (stacked bars) + Lead trend (stacked
-          bars), split by pre-sales / cold-calling / transferred. */}
-      <div className="grid lg:grid-cols-2 gap-4">
-        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-[15px] font-bold text-slate-900">Leads this month</h2>
-            <span className="text-xs text-slate-400">Daily · by source</span>
-          </div>
-          <LeadDailyChart daily={data.leadDaily} />
-        </div>
-        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-[15px] font-bold text-slate-900">Lead trend</h2>
-            <span className="text-xs text-slate-400">Last 6 months · by source</span>
-          </div>
-          <LeadMonthlyChart monthly={data.leadMonthly} />
-        </div>
-      </div>
-
-      {/* Pipeline & intake — the sales split, collections, and today's lead
-          mini-lists (kept from the operational dashboard). */}
-      <SectionLabel>Pipeline &amp; intake</SectionLabel>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {me && me.leadGenTarget > 0 ? (
-          <GoalStat label="Leads generated" achieved={me.leadsGeneratedMonth} target={me.leadGenTarget} unit="#"
-            accent="#0891B2" motivational="Add your first lead of the month! 🎯" remainingLabel />
-        ) : (
-          <PlainStat label="Leads generated" value={m.leadsGeneratedMonth} sub={`${m.generatedToday} today · ${m.leadsAssignedMonth} assigned`} accent="#0891B2" />
-        )}
-        <PlainStat label="New sales" value={usd(m.newSalesUsd)} sub={`${m.newSalesCount} first-time`} accent="#2563EB" />
-        <PlainStat label="Cross sales" value={usd(m.crossSalesUsd)} sub={`${m.crossSalesCount} repeat/upsell`} accent="#7C3AED" />
-        <PlainStat label="Awaiting collection" value={usd(m.awaitingUsd)}
-          sub={awaiting.length ? `${awaiting.length} payment${awaiting.length === 1 ? '' : 's'} pending` : 'Nothing outstanding'}
-          accent="#DC2626"
-          onClick={(isAdmin || isManager) && awaiting.length ? () => setShowAwaiting(true) : undefined}
-          cta={(isAdmin || isManager) && awaiting.length ? 'Follow up' : undefined} />
-      </div>
-
-      {/* ADMIN — deals with a payment due today, grouped by agent. */}
-      {(isAdmin || isManager) && (data.dueToday || []).length > 0 && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50/40 p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <span className="text-lg">📅</span>
-            <span className="text-sm font-extrabold text-[#050A1F]">Deals due today</span>
-            <span className="text-[11px] font-bold rounded-full px-2 py-0.5 bg-amber-100 text-amber-700">{data.dueToday.length}</span>
-          </div>
-          <div className="space-y-1.5 max-h-64 overflow-y-auto">
-            {data.dueToday.map((d) => (
-              <button key={`${d.leadId}_${d.dealId}_${d.instId}`} onClick={() => onOpenLead && onOpenLead(d.leadId)}
-                className="w-full flex items-center justify-between gap-3 rounded-lg bg-white border border-amber-100 px-3 py-2 text-left hover:border-amber-300 transition">
-                <div className="min-w-0">
-                  <div className="text-sm font-bold text-slate-700 truncate">{d.client}{d.dealName ? ` · ${d.dealName}` : ''}</div>
-                  <div className="text-[11px] text-slate-400">Agent: {d.ownerName || '—'}{d.seq ? ` · Installment ${d.seq}` : ''}</div>
-                </div>
-                <div className="text-sm font-extrabold text-amber-700 shrink-0">{d.currency || ''} {Number(d.amount || 0).toLocaleString()}</div>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* INTAKE — today's leads + untouched 3+ days (only). */}
+      <SectionLabel>Intake</SectionLabel>
       <div className="grid md:grid-cols-2 gap-4">
         {(() => {
           const todayItems = [...(lists.generatedToday || []), ...(lists.assignedToday || [])];
@@ -1129,14 +1087,17 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
           ) : <div className="text-sm text-slate-400 mt-2">No team sales yet this month.</div>}
         </div>
         {/* Most conversions this month */}
-        {recognition.mostConversions ? (
-          <RecognitionBox emoji="🎯" kicker="Most conversions" kColor="#15803d"
-            borderColor="#bbf7d0" bg="linear-gradient(135deg,#f0fdf4,#ecfdf5)"
-            name={recognition.mostConversions.name} src={recognition.mostConversions.avatar} logo={user && user.companyLogo}
-            sub={`${recognition.mostConversions.conversions} client${recognition.mostConversions.conversions === 1 ? '' : 's'} converted`} />
-        ) : (
-          <div className="rounded-2xl border border-green-100 bg-green-50/40 p-5 flex items-center"><div className="text-[11px] font-extrabold uppercase tracking-wide text-green-700">🎯 Most conversions<div className="text-xs font-normal text-slate-400 mt-2 normal-case">No conversions yet this month.</div></div></div>
-        )}
+        {/* Most conversions — the new conversions done this month (count). */}
+        <div className="relative overflow-hidden rounded-2xl p-4 border" style={{ borderColor: '#bbf7d0', background: 'linear-gradient(135deg,#f0fdf4,#ecfdf5)' }}>
+          <div className="text-[10px] font-extrabold uppercase tracking-wide" style={{ color: '#15803d' }}>🎯 Most conversions</div>
+          <div className="flex items-center gap-3 mt-2.5">
+            <div className="w-10 h-10 rounded-[13px] flex items-center justify-center text-[18px]" style={{ background: '#ccfbf1', color: '#115e59' }}>✓</div>
+            <div className="min-w-0">
+              <div className="text-2xl font-extrabold text-slate-900 leading-none">{m.convertedThisMonth || 0}</div>
+              <div className="text-[11px] text-slate-500 mt-1">new conversion{(m.convertedThisMonth || 0) === 1 ? '' : 's'} this month</div>
+            </div>
+          </div>
+        </div>
         {/* Most transferred this month */}
         {recognition.mostTransferred ? (
           <RecognitionBox emoji="🔀" kicker="Most transferred" kColor="#7c3aed"
@@ -1206,71 +1167,32 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
         </div>
       </div>
 
-      {/* Personal transfer goal (pre-sales only) */}
-      {me && me.transferDailyTarget > 0 && (
-        <GoalStat label="Your call transfers today" achieved={me.transfersToday} target={me.transferDailyTarget} unit="#"
-          accent="#2563EB" motivational="Make your first transfer count! ☎️" />
-      )}
-
-      {/* ROW 9 — Transfer leaderboard */}
-      {transferBoard.length > 0 && (
+      {/* LEAD GENERATION — Leads this month (stacked bars) + Lead trend (stacked
+          bars), split by pre-sales / cold-calling / transferred. */}
+      <SectionLabel right={<span className="text-[11px] text-slate-400">by source</span>}>Lead generation</SectionLabel>
+      <div className="grid lg:grid-cols-2 gap-4">
         <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-[15px] font-bold text-slate-900">Call transfers today</h2>
-            <span className="text-xs text-slate-400">Prospects promoted to leads today</span>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-[15px] font-bold text-slate-900">Leads this month</h2>
+            <span className="text-xs text-slate-400">Daily · by source</span>
           </div>
-          <div className="space-y-2">
-            {transferBoard.map((b, i) => (
-              <div key={b.ownerId} className="p-2 rounded-lg hover:bg-slate-50">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-7 text-center text-base font-extrabold text-slate-400">{medal(i)}</div>
-                  <Avatar name={b.name} src={b.avatar} logo={user && user.companyLogo} size={28} />
-                  <div className="w-32 shrink-0 font-bold text-sm text-[#050A1F] truncate">{b.name}{b.ownerId === user.id ? ' (you)' : ''}</div>
-                  <div className="flex-1"><div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${b.pct != null ? Math.max(3, b.pct) : 3}%`, background: (b.pct || 0) >= 100 ? '#16A34A' : 'linear-gradient(90deg,#2563EB,#7C3AED)' }} /></div></div>
-                  <div className="w-24 text-right"><div className="font-extrabold text-xs text-[#050A1F]">{b.transfersToday}{b.dailyTarget > 0 && <span className="text-slate-300 font-normal"> / {b.dailyTarget}</span>}</div>{b.dailyTarget > 0 && <div className={`text-[10px] font-bold ${b.pct >= 100 ? 'text-green-600' : 'text-slate-400'}`}>{b.pct >= 100 ? '✓ done' : `${b.remaining} to go`}</div>}</div>
-                </div>
-                {/* Which prospects this person transferred today, and to whom. */}
-                {(b.transfers || []).length > 0 && (
-                  <div className="ml-9 mt-1.5 flex flex-wrap gap-1.5">
-                    {b.transfers.map((t) => (
-                      <span key={t.leadId} className="text-[10px] rounded-md bg-purple-50 text-purple-700 px-1.5 py-0.5 font-semibold">
-                        {t.leadName} → {t.toName}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
+          <LeadDailyChart daily={data.leadDaily} />
         </div>
-      )}
-
-      {/* Admin's own leads + pre-sales team performance — placed after the call
-          transfer board. Admin-owned leads are kept out of the leaderboard and
-          company math; shown here for manual reconciliation. */}
-      {isAdmin && data.adminOwnLeads && (
         <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
-          <div className="text-sm font-bold text-[#050A1F] mb-3">My Leads</div>
-          <div className="grid grid-cols-3 gap-3">
-            <div className="rounded-xl bg-slate-50 p-4">
-              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Total owned</div>
-              <div className="text-2xl font-extrabold mt-1 text-[#050A1F]">{data.adminOwnLeads.total}</div>
-            </div>
-            <div className="rounded-xl bg-slate-50 p-4">
-              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Assigned today</div>
-              <div className="text-2xl font-extrabold mt-1 text-[#FF6A00]">{data.adminOwnLeads.assignedToday}</div>
-            </div>
-            <div className="rounded-xl bg-slate-50 p-4">
-              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Assigned this month</div>
-              <div className="text-2xl font-extrabold mt-1 text-[#050A1F]">{data.adminOwnLeads.assignedMonth}</div>
-            </div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-[15px] font-bold text-slate-900">Lead trend</h2>
+            <span className="text-xs text-slate-400">Last 6 months · by source</span>
           </div>
-          <div className="text-[11px] text-slate-400 mt-2">These leads are excluded from the sales leaderboard and company targets.</div>
+          <LeadMonthlyChart monthly={data.leadMonthly} />
         </div>
-      )}
+      </div>
 
+      {/* PRE-SALES TEAM — admin only, new data + final2 table layout. */}
       {isAdmin && data.presalesTeam && data.presalesTeam.members.length > 0 && (
-        <PresalesTeamBlocks pt={data.presalesTeam} />
+        <>
+          <SectionLabel right={<span className="text-[11px] text-slate-400">admin only</span>}>Pre-sales team</SectionLabel>
+          <PresalesTeamBlocks pt={data.presalesTeam} />
+        </>
       )}
 
       {/* Awaiting-collection followup list (managers & admins) */}
@@ -1563,84 +1485,54 @@ function LeadManagerDashboard({ user, onViewToday }) {
 // % achieved. Fed by the dashboard's presalesTeam payload.
 function PresalesTeamBlocks({ pt }) {
   const members = pt.members || [];
-  const maxMonth = Math.max(1, ...members.map((t) => t.month));
-  const teamPct = pt.teamMonthlyTarget > 0 ? Math.min(100, Math.round((pt.teamMonth / pt.teamMonthlyTarget) * 100)) : 0;
   return (
-    <div className="space-y-4">
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
-        <div className="flex items-baseline justify-between mb-3">
-          <div className="text-sm font-bold text-[#050A1F]">Lead Assigned · Pre-sales team · this month</div>
-          {pt.teamMonthlyTarget > 0 && (
-            <div className="text-xs font-bold">
-              <span className="text-[#FF4500]">{pt.teamMonth}</span>
-              <span className="text-slate-300"> / {pt.teamMonthlyTarget}</span>
-              <span className="text-slate-400 font-normal"> achieved</span>
-            </div>
-          )}
-        </div>
-        {pt.teamMonthlyTarget > 0 && (
-          <div className="h-2 rounded-full bg-slate-100 overflow-hidden mb-4">
-            <div className="h-full rounded-full" style={{ width: `${teamPct}%`, background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }} />
-          </div>
-        )}
-        {members.filter((t) => t.month > 0).length === 0 ? (
-          <div className="text-slate-300 text-sm py-6 text-center">No leads generated by the team yet this month.</div>
-        ) : (
-          <div className="space-y-2">
-            {members.filter((t) => t.month > 0).map((t, i) => (
-              <div key={t.name} className="flex items-center gap-3">
-                <span className={`w-5 text-center text-xs font-extrabold ${i === 0 ? 'text-[#FF4500]' : 'text-slate-300'}`}>{i + 1}</span>
-                <span className="text-sm font-bold text-slate-600 w-32 truncate">{t.name}</span>
-                <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
-                  <div className="h-full rounded-full" style={{ width: `${(t.month / maxMonth) * 100}%`, background: i === 0 ? '#FF6A00' : '#94A3B8' }} />
-                </div>
-                <span className="text-xs font-bold text-[#050A1F] w-16 text-right">{t.month} <span className="text-slate-300 font-normal">/ {t.today} today</span></span>
-              </div>
-            ))}
-          </div>
-        )}
+    <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+      <div className="p-5 pb-3">
+        <div className="text-[15px] font-bold text-slate-900">Member breakdown <span className="text-[11px] font-semibold text-slate-400">· ranked by leads this month</span></div>
+        <div className="text-[11px] text-slate-400 mt-0.5">Quality = leads this month not Not-interested / Cold / Released. Converted = became clients.</div>
       </div>
-
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
-        <div className="text-sm font-bold text-[#050A1F] mb-1">Pre-sales Team member breakdown</div>
-        <div className="text-[11px] text-slate-400 mb-3">Quality = leads this month that are not Not-interested, Cold or Released. Converted = leads this month that became clients.</div>
-        <div className="overflow-x-auto">
-        <table className="w-full text-xs">
+      <div className="overflow-x-auto">
+        <table className="w-full text-[13px]">
           <thead>
-            <tr className="text-[10px] uppercase text-slate-400 border-b border-slate-100">
-              <th className="text-left py-2">Member</th>
-              <th className="text-right py-2">Today</th>
-              <th className="text-right py-2">This month</th>
-              <th className="text-right py-2">Quality</th>
-              <th className="text-right py-2">Converted</th>
-              <th className="text-right py-2">Monthly target</th>
-              <th className="text-right py-2">% achieved</th>
-              <th className="text-right py-2">All time</th>
-              <th className="text-right py-2">Share</th>
+            <tr style={{ background: '#0b1020' }}>
+              <th className="text-left text-[10px] font-bold uppercase tracking-wide text-slate-300 px-3 py-2.5">Rank &amp; member</th>
+              <th className="text-right text-[10px] font-bold uppercase tracking-wide text-slate-300 px-3 py-2.5">Today</th>
+              <th className="text-right text-[10px] font-bold uppercase tracking-wide text-slate-300 px-3 py-2.5">Month</th>
+              <th className="text-right text-[10px] font-bold uppercase tracking-wide text-slate-300 px-3 py-2.5">Quality</th>
+              <th className="text-right text-[10px] font-bold uppercase tracking-wide text-slate-300 px-3 py-2.5">Converted</th>
+              <th className="text-right text-[10px] font-bold uppercase tracking-wide text-slate-300 px-3 py-2.5">Transferred</th>
+              <th className="text-right text-[10px] font-bold uppercase tracking-wide text-slate-300 px-3 py-2.5">Target</th>
+              <th className="text-right text-[10px] font-bold uppercase tracking-wide text-slate-300 px-3 py-2.5">% achieved</th>
+              <th className="text-right text-[10px] font-bold uppercase tracking-wide text-slate-300 px-3 py-2.5">Share</th>
             </tr>
           </thead>
           <tbody>
-            {members.map((t) => {
+            {members.map((t, i) => {
               const share = pt.teamMonth > 0 ? Math.round((t.month / pt.teamMonth) * 100) : 0;
               const pct = t.monthlyTarget > 0 ? Math.round((t.month / t.monthlyTarget) * 100) : null;
+              const leading = i === 0 && t.month > 0;
+              const medalIcon = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`;
               return (
-                <tr key={t.name} className="border-b border-slate-50">
-                  <td className="py-2 font-bold text-slate-600">{t.name}</td>
-                  <td className="py-2 text-right text-slate-500">{t.today}</td>
-                  <td className="py-2 text-right font-bold text-[#050A1F]">{t.month}</td>
-                  <td className="py-2 text-right font-bold text-sky-600">{t.qualityMonth || 0}</td>
-                  <td className="py-2 text-right font-bold text-green-600">{t.convertedMonth || 0}</td>
-                  <td className="py-2 text-right text-slate-500">{t.monthlyTarget > 0 ? t.monthlyTarget : <span className="text-slate-300">—</span>}</td>
-                  <td className="py-2 text-right">
+                <tr key={t.name} className="border-t border-slate-100" style={leading ? { background: 'linear-gradient(90deg,#fff7ed,#fff)' } : {}}>
+                  <td className="px-3 py-2.5 text-left">
+                    <span className={`font-bold ${leading ? 'text-orange-700' : 'text-slate-600'}`}>{medalIcon} {t.name}</span>
+                    {leading && <span className="ml-1.5 text-[9px] font-extrabold text-orange-700 bg-orange-100 rounded px-1.5 py-0.5">LEADING</span>}
+                  </td>
+                  <td className="px-3 py-2.5 text-right text-slate-500">{t.today}</td>
+                  <td className="px-3 py-2.5 text-right font-extrabold text-slate-900">{t.month}</td>
+                  <td className="px-3 py-2.5 text-right font-bold text-sky-600">{t.qualityMonth || 0}</td>
+                  <td className="px-3 py-2.5 text-right font-bold text-green-600">{t.convertedMonth || 0}</td>
+                  <td className="px-3 py-2.5 text-right font-bold text-violet-600">{t.transferredMonth || 0}</td>
+                  <td className="px-3 py-2.5 text-right text-slate-500">{t.monthlyTarget > 0 ? t.monthlyTarget : <span className="text-slate-300">—</span>}</td>
+                  <td className="px-3 py-2.5 text-right">
                     {pct != null
                       ? <span className={`font-bold ${pct >= 100 ? 'text-green-600' : pct >= 50 ? 'text-amber-600' : 'text-slate-500'}`}>{pct}%</span>
                       : <span className="text-slate-300">—</span>}
                   </td>
-                  <td className="py-2 text-right text-slate-400">{t.total}</td>
-                  <td className="py-2 text-right">
+                  <td className="px-3 py-2.5 text-right">
                     <span className="inline-flex items-center gap-1.5">
-                      <span className="w-10 h-1.5 rounded-full bg-slate-100 overflow-hidden inline-block">
-                        <span className="h-full block rounded-full" style={{ width: `${share}%`, background: '#FF6A00' }} />
+                      <span className="w-11 h-[7px] rounded-full bg-slate-100 overflow-hidden inline-block">
+                        <span className="h-full block rounded-full" style={{ width: `${share}%`, background: leading ? '#FF6A00' : '#94A3B8' }} />
                       </span>
                       <span className="text-slate-500 w-8 text-right">{share}%</span>
                     </span>
@@ -1650,20 +1542,19 @@ function PresalesTeamBlocks({ pt }) {
             })}
           </tbody>
           <tfoot>
-            <tr className="border-t-2 border-slate-100 font-bold">
-              <td className="py-2 text-slate-600">Team total</td>
-              <td className="py-2 text-right text-slate-500">{pt.teamToday || 0}</td>
-              <td className="py-2 text-right text-[#050A1F]">{pt.teamMonth || 0}</td>
-              <td className="py-2 text-right text-sky-600">{pt.teamQualityMonth || 0}</td>
-              <td className="py-2 text-right text-green-600">{pt.teamConvertedMonth || 0}</td>
-              <td className="py-2 text-right text-slate-500">{pt.teamMonthlyTarget > 0 ? pt.teamMonthlyTarget : <span className="text-slate-300">—</span>}</td>
-              <td className="py-2 text-right text-slate-400">{pt.teamMonthlyTarget > 0 ? `${Math.round((pt.teamMonth / pt.teamMonthlyTarget) * 100)}%` : '—'}</td>
-              <td className="py-2"></td>
-              <td className="py-2"></td>
+            <tr className="border-t-2 border-slate-200 font-extrabold" style={{ background: '#f8fafc' }}>
+              <td className="px-3 py-2.5 text-left text-slate-600">Team total</td>
+              <td className="px-3 py-2.5 text-right text-slate-500">{pt.teamToday || 0}</td>
+              <td className="px-3 py-2.5 text-right text-slate-900">{pt.teamMonth || 0}</td>
+              <td className="px-3 py-2.5 text-right text-sky-600">{pt.teamQualityMonth || 0}</td>
+              <td className="px-3 py-2.5 text-right text-green-600">{pt.teamConvertedMonth || 0}</td>
+              <td className="px-3 py-2.5 text-right text-violet-600">{pt.teamTransferredMonth || 0}</td>
+              <td className="px-3 py-2.5 text-right text-slate-500">{pt.teamMonthlyTarget > 0 ? pt.teamMonthlyTarget : <span className="text-slate-300">—</span>}</td>
+              <td className="px-3 py-2.5 text-right text-slate-500">{pt.teamMonthlyTarget > 0 ? `${Math.round((pt.teamMonth / pt.teamMonthlyTarget) * 100)}%` : '—'}</td>
+              <td className="px-3 py-2.5"></td>
             </tr>
           </tfoot>
         </table>
-        </div>
       </div>
     </div>
   );
