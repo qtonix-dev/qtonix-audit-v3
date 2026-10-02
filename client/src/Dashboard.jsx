@@ -46,6 +46,13 @@ function Empty({ text }) {
   return <div className="text-[11px] text-slate-400 text-center py-6">{text}</div>;
 }
 
+// Highlighted agent-name chip, used in Missed commitments & Email activity so
+// the owner stands out from the grey sub-text.
+function AgentChip({ name }) {
+  if (!name) return null;
+  return <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 rounded-full px-1.5 py-0.5 align-middle">👤 {name}</span>;
+}
+
 // Turn draft HTML (often messy Word markup) into readable plain text for
 // previews so tags like <p class="MsoNormal"> never show through.
 function stripHtmlText(s) {
@@ -193,19 +200,18 @@ function LeadMiniList({ title, count, target, items, accent, onOpenLead, onSeeAl
           {items.map((l) => {
             const today = isTodayIso(l.at);
             return (
-            <div key={`${l.kind || 'x'}-${l._id}`} onClick={() => onOpenLead(l._id)} className="flex items-center justify-between py-2 cursor-pointer hover:bg-slate-50 -mx-2 px-2 rounded gap-2">
+            <div key={`${l.kind || 'x'}-${l._id}`} onClick={() => onOpenLead(l._id)} className="flex items-center justify-between py-2 cursor-pointer hover:bg-slate-50 -mx-2 px-2 rounded gap-3">
               <div className="flex items-center gap-2 min-w-0">
                 {l.kind && <span title={l.kind === 'generated' ? 'Generated' : 'Assigned'} className="text-xs shrink-0">{l.kind === 'generated' ? '✨' : '📥'}</span>}
                 <div className="min-w-0">
                   <div className="font-semibold text-sm text-[#050A1F] truncate">{l.name}</div>
-                  <div className="text-[11px] text-slate-400 truncate">
-                    {showOwner && l.ownerName ? <span className="font-semibold text-slate-500">{l.ownerName}</span> : null}
-                    {showOwner && l.ownerName && l.website ? ' · ' : ''}
-                    {l.website || (!showOwner ? l.ownerName : '')}
+                  <div className="text-[11px] text-slate-400 truncate flex items-center gap-1.5">
+                    {showOwner && l.ownerName ? <AgentChip name={l.ownerName} /> : null}
+                    {l.website ? <span className="truncate">{l.website}</span> : (!showOwner ? <span className="truncate">{l.ownerName}</span> : null)}
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-2.5 shrink-0 pl-2">
                 {(showAge && l.at) && (
                   <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${today ? 'bg-green-50 text-green-600' : 'bg-slate-100 text-slate-400'}`}>
                     {today ? 'today' : agoLabel(l.at)}
@@ -250,7 +256,7 @@ function LeadDailyChart({ daily }) {
           </span>
         ))}
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 420 }} onMouseLeave={() => setHover(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ display: 'block' }} onMouseLeave={() => setHover(null)}>
         {[0, 0.5, 1].map((g) => (
           <line key={g} x1={padL} x2={W - 8} y1={y(max * g)} y2={y(max * g)} stroke="#eef2f7" strokeWidth="1" />
         ))}
@@ -324,7 +330,7 @@ function LeadMonthlyChart({ monthly }) {
           </span>
         ))}
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 420 }} onMouseLeave={() => setHover(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ display: 'block' }} onMouseLeave={() => setHover(null)}>
         {[0, 0.5, 1].map((g) => (
           <line key={g} x1={padL} x2={W - 10} y1={y(max * g)} y2={y(max * g)} stroke="#eef2f7" strokeWidth="1" />
         ))}
@@ -439,8 +445,8 @@ function TrendChart({ trend }) {
   const usdFull = (v) => `$${Math.round(v).toLocaleString('en-US')}`;
   return (
     <div className="relative">
-      <div className="overflow-x-auto">
-        <svg viewBox={`0 0 ${W} ${H + 28}`} className="w-full" style={{ minWidth: 420 }} onMouseLeave={() => setHover(null)}>
+      <div>
+        <svg viewBox={`0 0 ${W} ${H + 28}`} className="w-full" style={{ display: 'block' }} onMouseLeave={() => setHover(null)}>
           {[0, 0.5, 1].map((g) => <line key={g} x1={pad} x2={W - pad} y1={pad + (H - pad) * (1 - g)} y2={pad + (H - pad) * (1 - g)} stroke="#e2e8f0" strokeWidth="1" />)}
           {trend.map((t, i) => {
             const total = stackTotal(t);
@@ -603,7 +609,7 @@ function DashHero({ greeting, name, scopeLabel, deltas }) {
       <div className="relative">
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">{greeting}, {name} 👋</h1>
         <div className="text-slate-300 text-sm mt-1">{scopeLabel}</div>
-        <div className="flex flex-wrap gap-x-7 gap-y-4 mt-5">
+        <div className="flex flex-wrap gap-x-12 gap-y-5 mt-6">
           <div className="min-w-[108px]">
             <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Collected</div>
             <div className="text-2xl font-extrabold mt-0.5">{usd(d.collectedThisMonthUsd || 0)}</div>
@@ -888,8 +894,9 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
                 <div className="w-8 h-8 rounded-[10px] flex items-center justify-center font-bold text-[12px] shrink-0 bg-red-100 text-red-800">{initials(i.leadName)}</div>
                 <div className="min-w-0 flex-1 cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>
                   <div className="text-[13px] font-bold text-slate-900 truncate">{i.kind === 'call' ? 'Call' : i.kind === 'draft' ? 'Draft' : 'Task'} · {i.leadName}</div>
-                  <div className="text-[11px] text-slate-400 truncate">
-                    {i.title ? i.title : (i.kind === 'call' ? 'Scheduled call' : 'Task')}{(isAdmin || isManager) && i.ownerName ? ` · ${i.ownerName}` : ''}
+                  <div className="text-[11px] text-slate-400 truncate flex items-center gap-1.5">
+                    <span className="truncate">{i.title ? i.title : (i.kind === 'call' ? 'Scheduled call' : 'Task')}</span>
+                    {(isAdmin || isManager) && i.ownerName && <AgentChip name={i.ownerName} />}
                   </div>
                 </div>
                 {/* Overdue time is its own always-visible chip (never hidden). */}
@@ -936,13 +943,18 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
         const active = tabs.find((t) => t.id === emailTab) || tabs[0];
         return (
           <div className="rounded-xl border border-slate-200/70 bg-white p-4">
-            <div className="flex items-center gap-2 mb-3 flex-wrap">
-              <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500 mr-1">✉️ Email activity</span>
+            {/* Heading + description — matches Missed commitments exactly. */}
+            <div className="mb-2.5">
+              <div className="text-[14px] font-bold text-slate-900">✉️ Email activity</div>
+              <div className="text-[11px] text-slate-400">Replies, opens &amp; follow-ups</div>
+            </div>
+            {/* Tabs on their own row below the heading. */}
+            <div className="flex items-center gap-1.5 mb-2.5 flex-wrap">
               {tabs.map((t) => {
                 const on = t.id === emailTab;
                 return (
                   <button key={t.id} onClick={() => setEmailTab(t.id)}
-                    className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold transition ${on ? 'text-white' : 'text-slate-500 hover:bg-slate-100'}`}
+                    className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold transition ${on ? 'text-white' : 'text-slate-500 bg-slate-100 hover:bg-slate-200'}`}
                     style={on ? { background: t.color } : {}}>
                     {t.label}
                     <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] rounded-full text-[10px] font-extrabold px-1"
@@ -965,7 +977,10 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
                         <div className="w-8 h-8 rounded-[10px] flex items-center justify-center font-bold text-[12px] shrink-0" style={overdue ? { background: '#fee2e2', color: '#991b1b' } : { background: '#dbeafe', color: '#1e40af' }}>{initials(who)}</div>
                         <div className="min-w-0 flex-1">
                           <div className="text-[13px] font-bold text-slate-900 truncate">{who}</div>
-                          <div className="text-[11px] text-slate-400 truncate">{i.subject || i.snippet || '(no subject)'}{(isAdmin || isManager) && i.ownerName ? ` · ${i.ownerName}` : ''}</div>
+                          <div className="text-[11px] text-slate-400 truncate flex items-center gap-1.5">
+                            <span className="truncate">{i.subject || i.snippet || '(no subject)'}</span>
+                            {(isAdmin || isManager) && i.ownerName && <AgentChip name={i.ownerName} />}
+                          </div>
                         </div>
                         <span className={`shrink-0 text-[11px] font-extrabold rounded-md px-2 py-1 whitespace-nowrap ${overdue ? 'text-red-600 bg-red-50' : 'text-blue-600 bg-blue-50'}`}>{fmtAge(i.ageMs)}</span>
                         {user.role === 'admin' && overdue && (
@@ -985,7 +1000,10 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
                       <div className="w-8 h-8 rounded-[10px] flex items-center justify-center font-bold text-[12px] shrink-0" style={{ background: '#ffedd5', color: '#9a3412' }}>{initials(who)}</div>
                       <div className="min-w-0 flex-1">
                         <div className="text-[13px] font-bold text-slate-900 truncate">{who}</div>
-                        <div className="text-[11px] text-slate-400 truncate">{i.subject || '(no subject)'}{(isAdmin || isManager) && i.ownerName ? ` · ${i.ownerName}` : ''}</div>
+                        <div className="text-[11px] text-slate-400 truncate flex items-center gap-1.5">
+                          <span className="truncate">{i.subject || '(no subject)'}</span>
+                          {(isAdmin || isManager) && i.ownerName && <AgentChip name={i.ownerName} />}
+                        </div>
                       </div>
                       <span className="shrink-0 text-[11px] font-extrabold text-amber-600 bg-amber-50 rounded-md px-2 py-1 whitespace-nowrap">{fmtAge(i.ageMs)}</span>
                     </div>
@@ -1001,7 +1019,10 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
                       <div className="w-8 h-8 rounded-[10px] flex items-center justify-center font-bold text-[12px] shrink-0" style={{ background: '#dcfce7', color: '#15803d' }}>{initials(who)}</div>
                       <div className="min-w-0 flex-1">
                         <div className="text-[13px] font-bold text-slate-900 truncate">{who}</div>
-                        <div className="text-[11px] text-slate-400 truncate">{i.subject || '(no subject)'}{i.opens > 1 ? ` · ${i.opens}×` : ''}{i.clicked ? ' · clicked' : ''}{(isAdmin || isManager) && i.ownerName ? ` · ${i.ownerName}` : ''}</div>
+                        <div className="text-[11px] text-slate-400 truncate flex items-center gap-1.5">
+                          <span className="truncate">{i.subject || '(no subject)'}{i.opens > 1 ? ` · ${i.opens}×` : ''}{i.clicked ? ' · clicked' : ''}</span>
+                          {(isAdmin || isManager) && i.ownerName && <AgentChip name={i.ownerName} />}
+                        </div>
                       </div>
                       <span className="shrink-0 text-[11px] font-extrabold text-green-600 bg-green-50 rounded-md px-2 py-1 whitespace-nowrap">{fmtAge(i.ageMs)}</span>
                     </div>
