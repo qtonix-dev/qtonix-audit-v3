@@ -163,6 +163,24 @@ function hasPendingFutureActivity(lead) {
   return false;
 }
 
+// For the "untouched" dashboard count: a lead is only parked (and so should
+// NOT be flagged untouched) when it has a call or meeting scheduled MORE THAN A
+// WEEK away. A nearer booking (within 7 days) does not excuse a stale lead —
+// the agent should still be following up — so it stays in the untouched list.
+function hasScheduledBeyondAWeek(lead) {
+  const weekAhead = Date.now() + 7 * 24 * 60 * 60 * 1000;
+  for (const a of (lead.activities || [])) {
+    if (a.status === 'done') continue;
+    const at = a.kind === 'call'
+      ? (a.date ? `${a.date}T${a.time || '09:00'}` : '')
+      : (a.dueDate ? `${a.dueDate}T17:00` : '');
+    if (!at) continue;
+    const t = new Date(at).getTime();
+    if (!Number.isNaN(t) && t > weekAhead) return true;
+  }
+  return false;
+}
+
 // Drafts are rich text (HTML). For the plain-text timeline preview we strip the
 // tags so the note reads cleanly; the full HTML is kept in the meta body.
 function stripHtml(s) {
@@ -1117,20 +1135,20 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       const isProspect = l.status === 'callback';
       // Call-back prospects aren't worked leads yet, so they don't count toward
       // the lead total and are never flagged untouched — the 3-day rule doesn't
-      // apply until they're transferred.
+      // apply until they're transferred. Converted leads are closed, so they're
+      // excluded here too.
       if (!isConverted && !isProspect) {
         totalLeads++;
         const last = l.lastActivityAt ? new Date(l.lastActivityAt) : null;
-        // Leads that are Not interested / Cold / Lost / Released need no
-        // follow-up, so they're never flagged untouched.
+        // Statuses that need no follow-up are never flagged untouched:
+        //   ni  = Not interested · cold = Cold lead · lost · release = Released.
+        // (converted is already excluded by the guard above.)
         const noFollowUp = ['ni', 'cold', 'lost', 'release'].includes(l.status);
-        // A lead with a scheduled future call/task is being handled as agreed —
-        // e.g. the customer asked for a call in 15 days — so it must NOT show as
-        // untouched even though nothing's happened in the last 3 days. Only flag
-        // it when there's no pending future activity to wait on. Back-dated
-        // leads DO count — their untouched clock runs from the entry date
-        // (createdAt/lastActivityAt), not the historical generated date.
-        if (!noFollowUp && last && last < in3d && !hasPendingFutureActivity(l)) {
+        // A lead with a call or meeting scheduled MORE THAN A WEEK out is parked
+        // by agreement (the customer asked to be contacted later), so the agent
+        // isn't expected to follow up now — exclude it. A booking within the next
+        // 7 days does NOT excuse a stale lead, so those still count as untouched.
+        if (!noFollowUp && last && last < in3d && !hasScheduledBeyondAWeek(l)) {
           untouched++;
           if (untouchedList.length < 50) untouchedList.push(leadBrief(l));
         }
