@@ -194,7 +194,7 @@ function isTodayIso(iso) {
 // (Generated/Assigned) and the time/age on the right.
 function LeadMiniList({ title, count, target, items, accent, onOpenLead, onSeeAll, seeAllLabel, breakdown, showOwner, showAge, emptyHint }) {
   return (
-    <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
+    <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5 flex flex-col h-full">
       {/* Header */}
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="min-w-0">
@@ -220,9 +220,9 @@ function LeadMiniList({ title, count, target, items, accent, onOpenLead, onSeeAl
       {emptyHint && <div className="text-[11px] text-amber-600 bg-amber-50 rounded-lg px-2.5 py-1.5 mb-2">{emptyHint}</div>}
 
       {items.length === 0 ? (
-        <div className="text-slate-300 text-sm py-8 text-center">Nothing here yet.</div>
+        <div className="flex-1 flex items-center justify-center text-slate-300 text-sm py-8">Nothing here yet.</div>
       ) : (
-        <div className="flex flex-col gap-1 overflow-y-auto overflow-x-hidden nice-scroll" style={{ maxHeight: 260 }}>
+        <div className="flex flex-col gap-1 overflow-y-auto overflow-x-hidden nice-scroll flex-1" style={{ minHeight: 200, maxHeight: 340 }}>
           {items.map((l) => {
             const today = isTodayIso(l.at);
             const [avBg, avFg] = agentColor(l.ownerName || l.name);
@@ -1083,10 +1083,11 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
         />
       )}
 
-      {/* INTAKE — today's leads + untouched 3+ days (only). items-start so each
-          card is only as tall as its own content (no stretched blank space). */}
+      {/* INTAKE — today's leads + untouched 3+ days. items-stretch so both cards
+          are the same height; each card fills with a flex column + a growing
+          scroll list (see LeadMiniList). */}
       <SectionLabel>Intake</SectionLabel>
-      <div className="grid md:grid-cols-2 gap-4 items-start">
+      <div className="grid md:grid-cols-2 gap-4 items-stretch">
         {(() => {
           const todayItems = [...(lists.generatedToday || []), ...(lists.assignedToday || [])];
           const hasToday = todayItems.length > 0;
