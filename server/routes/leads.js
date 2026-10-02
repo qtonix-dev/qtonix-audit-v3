@@ -1132,7 +1132,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         // (createdAt/lastActivityAt), not the historical generated date.
         if (!noFollowUp && last && last < in3d && !hasPendingFutureActivity(l)) {
           untouched++;
-          if (untouchedList.length < 8) untouchedList.push(leadBrief(l));
+          if (untouchedList.length < 50) untouchedList.push(leadBrief(l));
         }
       }
 
@@ -2015,7 +2015,12 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         adminCrossSalesCount: viewerIsAdmin ? adminCrossCount : null,
         teamCompanyPct: viewerIsAdmin && companyTarget > 0 ? Math.round((teamSalesUsd / companyTarget) * 100) : null,
       },
-      lists: { generatedToday: genTodayList, assignedToday: assignedTodayList, untouched: untouchedList, recentlyAdded },
+      lists: {
+        generatedToday: genTodayList, assignedToday: assignedTodayList,
+        // Longest-untouched first, so the most urgent follow-ups lead the list.
+        untouched: untouchedList.slice().sort((a, b) => new Date(a.lastActivityAt || 0) - new Date(b.lastActivityAt || 0)),
+        recentlyAdded,
+      },
       presalesTeam,
       adminOwnLeads,
       me: meRow ? {
@@ -2586,7 +2591,9 @@ router.get('/missed-activities', requireAuth, async (req, res, next) => {
       total: items.length,
       stillOpen: items.filter((i) => !i.resolved).length,
       items: items.slice(0, 100),
-      byOwner: Object.values(byOwner).sort((a, b) => b.missed - a.missed),
+      // Sort by still-open count (what the dashboard tabs and list show), so the
+      // per-agent tab numbers match the visible rows and the header total.
+      byOwner: Object.values(byOwner).sort((a, b) => (b.stillOpen || 0) - (a.stillOpen || 0) || (b.missed || 0) - (a.missed || 0)),
     });
   } catch (e) { next(e); }
 });

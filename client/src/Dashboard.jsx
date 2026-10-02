@@ -18,6 +18,22 @@ const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
 const medal = (i) => (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`);
 const initials = (name) => (name || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 
+// Stable per-agent colour: the same name always maps to the same [bg, fg] pair,
+// so an agent is recognisable by colour across avatars and name chips. (Kept in
+// sync with the palette in Leads.jsx.)
+const AGENT_PALETTE = [
+  ['#f3e8ff', '#7e22ce'], ['#fce7f3', '#9d174d'], ['#ccfbf1', '#115e59'],
+  ['#e0e7ff', '#3730a3'], ['#fef3c7', '#92400e'], ['#dbeafe', '#1e40af'],
+  ['#dcfce7', '#166534'], ['#ffedd5', '#9a3412'], ['#cffafe', '#155e75'],
+  ['#fae8ff', '#86198f'],
+];
+function agentColor(name) {
+  const s = String(name || '?');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return AGENT_PALETTE[h % AGENT_PALETTE.length];
+}
+
 const DB_FONT = "'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif";
 // Small uppercase section label that groups the dashboard into readable blocks.
 function SectionLabel({ children, right }) {
@@ -46,11 +62,14 @@ function Empty({ text }) {
   return <div className="text-[11px] text-slate-400 text-center py-6">{text}</div>;
 }
 
-// Highlighted agent-name chip, used in Missed commitments & Email activity so
-// the owner stands out from the grey sub-text.
+// Highlighted agent-name chip, coloured by the agent so each person is
+// recognisable at a glance (same colour as their avatar).
 function AgentChip({ name }) {
   if (!name) return null;
-  return <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 rounded-full px-1.5 py-0.5 align-middle">👤 {name}</span>;
+  const [bg, fg] = agentColor(name);
+  return <span className="inline-flex items-center gap-1 text-[10px] font-bold rounded-full px-1.5 py-0.5 align-middle whitespace-nowrap" style={{ background: bg, color: fg }}>
+    <span className="w-1.5 h-1.5 rounded-full" style={{ background: fg }} />{name}
+  </span>;
 }
 
 // Turn draft HTML (often messy Word markup) into readable plain text for
@@ -169,55 +188,72 @@ function isTodayIso(iso) {
   return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
 }
 
-// Mini lead table for the today/untouched boxes.
+// Revamped intake card (Today's leads / Untouched 3+ days). Clean header with a
+// big count + small caption and a pill "see all" button; rows are card-style
+// with a colour-coded agent avatar, lead name, website, a source badge
+// (Generated/Assigned) and the time/age on the right.
 function LeadMiniList({ title, count, target, items, accent, onOpenLead, onSeeAll, seeAllLabel, breakdown, showOwner, showAge, emptyHint }) {
   return (
-    <div className="rounded-2xl border p-5" style={{ borderColor: accent + '33', background: '#fff' }}>
-      <div className="flex items-center justify-between mb-3">
-        <div>
+    <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="min-w-0">
           <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{title}</div>
-          <div className="text-2xl font-extrabold" style={{ color: accent }}>
-            {count}{target > 0 && <span className="text-slate-300 text-lg"> / {target}</span>}
-            {target > 0 && count < target && <span className="text-xs font-bold text-slate-400 ml-2">{target - count} more to go</span>}
+          <div className="flex items-baseline gap-2 mt-0.5">
+            <span className="text-[26px] leading-none font-extrabold" style={{ color: accent }}>{count}</span>
+            {target > 0 && <span className="text-slate-300 text-base font-bold">/ {target}</span>}
+            {target > 0 && count < target && <span className="text-[11px] font-bold text-slate-400">{target - count} to go</span>}
           </div>
           {breakdown && (
-            <div className="flex items-center gap-3 mt-1">
+            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
               {breakdown.map((b) => (
-                <span key={b.label} className="text-[11px] font-bold" style={{ color: b.color }}>
+                <span key={b.label} className="inline-flex items-center gap-1 text-[10px] font-bold rounded-full px-2 py-0.5" style={{ background: b.color + '14', color: b.color }}>
                   {b.icon} {b.value} {b.label}
                 </span>
               ))}
             </div>
           )}
         </div>
-        <button onClick={onSeeAll} className="text-xs font-bold" style={{ color: accent }}>{seeAllLabel || 'See all'} →</button>
+        <button onClick={onSeeAll} className="shrink-0 text-[11px] font-bold rounded-full px-3 py-1.5 transition" style={{ background: accent + '14', color: accent }}>{seeAllLabel || 'See all'} →</button>
       </div>
+
+      {emptyHint && <div className="text-[11px] text-amber-600 bg-amber-50 rounded-lg px-2.5 py-1.5 mb-2">{emptyHint}</div>}
+
       {items.length === 0 ? (
-        <div className="text-slate-300 text-sm py-6 text-center">Nothing here yet.</div>
+        <div className="text-slate-300 text-sm py-8 text-center">Nothing here yet.</div>
       ) : (
-        <div className="divide-y divide-slate-50 overflow-y-auto overflow-x-hidden" style={{ maxHeight: 250 }}>
-          {emptyHint && <div className="text-[11px] text-amber-600 bg-amber-50 rounded-lg px-2.5 py-1.5 mb-1">{emptyHint}</div>}
+        <div className="flex flex-col gap-1 overflow-y-auto overflow-x-hidden nice-scroll" style={{ maxHeight: 260 }}>
           {items.map((l) => {
             const today = isTodayIso(l.at);
+            const [avBg, avFg] = agentColor(l.ownerName || l.name);
+            const isGen = l.kind === 'generated';
             return (
-            <div key={`${l.kind || 'x'}-${l._id}`} onClick={() => onOpenLead(l._id)} className="flex items-center justify-between py-2 cursor-pointer hover:bg-slate-50 -mx-2 px-2 rounded gap-3">
-              <div className="flex items-center gap-2 min-w-0">
-                {l.kind && <span title={l.kind === 'generated' ? 'Generated' : 'Assigned'} className="text-xs shrink-0">{l.kind === 'generated' ? '✨' : '📥'}</span>}
-                <div className="min-w-0">
-                  <div className="font-semibold text-sm text-[#050A1F] truncate">{l.name}</div>
-                  <div className="text-[11px] text-slate-400 truncate flex items-center gap-1.5">
-                    {showOwner && l.ownerName ? <AgentChip name={l.ownerName} /> : null}
-                    {l.website ? <span className="truncate">{l.website}</span> : (!showOwner ? <span className="truncate">{l.ownerName}</span> : null)}
-                  </div>
+            <div key={`${l.kind || 'x'}-${l._id}`} onClick={() => onOpenLead(l._id)}
+              className="flex items-center gap-3 rounded-xl px-2.5 py-2 cursor-pointer hover:bg-slate-50 transition-colors">
+              {/* Colour-coded agent avatar */}
+              <div className="w-9 h-9 rounded-[11px] flex items-center justify-center font-bold text-[13px] shrink-0" style={{ background: avBg, color: avFg }}>{initials(l.name)}</div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-bold text-[13px] text-slate-900 truncate">{l.name}</span>
+                  {l.kind && (
+                    <span className="shrink-0 text-[9px] font-extrabold uppercase tracking-wide rounded px-1.5 py-0.5" style={isGen ? { background: '#f5f3ff', color: '#7c3aed' } : { background: '#ecfeff', color: '#0e7490' }}>
+                      {isGen ? '✨ Generated' : '📥 Assigned'}
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] text-slate-400 truncate flex items-center gap-1.5 mt-0.5">
+                  {showOwner && l.ownerName ? <AgentChip name={l.ownerName} /> : null}
+                  {l.website ? <span className="truncate">{l.website}</span> : (!showOwner && l.ownerName ? <span className="truncate">{l.ownerName}</span> : null)}
                 </div>
               </div>
-              <div className="flex items-center gap-2.5 shrink-0 pl-2">
+              {/* Time / age */}
+              <div className="flex items-center gap-2.5 shrink-0 pl-1">
                 {(showAge && l.at) && (
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${today ? 'bg-green-50 text-green-600' : 'bg-slate-100 text-slate-400'}`}>
+                  <span className={`text-[10px] font-bold px-2 py-1 rounded-md whitespace-nowrap ${today ? 'bg-green-50 text-green-600' : 'bg-slate-100 text-slate-400'}`}>
                     {today ? 'today' : agoLabel(l.at)}
                   </span>
                 )}
-                <span className="text-slate-300 text-xs">→</span>
+                <span className="text-slate-300 text-sm">→</span>
               </div>
             </div>
             );
@@ -877,21 +913,21 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
             <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
               <button onClick={() => setMissedFilter(null)}
                 className={`rounded-full px-2.5 py-1 text-[10px] font-bold transition ${missedFilter == null ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>All</button>
-              {missed.byOwner.slice(0, 5).map((o) => (
+              {missed.byOwner.filter((o) => (o.stillOpen || 0) > 0).slice(0, 6).map((o) => (
                 <button key={o.ownerId} onClick={() => setMissedFilter(o.ownerId)}
                   className={`rounded-full px-2.5 py-1 text-[10px] font-bold transition ${missedFilter === o.ownerId ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-                  {o.ownerName} · {o.missed}
+                  {o.ownerName} · {o.stillOpen}
                 </button>
               ))}
             </div>
           )}
-          <div className="space-y-1.5 max-h-60 overflow-y-auto overflow-x-hidden">
+          <div className="space-y-1.5 max-h-60 overflow-y-auto overflow-x-hidden nice-scroll">
             {missed.items
               .filter((i) => !i.resolved)
               .filter((i) => missedFilter == null || i.ownerId === missedFilter)
-              .slice(0, 8).map((i) => (
+              .slice(0, 50).map((i) => (
               <div key={i.activityId} className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-50 transition-colors">
-                <div className="w-8 h-8 rounded-[10px] flex items-center justify-center font-bold text-[12px] shrink-0 bg-red-100 text-red-800">{initials(i.leadName)}</div>
+                <div className="w-8 h-8 rounded-[10px] flex items-center justify-center font-bold text-[12px] shrink-0" style={{ background: agentColor(i.ownerName || i.leadName)[0], color: agentColor(i.ownerName || i.leadName)[1] }}>{initials(i.leadName)}</div>
                 <div className="min-w-0 flex-1 cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>
                   <div className="text-[13px] font-bold text-slate-900 truncate">{i.kind === 'call' ? 'Call' : i.kind === 'draft' ? 'Draft' : 'Task'} · {i.leadName}</div>
                   <div className="text-[11px] text-slate-400 truncate flex items-center gap-1.5">
@@ -966,7 +1002,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
               })}
             </div>
 
-            <div className="space-y-1.5 max-h-60 overflow-y-auto overflow-x-hidden">
+            <div className="space-y-1.5 max-h-60 overflow-y-auto overflow-x-hidden nice-scroll">
               {emailTab === 'new' && (newItems.length === 0
                 ? <Empty text="No new emails awaiting a reply." />
                 : newItems.slice(0, 12).map((i) => {
@@ -974,7 +1010,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
                     const who = i.leadName || i.fromName || i.fromEmail || 'Unknown';
                     return (
                       <div key={i.emailId} className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-50 transition-colors cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId, { tab: 'email', compose: true })}>
-                        <div className="w-8 h-8 rounded-[10px] flex items-center justify-center font-bold text-[12px] shrink-0" style={overdue ? { background: '#fee2e2', color: '#991b1b' } : { background: '#dbeafe', color: '#1e40af' }}>{initials(who)}</div>
+                        <div className="w-8 h-8 rounded-[10px] flex items-center justify-center font-bold text-[12px] shrink-0" style={{ background: agentColor(i.ownerName || who)[0], color: agentColor(i.ownerName || who)[1] }}>{initials(who)}</div>
                         <div className="min-w-0 flex-1">
                           <div className="text-[13px] font-bold text-slate-900 truncate">{who}</div>
                           <div className="text-[11px] text-slate-400 truncate flex items-center gap-1.5">
@@ -997,7 +1033,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
                     const who = i.leadName || i.toEmail || 'Unknown';
                     return (
                     <div key={i.id} onClick={() => i.leadId && onViewToday && onViewToday(i.leadId, { tab: 'email', compose: true })} className={`flex items-center gap-3 rounded-lg px-2 py-2 transition-colors ${i.leadId ? 'cursor-pointer hover:bg-slate-50' : ''}`}>
-                      <div className="w-8 h-8 rounded-[10px] flex items-center justify-center font-bold text-[12px] shrink-0" style={{ background: '#ffedd5', color: '#9a3412' }}>{initials(who)}</div>
+                      <div className="w-8 h-8 rounded-[10px] flex items-center justify-center font-bold text-[12px] shrink-0" style={{ background: agentColor(i.ownerName || who)[0], color: agentColor(i.ownerName || who)[1] }}>{initials(who)}</div>
                       <div className="min-w-0 flex-1">
                         <div className="text-[13px] font-bold text-slate-900 truncate">{who}</div>
                         <div className="text-[11px] text-slate-400 truncate flex items-center gap-1.5">
@@ -1016,7 +1052,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
                     const who = i.leadName || i.toEmail || 'Unknown';
                     return (
                     <div key={i.id} onClick={() => i.leadId && onViewToday && onViewToday(i.leadId, { tab: 'email', compose: true })} className={`flex items-center gap-3 rounded-lg px-2 py-2 transition-colors ${i.leadId ? 'cursor-pointer hover:bg-slate-50' : ''}`}>
-                      <div className="w-8 h-8 rounded-[10px] flex items-center justify-center font-bold text-[12px] shrink-0" style={{ background: '#dcfce7', color: '#15803d' }}>{initials(who)}</div>
+                      <div className="w-8 h-8 rounded-[10px] flex items-center justify-center font-bold text-[12px] shrink-0" style={{ background: agentColor(i.ownerName || who)[0], color: agentColor(i.ownerName || who)[1] }}>{initials(who)}</div>
                       <div className="min-w-0 flex-1">
                         <div className="text-[13px] font-bold text-slate-900 truncate">{who}</div>
                         <div className="text-[11px] text-slate-400 truncate flex items-center gap-1.5">
@@ -1174,7 +1210,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
             {nudges.length === 0 ? (
               <div className="text-slate-300 text-sm py-6 text-center">No open deals right now. 🎉</div>
             ) : (
-              <div className="space-y-1.5 max-h-72 overflow-y-auto overflow-x-hidden">
+              <div className="space-y-1.5 max-h-72 overflow-y-auto overflow-x-hidden nice-scroll">
                 {nudges.map((d) => {
                   // Colour the age chip by how stale: >14d red, >7d amber, else slate.
                   const days = d.unchangedDays;
