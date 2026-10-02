@@ -1053,6 +1053,9 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     const byOwner = {};
     const ensure = (id, name) => (byOwner[id] = byOwner[id] || { ownerId: id, name, salesUsd: 0, newSalesUsd: 0, crossSalesUsd: 0, conversions: 0, leads: 0, transfersToday: 0, leadsGeneratedMonth: 0, leadsGeneratedToday: 0 });
     const genTodayList = [], assignedTodayList = [], untouchedList = [];
+    // Per-owner untouched tally (counts ALL untouched leads, not just the capped
+    // list) so the dashboard can show agent filter tabs with accurate numbers.
+    const untouchedByOwner = {};
     const awaitingList = [];
 
     // Lead-generation analytics. We split by leadSource so the dashboard can
@@ -1150,7 +1153,12 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         // 7 days does NOT excuse a stale lead, so those still count as untouched.
         if (!noFollowUp && last && last < in3d && !hasScheduledBeyondAWeek(l)) {
           untouched++;
-          if (untouchedList.length < 50) untouchedList.push(leadBrief(l));
+          if (untouchedList.length < 100) untouchedList.push(leadBrief(l));
+          if (l.ownerId) {
+            untouchedByOwner[l.ownerId] = untouchedByOwner[l.ownerId]
+              || { ownerId: l.ownerId, ownerName: l.ownerName, count: 0 };
+            untouchedByOwner[l.ownerId].count++;
+          }
         }
       }
 
@@ -2058,6 +2066,8 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       // "due today" box. Derived from the awaiting (unpaid) installments.
       dueToday: awaitingList.filter((a) => a.dueDate === new Date().toISOString().slice(0, 10))
         .sort((a, b) => String(a.ownerName).localeCompare(String(b.ownerName))),
+      // Per-agent untouched counts for the dashboard filter tabs (most first).
+      untouchedByOwner: Object.values(untouchedByOwner).sort((a, b) => b.count - a.count),
       leadDaily,
       leadMonthly: leadMonthly.map((b) => ({ month: b.month, year: b.year, total: b.total, presales: b.presales, cold: b.cold, transferred: b.transferred })),
     });
@@ -2066,7 +2076,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
 
 // Small helper: a compact lead descriptor for dashboard mini-tables.
 function leadBrief(l) {
-  return { _id: l.id, name: `${l.firstName || ''} ${l.lastName || ''}`.trim() || '(no name)', website: l.website || '', ownerName: l.ownerName, status: l.status, lastActivityAt: l.lastActivityAt };
+  return { _id: l.id, name: `${l.firstName || ''} ${l.lastName || ''}`.trim() || '(no name)', website: l.website || '', ownerId: l.ownerId, ownerName: l.ownerName, status: l.status, lastActivityAt: l.lastActivityAt };
 }
 function targetForToday(targets, kind) {
   if (!targets) return 0;

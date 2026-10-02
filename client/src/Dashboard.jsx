@@ -192,7 +192,9 @@ function isTodayIso(iso) {
 // big count + small caption and a pill "see all" button; rows are card-style
 // with a colour-coded agent avatar, lead name, website, a source badge
 // (Generated/Assigned) and the time/age on the right.
-function LeadMiniList({ title, count, target, items, accent, onOpenLead, onSeeAll, seeAllLabel, breakdown, showOwner, showAge, emptyHint }) {
+function LeadMiniList({ title, count, target, items, accent, onOpenLead, onSeeAll, seeAllLabel, breakdown, showOwner, showAge, emptyHint, ownerTabs }) {
+  const [ownerFilter, setOwnerFilter] = useState(null); // ownerId | null = all
+  const shownItems = ownerFilter == null ? items : items.filter((l) => l.ownerId === ownerFilter);
   return (
     <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5 flex flex-col h-full">
       {/* Header */}
@@ -217,13 +219,33 @@ function LeadMiniList({ title, count, target, items, accent, onOpenLead, onSeeAl
         <button onClick={onSeeAll} className="shrink-0 text-[11px] font-bold rounded-full px-3 py-1.5 transition" style={{ background: accent + '14', color: accent }}>{seeAllLabel || 'See all'} →</button>
       </div>
 
+      {/* Per-agent filter tabs (each agent coloured; shows their untouched count). */}
+      {ownerTabs && ownerTabs.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
+          <button onClick={() => setOwnerFilter(null)}
+            className={`rounded-full px-2.5 py-1 text-[10px] font-bold transition ${ownerFilter == null ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>All</button>
+          {ownerTabs.slice(0, 8).map((o) => {
+            const [bg, fg] = agentColor(o.ownerName);
+            const on = ownerFilter === o.ownerId;
+            return (
+              <button key={o.ownerId} onClick={() => setOwnerFilter(on ? null : o.ownerId)}
+                className="rounded-full px-2.5 py-1 text-[10px] font-bold transition inline-flex items-center gap-1.5"
+                style={on ? { background: fg, color: '#fff' } : { background: bg, color: fg }}>
+                <span className="w-1.5 h-1.5 rounded-full" style={{ background: on ? '#fff' : fg }} />
+                {o.ownerName} · {o.count}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {emptyHint && <div className="text-[11px] text-amber-600 bg-amber-50 rounded-lg px-2.5 py-1.5 mb-2">{emptyHint}</div>}
 
-      {items.length === 0 ? (
+      {shownItems.length === 0 ? (
         <div className="flex-1 flex items-center justify-center text-slate-300 text-sm py-8">Nothing here yet.</div>
       ) : (
-        <div className="flex flex-col gap-1 overflow-y-auto overflow-x-hidden nice-scroll flex-1" style={{ minHeight: 200, maxHeight: 340 }}>
-          {items.map((l) => {
+        <div className="flex flex-col gap-1 overflow-y-auto overflow-x-hidden nice-scroll flex-1" style={{ minHeight: 160 }}>
+          {shownItems.map((l) => {
             const today = isTodayIso(l.at);
             const [avBg, avFg] = agentColor(l.ownerName || l.name);
             const isGen = l.kind === 'generated';
@@ -1111,6 +1133,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
         })()}
         <LeadMiniList title="Untouched 3+ days" count={m.untouched} items={lists.untouched || []}
           showOwner={isAdmin || isManager}
+          ownerTabs={(isAdmin || isManager) ? (data.untouchedByOwner || []) : null}
           accent="#DC2626" onOpenLead={(id) => onViewToday(id)} onSeeAll={() => onViewUntouched(3)} seeAllLabel="View all untouched" />
       </div>
 
