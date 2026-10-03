@@ -1312,8 +1312,11 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       }
     }
 
-    const targetsById = {}, avatarById = {}, nameById = {};
-    owners.forEach((u) => { targetsById[u.id] = u.targets || {}; avatarById[u.id] = u.avatar || null; nameById[u.id] = u.name; });
+    const targetsById = {}, avatarById = {}, nameById = {}, activeById = {};
+    owners.forEach((u) => { targetsById[u.id] = u.targets || {}; avatarById[u.id] = u.avatar || null; nameById[u.id] = u.name; activeById[u.id] = (u.active !== false && u.archived !== true); });
+    // A deactivated/archived employee must disappear from every live board,
+    // tab and race — even if they still have sales recorded this month.
+    const isLiveOwner = (ownerId) => activeById[ownerId] === true;
 
     const inScope = (u) => {
       if (req.user.role === 'admin') return true;
@@ -1361,6 +1364,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       // everyone, unfiltered — EXCEPT lead managers, who never belong on a sales
       // board regardless of who's viewing (they own no leads and make no sales).
       .filter((o) => o.role !== 'leadmanager')
+      .filter((o) => isLiveOwner(o.ownerId)) // hide deactivated/archived agents
       .filter((o) => viewerIsAdmin || o.role === 'agent' || o.ownerId === req.user.id)
       .sort(leaderboardCompare);
 
@@ -1411,6 +1415,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       };
       companyLeaderboard = Object.values(compByOwner)
         .filter((o) => includeRole(roleById[o.ownerId]))
+        .filter((o) => isLiveOwner(o.ownerId)) // hide deactivated/archived agents
         .map((o) => {
           const tg = targetsById[o.ownerId] || {};
           const salesTarget = (tg.sales && tg.sales.enabled) ? Number(tg.sales.monthly || 0) : 0;
@@ -1889,7 +1894,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         }
       }
     }
-    const mostTransferred = Object.values(transferMonthBy).sort((a, b) => b.count - a.count)[0] || null;
+    const mostTransferred = Object.values(transferMonthBy).filter((o) => isLiveOwner(o.ownerId)).sort((a, b) => b.count - a.count)[0] || null;
     if (mostTransferred) mostTransferred.avatar = avatarById[mostTransferred.ownerId] || null;
 
     // --- Most conversions THIS MONTH (for the Recognition box). From the
@@ -1900,6 +1905,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       : Object.values(byOwner);
     const mostConversions = convSource
       .filter((o) => (o.conversions || 0) > 0)
+      .filter((o) => isLiveOwner(o.ownerId)) // never credit a deactivated agent
       .sort((a, b) => (b.conversions || 0) - (a.conversions || 0))[0] || null;
 
     // --- Deals needing a nudge: EVERY open deal (not won/lost), with how long
@@ -1913,6 +1919,9 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     for (const l of leads) {
       if (l.status === 'callback' || l.status === 'converted' || l.status === 'lost') continue;
       if (isAdminOwned(l.ownerId)) continue;
+      // Deactivated/archived owners drop off the live board — their open deals
+      // should be reassigned, not shown against a person who has left.
+      if (l.ownerId && !isLiveOwner(l.ownerId)) continue;
       const leadActMs = l.lastActivityAt ? new Date(l.lastActivityAt).getTime() : 0;
       for (const d of (l.deals || [])) {
         if (d.stage === 'closed_won' || d.stage === 'closed_lost') continue;
@@ -2070,7 +2079,8 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       dueToday: awaitingList.filter((a) => a.dueDate === new Date().toISOString().slice(0, 10))
         .sort((a, b) => String(a.ownerName).localeCompare(String(b.ownerName))),
       // Per-agent untouched counts for the dashboard filter tabs (most first).
-      untouchedByOwner: Object.values(untouchedByOwner).sort((a, b) => b.count - a.count),
+      // Deactivated/archived agents are dropped so they don't show as a tab.
+      untouchedByOwner: Object.values(untouchedByOwner).filter((o) => isLiveOwner(o.ownerId)).sort((a, b) => b.count - a.count),
       leadDaily,
       leadMonthly: leadMonthly.map((b) => ({ month: b.month, year: b.year, total: b.total, presales: b.presales, cold: b.cold, transferred: b.transferred })),
     });
