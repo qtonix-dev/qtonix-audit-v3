@@ -2566,6 +2566,25 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
       return `${dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}, ${time}`;
     } catch { return ''; }
   };
+  // Just the clock time ("5:30 PM") — shown on hover now that the date lives in
+  // the day separator (Teams style).
+  const fmtClock = (d) => { try { return new Date(d).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' }); } catch { return ''; } };
+  // Full absolute timestamp for the hover tooltip ("Mon, 22 Sep 2026, 5:30 PM").
+  const fmtFull = (d) => { try { return new Date(d).toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch { return ''; } };
+  // Teams-style date separator label: Today / Yesterday / weekday (this week) /
+  // full date. Shown once above the first message of each calendar day.
+  const dayLabel = (d) => {
+    try {
+      const dt = new Date(d); const now = new Date();
+      const atMidnight = (x) => { const y = new Date(x); y.setHours(0, 0, 0, 0); return y; };
+      const days = Math.round((atMidnight(now) - atMidnight(dt)) / 86400000);
+      if (days === 0) return 'Today';
+      if (days === 1) return 'Yesterday';
+      if (days > 1 && days < 7) return dt.toLocaleDateString('en-IN', { weekday: 'long' });
+      return dt.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    } catch { return ''; }
+  };
+  const sameCalDay = (a, b) => { try { return new Date(a).toDateString() === new Date(b).toDateString(); } catch { return false; } };
   const fmtSize = (b) => b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : b > 1024 ? `${Math.round(b / 1024)} KB` : `${b} B`;
   const dirShown = directory.filter((u) => !q || u.name.toLowerCase().includes(q.toLowerCase()));
 
@@ -2775,12 +2794,24 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
           <div ref={scrollRef} className="flex-1 overflow-auto px-3 md:px-6 py-4 md:py-5">
             {messages.map((m, i) => {
               const mine = m.mine != null ? m.mine : (m.senderId === me.id);
-              const showHead = i === 0 || messages[i - 1].senderId !== m.senderId;
+              // New calendar day since the previous message → Teams-style date
+              // separator. Start a fresh sender-head after a day break too.
+              const newDay = i === 0 || !sameCalDay(messages[i - 1].createdAt, m.createdAt);
+              const showHead = newDay || messages[i - 1].senderId !== m.senderId;
+              const daySep = newDay ? (
+                <div key={`sep-${m.id}`} className="flex items-center gap-3 my-4" aria-label={dayLabel(m.createdAt)}>
+                  <div className="flex-1 h-px bg-slate-200" />
+                  <span className="text-[11px] font-bold text-slate-500 bg-slate-100 rounded-full px-3 py-1">{dayLabel(m.createdAt)}</span>
+                  <div className="flex-1 h-px bg-slate-200" />
+                </div>
+              ) : null;
               // Task-notification card — color-coded + icon by event type.
               if (isTaskCard(m.kindTag)) {
                 const cs = taskCardStyle(m.kindTag);
                 return (
-                  <div key={m.id} id={`chatmsg-${m.id}`} className="my-3 rounded-xl px-3.5 py-3 flex items-center gap-3" style={{ background: cs.bg, border: `1px solid ${cs.border}` }}>
+                  <React.Fragment key={m.id}>
+                  {daySep}
+                  <div id={`chatmsg-${m.id}`} className="my-3 rounded-xl px-3.5 py-3 flex items-center gap-3" style={{ background: cs.bg, border: `1px solid ${cs.border}` }}>
                     <span className="w-9 h-9 rounded-lg flex items-center justify-center text-[17px] shrink-0" style={{ background: '#fff', border: `1px solid ${cs.border}` }}>{cs.icon}</span>
                     <div className="flex-1 min-w-0">
                       <div className="text-[10px] font-extrabold uppercase tracking-wide mb-0.5" style={{ color: cs.accent }}>{cs.label}</div>
@@ -2791,13 +2822,16 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
                     {m.taskId && (m.kindTag === 'task_assigned' || m.kindTag === 'task_coassigned') && <button onClick={() => markTaskDone(m.taskId)} title="Mark done" className="text-[12px] font-bold rounded-lg px-3 py-1.5 shrink-0" style={{ background: '#DCFCE7', color: '#15803D' }}>✓ Done</button>}
                     <button onClick={() => setReplyTo(m)} title="Reply (saves as task note)" className="text-[13px] font-bold shrink-0" style={{ color: cs.accent }}>↩</button>
                   </div>
+                  </React.Fragment>
                 );
               }
               return (
-                <div key={m.id} id={`chatmsg-${m.id}`} className={`group flex gap-3 ${mine ? 'flex-row-reverse' : ''} ${showHead ? 'mt-4' : 'mt-1'}`}>
+                <React.Fragment key={m.id}>
+                {daySep}
+                <div id={`chatmsg-${m.id}`} title={fmtFull(m.createdAt)} className={`group flex gap-3 ${mine ? 'flex-row-reverse' : ''} ${showHead ? 'mt-4' : 'mt-1'}`}>
                   {!mine ? (showHead ? <Avatar name={m.senderName} size={36} /> : <div style={{ width: 36 }} />) : <div style={{ width: 0 }} />}
                   <div className={`relative max-w-[70%] ${mine ? 'items-end' : ''} flex flex-col`}>
-                    {showHead && <div className={`flex items-baseline gap-2 mb-1 ${mine ? 'flex-row-reverse' : ''}`}><span className="text-[13px] font-bold">{mine ? 'You' : m.senderName}</span><span className="text-[10px] text-slate-400">{fmtTime(m.createdAt)}</span></div>}
+                    {showHead && <div className={`flex items-baseline gap-2 mb-1 ${mine ? 'flex-row-reverse' : ''}`}><span className="text-[13px] font-bold">{mine ? 'You' : m.senderName}</span><span className="text-[10px] text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity">{fmtClock(m.createdAt)}</span></div>}
                     {m.forwardedFrom && <div className={`text-[10px] text-slate-400 italic mb-0.5 ${mine ? 'text-right' : ''}`}>↪ Forwarded from {m.forwardedFrom}</div>}
                     {m.replyToId && <div className={`text-[11px] rounded-lg px-2.5 py-1 mb-0.5 border-l-2 ${mine ? 'self-end' : ''}`} style={{ background: '#f8fafc', borderColor: '#FF6A00', color: '#64748b' }}><b>{m.replyToName}</b>: {m.replyToBody}</div>}
                     {editingMsg && editingMsg.id === m.id ? (
@@ -2873,6 +2907,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
                     </div>
                   </div>
                 </div>
+                </React.Fragment>
               );
             })}
             {messages.length === 0 && <div className="text-center text-slate-300 text-sm py-10">{active.team && active.team.isTask ? '🔒 Your private space — task alerts land here, and you can jot notes too.' : 'Say hello 👋'}</div>}
