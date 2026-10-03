@@ -196,7 +196,7 @@ function LeadMiniList({ title, count, target, items, accent, onOpenLead, onSeeAl
   const [ownerFilter, setOwnerFilter] = useState(null); // ownerId | null = all
   const shownItems = ownerFilter == null ? items : items.filter((l) => l.ownerId === ownerFilter);
   return (
-    <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5 flex flex-col h-full">
+    <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5 flex flex-col">
       {/* Header */}
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="min-w-0">
@@ -242,10 +242,12 @@ function LeadMiniList({ title, count, target, items, accent, onOpenLead, onSeeAl
       {emptyHint && <div className="text-[11px] text-amber-600 bg-amber-50 rounded-lg px-2.5 py-1.5 mb-2">{emptyHint}</div>}
 
       {shownItems.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center text-slate-300 text-sm py-8">Nothing here yet.</div>
+        <div className="flex items-center justify-center text-slate-300 text-sm py-8" style={{ height: 290 }}>Nothing here yet.</div>
       ) : (
-        <div className="flex flex-col gap-1 overflow-y-auto overflow-x-hidden nice-scroll flex-1" style={{ minHeight: 160 }}>
-          {shownItems.map((l) => {
+        // Fixed window sized to ~5 rows; the rest scroll vertically inside. Only
+        // the most recent 15 are rendered here — "View all" opens the full list.
+        <div className="flex flex-col gap-1 overflow-y-auto overflow-x-hidden nice-scroll" style={{ height: 290 }}>
+          {shownItems.slice(0, 15).map((l) => {
             const today = isTodayIso(l.at);
             const [avBg, avFg] = agentColor(l.ownerName || l.name);
             const isGen = l.kind === 'generated';
@@ -1105,11 +1107,11 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
         />
       )}
 
-      {/* INTAKE — today's leads + untouched 3+ days. items-stretch so both cards
-          are the same height; each card fills with a flex column + a growing
-          scroll list (see LeadMiniList). */}
+      {/* INTAKE — today's leads + untouched 3+ days. Each card's list is a fixed
+          ~5-row window that scrolls vertically, so the cards never grow with the
+          data and both stay the same height (items-start = natural height). */}
       <SectionLabel>Intake</SectionLabel>
-      <div className="grid md:grid-cols-2 gap-4 items-stretch">
+      <div className="grid md:grid-cols-2 gap-4 items-start">
         {(() => {
           const todayItems = [...(lists.generatedToday || []), ...(lists.assignedToday || [])];
           const hasToday = todayItems.length > 0;
