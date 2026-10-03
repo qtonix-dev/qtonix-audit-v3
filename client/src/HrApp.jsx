@@ -446,6 +446,75 @@ const BUCKETS = [
 // recent-recognition feed.
 const REC_PERF = { praise: { label: 'Appreciation', icon: '🌟', bg: '#DCFCE7', fg: '#15803D' }, review: { label: 'Review', icon: '📝', bg: '#EFF6FF', fg: '#2563EB' }, yellow: { label: 'Yellow card', icon: '🟨', bg: '#FEF9C3', fg: '#CA8A04' }, red: { label: 'Red card', icon: '🟥', bg: '#FEE2E2', fg: '#DC2626' } };
 
+// ---------------------------------------------------------------------------
+// Shared CRM-matched UI helpers for the Recognition / Rewards restyle. These
+// mirror the CRM design system (Inter, white rounded-2xl cards, orange accent,
+// stable per-person colours) so HRMS screens feel like the same product.
+// ---------------------------------------------------------------------------
+const REC_FONT = "'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif";
+const VIOLET_HERO = 'radial-gradient(600px 200px at 85% -60%, #a78bfa66, transparent), linear-gradient(120deg,#4f46e5,#7c3aed)';
+// Stable per-person colour (same hashing as the CRM dashboard/leads).
+const REC_AV_PALETTE = [['#f3e8ff', '#7e22ce'], ['#fce7f3', '#9d174d'], ['#ccfbf1', '#115e59'], ['#e0e7ff', '#3730a3'], ['#fef3c7', '#92400e'], ['#dbeafe', '#1e40af'], ['#dcfce7', '#166534'], ['#ffedd5', '#9a3412'], ['#cffafe', '#155e75'], ['#fae8ff', '#86198f']];
+function recColor(name) { const s = String(name || '?'); let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return REC_AV_PALETTE[h % REC_AV_PALETTE.length]; }
+function recInitials(name) { return (name || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase(); }
+// Coloured square avatar (CRM style).
+function RecAvatar({ name, size = 34 }) {
+  const [bg, fg] = recColor(name);
+  return <div className="rounded-[11px] font-bold flex items-center justify-center shrink-0" style={{ width: size, height: size, background: bg, color: fg, fontSize: size * 0.38 }}>{recInitials(name)}</div>;
+}
+// CRM segmented pill tab bar (orange active).
+function RecTabs({ tabs, value, onChange }) {
+  return (
+    <div className="inline-flex items-center gap-1 bg-white border border-slate-200/80 rounded-2xl p-1.5 shadow-sm flex-wrap">
+      {tabs.map(([id, label]) => (
+        <button key={id} onClick={() => onChange(id)}
+          className={`px-3.5 py-2 rounded-xl text-sm font-medium transition ${value === id ? 'bg-orange-50 text-orange-700 ring-1 ring-orange-200 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'}`}>{label}</button>
+      ))}
+    </div>
+  );
+}
+// Bigger icon+label sub-tabs (for My Rewards / Rewards Admin). Active = orange
+// gradient fill.
+function RwTabs({ tabs, value, onChange }) {
+  return (
+    <div className="flex gap-2 flex-wrap">
+      {tabs.map(([id, label, icon]) => {
+        const on = value === id;
+        return (
+          <button key={id} onClick={() => onChange(id)}
+            className="inline-flex items-center gap-2 rounded-2xl text-sm font-semibold transition border shadow-sm"
+            style={on
+              ? { padding: '11px 18px', background: 'linear-gradient(to right,#f97316,#f59e0b)', color: '#fff', borderColor: 'transparent', boxShadow: '0 4px 12px -3px #f9731699' }
+              : { padding: '11px 18px', background: '#fff', color: '#475569', borderColor: '#e2e8f0' }}>
+            {icon && <span className="text-[17px] leading-none">{icon}</span>}{label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+// Tinted-corner KPI box (CRM CbKpi). tone sets the accent.
+function RecKpi({ label, value, foot, tone = 'slate', icon, gradient }) {
+  const t = {
+    slate: { corner: '#64748b0d', chip: '#f1f5f9', chipFg: '#475569', label: '#94a3b8', num: '#0f172a' },
+    emerald: { corner: '#10b9810d', chip: '#dcfce7', chipFg: '#059669', label: '#059669', num: '#047857' },
+    indigo: { corner: '#6366f10d', chip: '#e0e7ff', chipFg: '#4f46e5', label: '#4f46e5', num: '#4338ca' },
+    orange: { corner: '#f973160d', chip: '#ffedd5', chipFg: '#ea580c', label: '#ea580c', num: '#c2410c' },
+    blue: { corner: '#2563eb0d', chip: '#dbeafe', chipFg: '#2563eb', label: '#2563eb', num: '#1e40af' },
+  }[tone] || { corner: '#64748b0d', chip: '#f1f5f9', chipFg: '#475569', label: '#94a3b8', num: '#0f172a' };
+  return (
+    <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm relative overflow-hidden" style={gradient ? { background: gradient } : {}}>
+      <div className="absolute top-0 right-0 w-24 h-24 rounded-bl-full pointer-events-none" style={{ background: t.corner }} />
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-bold uppercase tracking-wider" style={{ color: t.label }}>{label}</span>
+        {icon && <span className="p-2 rounded-xl text-[15px] leading-none" style={{ background: t.chip, color: t.chipFg }}>{icon}</span>}
+      </div>
+      <div className="text-3xl font-extrabold tracking-tight mt-2" style={{ color: t.num }}>{value}</div>
+      {foot && <div className="text-xs mt-2 text-slate-500">{foot}</div>}
+    </div>
+  );
+}
+
 // The employee's own recognition: 4 stat boxes + a paginated list of everything
 // they've received. Closes on the × button or a click outside.
 function MyRecognitionModal({ data, onClose }) {
@@ -522,69 +591,61 @@ function MyRewardsPage({ user, embedded }) {
   const fmt = (d) => { try { return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return ''; } };
   const catIcon = { badge: '🏅', automatic: '🎁', anniversary: '🎊', attendance: '📅', appreciation: '❤️', helping: '❤️', innovation: '💡', performance: '🎯' };
   return (
-    <div className={embedded ? '' : 'max-w-4xl mx-auto px-4 py-6'}>
-      {!embedded && <div className="text-xl font-extrabold text-[#050A1F] flex items-center gap-2 mb-4">⭐ My Rewards</div>}
-      <div className="flex gap-1 border-b border-slate-200 mb-5">
-        {[['wallet', 'Wallet'], ['store', '🎁 Store'], ['helping', '🤝 Helping Hand'], ['ideas', '💡 Ideas'], ['leaderboards', '🏆 Leaderboards']].map(([id, label]) => (
-          <button key={id} onClick={() => setTab(id)} className="px-3.5 py-1.5 text-[12px] font-extrabold border-b-2 -mb-px" style={{ borderColor: tab === id ? '#FF6A00' : 'transparent', color: tab === id ? '#050A1F' : '#94A3B8' }}>{label}</button>
-        ))}
+    <div className={embedded ? '' : 'max-w-4xl mx-auto px-4 py-6'} style={{ fontFamily: REC_FONT }}>
+      {!embedded && <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 mb-4">⭐ My Rewards</h1>}
+      <div className="mb-5">
+        <RwTabs tabs={[['wallet', 'Wallet', '👛'], ['store', 'Store', '🎁'], ['helping', 'Helping Hand', '🤝'], ['ideas', 'Ideas', '💡'], ['leaderboards', 'Leaderboards', '🏆']]} value={tab} onChange={setTab} />
       </div>
       {tab === 'store' && <RewardStoreView />}
       {tab === 'helping' && <HelpingHandView />}
       {tab === 'ideas' && <MyIdeasView />}
       {tab === 'leaderboards' && <LeaderboardsView onOpenEmployee={() => {}} />}
-      {tab === 'wallet' && <></>}
       {tab === 'wallet' && <>
       <div className="grid md:grid-cols-3 gap-4 mb-5">
-        <div className="rounded-2xl p-5 text-white relative overflow-hidden" style={{ background: 'linear-gradient(120deg,#0A0E28,#0435AC)' }}>
-          <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: '#9fb4dd' }}>Reward Wallet</div>
-          <div className="text-4xl font-extrabold mt-1 leading-none">{(w.balance || 0).toLocaleString('en-IN')}</div>
-          <div className="text-sm font-bold mt-2" style={{ color: '#ffd9b8' }}>💰 ₹{(w.rupeeValue || 0).toLocaleString('en-IN')} reward value</div>
-          {w.reserved > 0 && <div className="text-[11px] mt-1" style={{ color: '#9fb4dd' }}>{w.reserved} reserved for pending redemptions</div>}
+        {/* Indigo / violet reward wallet. */}
+        <div className="rounded-2xl p-6 text-white relative overflow-hidden" style={{ background: VIOLET_HERO }}>
+          <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: '#e0e7ff' }}>Reward wallet</div>
+          <div className="text-4xl font-extrabold mt-1.5 leading-none">{(w.balance || 0).toLocaleString('en-IN')}</div>
+          <div className="text-sm font-bold mt-2.5">💰 ₹{(w.rupeeValue || 0).toLocaleString('en-IN')} reward value</div>
+          {w.reserved > 0 && <div className="text-[11px] mt-1" style={{ color: '#c7d2fe' }}>{w.reserved} reserved for pending redemptions</div>}
         </div>
-        <div className="bg-white rounded-2xl border border-slate-200 p-5">
-          <div className="text-2xl font-extrabold text-green-600">{((data.thisYear || {}).earned || 0).toLocaleString('en-IN')}</div>
-          <div className="text-[11px] text-slate-400 font-bold uppercase mt-0.5">Earned this year</div>
-          <div className="text-[11px] text-slate-400 mt-2">Lifetime earned: {(w.lifetimeEarned || 0).toLocaleString('en-IN')}</div>
-        </div>
-        <div className="bg-white rounded-2xl border border-slate-200 p-5">
-          <div className="text-2xl font-extrabold text-blue-600">{(w.lifetimeRedeemed || 0).toLocaleString('en-IN')}</div>
-          <div className="text-[11px] text-slate-400 font-bold uppercase mt-0.5">Redeemed</div>
-          <div className="text-[11px] text-slate-400 mt-2">Expired: {(w.lifetimeExpired || 0).toLocaleString('en-IN')}</div>
-        </div>
+        <RecKpi label="Earned this year" tone="emerald" icon="📈" gradient="linear-gradient(135deg,#f0fdf4,#fff)"
+          value={((data.thisYear || {}).earned || 0).toLocaleString('en-IN')} foot={`Lifetime earned: ${(w.lifetimeEarned || 0).toLocaleString('en-IN')}`} />
+        <RecKpi label="Redeemed" tone="indigo" icon="🎁" gradient="linear-gradient(135deg,#eef2ff,#fff)"
+          value={(w.lifetimeRedeemed || 0).toLocaleString('en-IN')} foot={`Expired: ${(w.lifetimeExpired || 0).toLocaleString('en-IN')}`} />
       </div>
       {club && (club.club || club.next) && (
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 mb-5">
-          <div className="flex items-center gap-3 mb-2">
+        <div className="rounded-2xl border border-amber-200/70 p-5 mb-5" style={{ background: 'linear-gradient(135deg,#fffbeb,#fff)' }}>
+          <div className="flex items-center gap-3 mb-2.5">
             <span className="text-3xl">{club.club ? club.club.icon : '🎯'}</span>
             <div className="flex-1">
-              <div className="text-[15px] font-extrabold text-[#050A1F]">{club.club ? club.club.name : 'On your way to your first club'}</div>
+              <div className="text-[15px] font-bold text-slate-900">{club.club ? club.club.name : 'On your way to your first club'}</div>
               <div className="text-[12px] text-slate-400">{(club.lifetime || 0).toLocaleString('en-IN')} lifetime points earned</div>
             </div>
-            {club.next && <span className="text-[11px] font-bold text-slate-400">Next: {club.next.icon} {club.next.name}</span>}
+            {club.next && <span className="text-[11px] font-semibold rounded-full px-2.5 py-1" style={{ background: '#fef3c7', color: '#b45309' }}>Next: {club.next.icon} {club.next.name}</span>}
           </div>
           {club.next && (
             <>
-              <div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${club.progress}%`, background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }} /></div>
-              <div className="text-[10px] text-slate-400 mt-1">{(club.lifetime || 0).toLocaleString('en-IN')} / {club.next.need.toLocaleString('en-IN')} — {(club.next.need - club.lifetime).toLocaleString('en-IN')} points to {club.next.name}</div>
+              <div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${club.progress}%`, background: 'linear-gradient(90deg,#f97316,#f59e0b)' }} /></div>
+              <div className="text-[10px] text-slate-400 mt-1.5">{(club.lifetime || 0).toLocaleString('en-IN')} / {club.next.need.toLocaleString('en-IN')} — {(club.next.need - club.lifetime).toLocaleString('en-IN')} points to {club.next.name}</div>
             </>
           )}
         </div>
       )}
       {data.expiringSoon > 0 && (
-        <div className="rounded-xl px-4 py-3 mb-5 text-sm font-semibold" style={{ background: '#FFF7ED', border: '1px solid #FED7AA', color: '#9a3412' }}>⚠️ {data.expiringSoon.toLocaleString('en-IN')} points expire in the next 90 days.</div>
+        <div className="rounded-2xl px-4 py-3 mb-5 text-sm font-semibold" style={{ background: '#FFF7ED', border: '1px solid #FED7AA', color: '#9a3412' }}>⚠️ {data.expiringSoon.toLocaleString('en-IN')} points expire in the next 90 days.</div>
       )}
-      <div className="bg-white rounded-2xl border border-slate-200 p-5">
-        <div className="text-sm font-extrabold text-[#050A1F] mb-3">📒 Point Ledger</div>
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
+        <div className="text-[15px] font-bold text-slate-900 mb-3">📒 Point ledger</div>
         {(data.ledger || []).length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-400">No reward points yet. Earn points through recognition, badges and milestones!</div>
         ) : (
           <div className="space-y-1">
             {(data.ledger || []).map((l) => (
-              <div key={l.id} className="flex items-center gap-3 py-2.5 border-t border-slate-50 first:border-0">
-                <span className="w-9 h-9 rounded-lg flex items-center justify-center text-base shrink-0" style={{ background: l.points > 0 ? '#DCFCE7' : '#FEE2E2' }}>{catIcon[l.category] || (l.points > 0 ? '➕' : '➖')}</span>
+              <div key={l.id} className="flex items-center gap-3 py-3 border-t border-slate-50 first:border-0">
+                <span className="w-9 h-9 rounded-[11px] flex items-center justify-center text-[17px] shrink-0" style={{ background: l.points > 0 ? '#DCFCE7' : '#FEE2E2' }}>{catIcon[l.category] || (l.points > 0 ? '➕' : '➖')}</span>
                 <div className="flex-1 min-w-0">
-                  <div className="text-[13px] font-bold text-[#0A0E28]">{l.title || l.category || 'Reward'}</div>
+                  <div className="text-[13px] font-bold text-slate-900">{l.title || l.category || 'Reward'}</div>
                   <div className="text-[11px] text-slate-400">{fmt(l.date)}{l.by && l.by !== 'System' ? ` · by ${l.by}${l.byRole ? ` (${l.byRole})` : ''}` : (l.kind === 'reversal' ? ' · Reversal' : ' · Automatic')}</div>
                 </div>
                 <span className={`font-extrabold text-sm shrink-0 ${l.points > 0 ? 'text-green-600' : 'text-red-600'}`}>{l.points > 0 ? '+' : ''}{l.points.toLocaleString('en-IN')}</span>
@@ -731,9 +792,9 @@ function RewardStoreView() {
   const statusPill = (s) => ({ requested: ['Pending', '#CA8A04', '#FEF9C3'], delivered: ['Delivered', '#15803D', '#DCFCE7'], paid: ['Paid w/ salary', '#15803D', '#DCFCE7'], rejected: ['Refunded', '#DC2626', '#FEE2E2'], cancelled: ['Cancelled', '#64748B', '#F1F5F9'] }[s] || ['—', '#64748B', '#F1F5F9']);
   return (
     <div>
-      <div className="rounded-2xl p-4 mb-4 text-white flex items-center justify-between" style={{ background: 'linear-gradient(120deg,#0A0E28,#0435AC)' }}>
+      <div className="rounded-2xl p-5 mb-4 text-white flex items-center justify-between" style={{ background: VIOLET_HERO }}>
         <div className="text-[15px] font-extrabold">🎁 Reward Store</div>
-        <div className="text-sm font-bold" style={{ color: '#ffd9b8' }}>⭐ {bal.toLocaleString('en-IN')} points available</div>
+        <div className="text-sm font-bold" style={{ color: '#fde68a' }}>⭐ {bal.toLocaleString('en-IN')} points available</div>
       </div>
       <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-3">
         {(data.items || []).map((it) => {
@@ -825,19 +886,19 @@ function LeaderboardsView() {
   ];
   const medal = ['🥇', '🥈', '🥉'];
   return (
-    <div className="grid md:grid-cols-2 gap-4">
+    <div className="grid md:grid-cols-2 gap-4" style={{ fontFamily: REC_FONT }}>
       {boards.map(([title, rows, unit]) => (
-        <div key={title} className="bg-white rounded-2xl border border-slate-200 p-4">
-          <div className="text-sm font-extrabold text-[#050A1F] mb-2">{title}</div>
+        <div key={title} className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
+          <div className="text-[15px] font-bold text-slate-900 mb-2">{title}</div>
           {(!rows || rows.length === 0) ? <div className="text-[13px] text-slate-400 py-3">No entries yet.</div> : (
-            <div className="space-y-1">
+            <div className="space-y-0.5">
               {rows.slice(0, 8).map((r, i) => (
-                <div key={r.id} className="flex items-center gap-2 py-1.5 text-[13px] border-t border-slate-50 first:border-0">
-                  <span className="w-6 text-center">{medal[i] || (i + 1)}</span>
-                  <Avatar name={r.name} size={26} />
-                  <span className="font-bold truncate">{r.name}</span>
+                <div key={r.id} className="flex items-center gap-2.5 py-2 text-[13px] border-t border-slate-50 first:border-0">
+                  <span className="w-6 text-center text-base">{medal[i] || <span className="text-slate-400 font-bold text-xs">{i + 1}</span>}</span>
+                  <RecAvatar name={r.name} size={28} />
+                  <span className="font-bold text-slate-900 truncate">{r.name}</span>
                   <span className="text-[11px] text-slate-400 truncate">{r.department}</span>
-                  <span className="ml-auto font-extrabold" style={{ color: '#0435AC' }}>{r.value.toLocaleString('en-IN')}<span className="text-[10px] text-slate-400 font-normal ml-0.5">{unit}</span></span>
+                  <span className="ml-auto font-extrabold text-indigo-700">{r.value.toLocaleString('en-IN')}<span className="text-[10px] text-slate-400 font-normal ml-0.5">{unit}</span></span>
                 </div>
               ))}
             </div>
@@ -870,32 +931,31 @@ function RewardsAdmin() {
   const cats = {}; (data.rules || []).forEach((r) => { (cats[r.category] = cats[r.category] || []).push(r); });
   const catLabel = { badge: '🏅 Badges', appreciation: '❤️ Appreciation', automatic: '🎁 Automatic', anniversary: '🎊 Anniversary', attendance: '📅 Attendance' };
   return (
-    <div className="space-y-4">
-      <div className="rounded-2xl border p-5 flex items-center justify-between gap-4 flex-wrap" style={{ background: live ? '#F0FDF4' : '#FFF7ED', borderColor: live ? '#BBF7D0' : '#FED7AA' }}>
+    <div className="space-y-4" style={{ fontFamily: REC_FONT }}>
+      <div className="rounded-2xl border shadow-sm p-5 flex items-center justify-between gap-4 flex-wrap" style={{ background: live ? 'linear-gradient(135deg,#f0fdf4,#fff)' : 'linear-gradient(135deg,#fff7ed,#fff)', borderColor: live ? '#BBF7D0' : '#FED7AA' }}>
         <div>
-          <div className="text-[15px] font-extrabold" style={{ color: live ? '#15803D' : '#9a3412' }}>{live ? '✅ Rewards are LIVE' : '⏸ Rewards are paused'}</div>
+          <div className="text-[15px] font-bold" style={{ color: live ? '#15803D' : '#9a3412' }}>{live ? '✅ Rewards are LIVE' : '⏸ Rewards are paused'}</div>
           <div className="text-[12px] mt-0.5" style={{ color: live ? '#166534' : '#9a3412' }}>{live ? `Recognition and milestones are awarding points${cfg.liveSince ? ` since ${cfg.liveSince}` : ''}.` : 'No points are being awarded yet. Review the point values below, then turn Rewards on.'}</div>
           {!live && <div className="text-[11px] mt-1" style={{ color: '#9a3412' }}>On activation: all points reset to zero, birthdays & anniversaries from the last 30 days are credited, everything else counts from that day forward.</div>}
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={resetPoints} disabled={busy === 'reset'} className="rounded-xl px-4 py-2.5 text-sm font-bold text-slate-600 border border-slate-300 disabled:opacity-50">{busy === 'reset' ? '…' : 'Reset points'}</button>
+          <button onClick={resetPoints} disabled={busy === 'reset'} className="rounded-xl px-4 py-2.5 text-sm font-bold text-slate-600 bg-white border border-slate-200 disabled:opacity-50">{busy === 'reset' ? '…' : 'Reset points'}</button>
           <button onClick={toggleLive} disabled={busy === 'live'} className="rounded-xl px-5 py-2.5 text-sm font-extrabold text-white disabled:opacity-50" style={{ background: live ? '#DC2626' : 'linear-gradient(90deg,#16A34A,#15803D)' }}>{busy === 'live' ? '…' : (live ? 'Pause Rewards' : 'Turn Rewards ON')}</button>
         </div>
       </div>
       {ov && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="bg-white border border-slate-200 rounded-xl p-3"><div className="text-xl font-extrabold text-green-600">{(ov.issued || 0).toLocaleString('en-IN')}</div><div className="text-[10px] font-bold uppercase text-slate-400">Points issued</div></div>
-          <div className="bg-white border border-slate-200 rounded-xl p-3"><div className="text-xl font-extrabold text-blue-600">{(ov.redeemed || 0).toLocaleString('en-IN')}</div><div className="text-[10px] font-bold uppercase text-slate-400">Redeemed</div></div>
-          <div className="bg-white border border-slate-200 rounded-xl p-3"><div className="text-xl font-extrabold text-orange-600">{(ov.outstanding || 0).toLocaleString('en-IN')}</div><div className="text-[10px] font-bold uppercase text-slate-400">Outstanding</div></div>
-          <div className="rounded-xl p-3 text-white" style={{ background: 'linear-gradient(120deg,#7C2D12,#B45309)' }}><div className="text-xl font-extrabold">₹{(ov.liabilityRupees || 0).toLocaleString('en-IN')}</div><div className="text-[10px] font-bold uppercase" style={{ color: '#ffe4d3' }}>Reward liability</div></div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <RecKpi label="Points issued" tone="emerald" icon="➕" gradient="linear-gradient(135deg,#f0fdf4,#fff)" value={(ov.issued || 0).toLocaleString('en-IN')} />
+          <RecKpi label="Redeemed" tone="indigo" icon="🎁" gradient="linear-gradient(135deg,#eef2ff,#fff)" value={(ov.redeemed || 0).toLocaleString('en-IN')} />
+          <RecKpi label="Outstanding" tone="orange" icon="⏳" gradient="linear-gradient(135deg,#fff7ed,#fff)" value={(ov.outstanding || 0).toLocaleString('en-IN')} />
+          <div className="rounded-2xl p-5 text-white relative overflow-hidden" style={{ background: 'linear-gradient(120deg,#7C2D12,#B45309)' }}>
+            <div className="flex items-center justify-between"><span className="text-xs font-bold uppercase tracking-wider" style={{ color: '#ffe4d3' }}>Reward liability</span><span className="p-2 rounded-xl text-[15px] leading-none" style={{ background: '#ffffff26' }}>₹</span></div>
+            <div className="text-3xl font-extrabold tracking-tight mt-2">₹{(ov.liabilityRupees || 0).toLocaleString('en-IN')}</div>
+          </div>
         </div>
       )}
-      {/* Sub-tabs */}
-      <div className="flex gap-1 border-b border-slate-200">
-        {[['rules', 'Point values'], ['budgets', 'Budgets'], ['approvals', 'Approvals'], ['helping', 'Helping Hand'], ['innovation', 'Innovation'], ['store', 'Store'], ['analytics', 'Analytics']].map(([id, label]) => (
-          <button key={id} onClick={() => setSub(id)} className="px-3.5 py-1.5 text-[12px] font-extrabold border-b-2 -mb-px" style={{ borderColor: sub === id ? '#FF6A00' : 'transparent', color: sub === id ? '#050A1F' : '#94A3B8' }}>{label}</button>
-        ))}
-      </div>
+      {/* Sub-tabs — CRM segmented pill bar. */}
+      <RecTabs tabs={[['rules', 'Point values'], ['budgets', 'Budgets'], ['approvals', 'Approvals'], ['helping', 'Helping Hand'], ['innovation', 'Innovation'], ['store', 'Store'], ['analytics', 'Analytics']]} value={sub} onChange={setSub} />
       {sub === 'budgets' && <RewardBudgets />}
       {sub === 'approvals' && <RewardApprovals />}
       {sub === 'helping' && <HelpingQueue />}
@@ -1320,40 +1380,42 @@ function RecognitionPage({ user, onOpenEmployee }) {
   useEffect(() => { load(); }, []);
   const fmt = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }); } catch { return d; } };
   return (
-    <div className="max-w-5xl mx-auto px-4 py-6">
-      <div className="mb-4">
-        <div className="text-xl font-extrabold text-[#050A1F] flex items-center gap-2">🏅 Recognition</div>
-        <div className="text-sm text-slate-500">{canGive ? 'Appreciate your colleagues, or review recognition across the company.' : (canViewAll ? 'Review recognition across the company and see your own rewards.' : 'See your rewards and recognition.')}</div>
-      </div>
-      <div className="flex gap-1 border-b border-slate-200 mb-5">
-        {TABS.map(([id, label]) => (
-          <button key={id} onClick={() => setTab(id)} className="px-4 py-2 text-[13px] font-extrabold border-b-2 -mb-px transition" style={{ borderColor: tab === id ? '#FF6A00' : 'transparent', color: tab === id ? '#050A1F' : '#94A3B8' }}>{label}</button>
-        ))}
+    <div className="max-w-5xl mx-auto px-4 py-6 space-y-5" style={{ fontFamily: REC_FONT }}>
+      <div>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">🏅 Recognition</h1>
+        </div>
+        <div className="text-sm text-slate-500 mt-1">{canGive ? 'Appreciate your colleagues, or review recognition across the company.' : (canViewAll ? 'Review recognition across the company and see your own rewards.' : 'See your rewards and recognition.')}</div>
+        <div className="mt-4"><RecTabs tabs={TABS} value={tab} onChange={setTab} /></div>
       </div>
       {canGive && tab === 'give' && (
-        <div>
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 mb-5 flex items-center justify-between gap-4 flex-wrap">
+        <div className="space-y-4">
+          {/* Indigo / violet give-recognition hero. */}
+          <div className="relative overflow-hidden rounded-2xl p-6 text-white flex items-center justify-between gap-4 flex-wrap" style={{ background: VIOLET_HERO }}>
             <div>
-              <div className="text-[15px] font-extrabold text-[#050A1F]">Give recognition</div>
-              <div className="text-[13px] text-slate-500 mt-0.5">Pick a team member, add a badge or note, and celebrate their work.</div>
+              <div className="text-[17px] font-extrabold">🎉 Give recognition</div>
+              <div className="text-[13px] mt-1" style={{ color: '#e0e7ff' }}>Pick a team member, add a badge or note, and celebrate their work.</div>
             </div>
-            <button onClick={() => setGive(true)} className="rounded-xl px-5 py-2.5 text-sm font-extrabold text-white shrink-0" style={{ background: ORANGE }}>+ Give recognition</button>
+            <button onClick={() => setGive(true)} className="rounded-xl px-5 py-2.5 text-sm font-bold shrink-0 bg-white" style={{ color: '#4f46e5' }}>＋ Give recognition</button>
           </div>
-          <div className="bg-white rounded-2xl border border-slate-200 p-5">
-            <div className="text-sm font-extrabold text-[#050A1F] mb-3">✨ Recent recognition</div>
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
+            <div className="text-[15px] font-bold text-slate-900 mb-4 flex items-center gap-2">✨ Recent recognition</div>
             {(!data || (data.recent || []).length === 0) ? (
-              <div className="text-sm text-slate-400 py-6 text-center">No recognition yet. Give the first one! 🎉</div>
+              <div className="text-sm text-slate-400 py-8 text-center">No recognition yet. Give the first one! 🎉</div>
             ) : (
-              <div className="grid sm:grid-cols-2 gap-x-6 gap-y-3">
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
                 {(data.recent || []).map((r, i) => {
                   const bd = r.badge || REC_BADGE_FALLBACK;
+                  const c = bd.color || '#EA580C';
                   return (
-                    <div key={i} className="flex items-start gap-2.5">
-                      <span className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-base" style={{ background: (bd.color || '#EA580C') + '18' }}>{bd.icon}</span>
-                      <div className="min-w-0">
-                        <div className="text-[13px] text-[#0A0E28]"><button onClick={() => onOpenEmployee(r.employeeId)} className="font-bold hover:text-orange-600">{r.employeeName}</button>{r.badge ? <> earned <span className="font-bold">{r.badge.name}</span></> : ' was appreciated'}</div>
-                        <div className="text-[10px] text-slate-400">{r.auto ? 'Auto' : `by ${r.by}`}{r.byRole ? ` (${r.byRole})` : ''} · {fmt(r.date)}</div>
+                    <div key={i} onClick={() => onOpenEmployee(r.employeeId)} className="relative overflow-hidden rounded-2xl p-4 border cursor-pointer hover:shadow-md transition-shadow" style={{ background: `linear-gradient(135deg,${c}12,#fff)`, borderColor: c + '33' }}>
+                      <span className="w-11 h-11 rounded-2xl flex items-center justify-center text-[22px]" style={{ background: c + '22', color: c, boxShadow: '0 4px 10px -4px #0003' }}>{bd.icon}</span>
+                      <div className="text-sm font-extrabold text-slate-900 mt-3">{r.badge ? r.badge.name : 'Appreciated'}</div>
+                      <div className="flex items-center gap-2 mt-2.5">
+                        <RecAvatar name={r.employeeName} size={28} />
+                        <span className="text-[13px] font-bold text-slate-900 truncate">{r.employeeName}</span>
                       </div>
+                      <div className="text-[11px] text-slate-500 mt-2">{r.auto ? '🤖 Auto-awarded' : `Given by ${r.by}${r.byRole ? ` (${r.byRole})` : ''}`} · {fmt(r.date)}</div>
                     </div>
                   );
                 })}
@@ -1389,12 +1451,12 @@ function AllRecognition({ onOpenEmployee }) {
   const [autoBusy, setAutoBusy] = useState(false);
   const runAuto = async () => { setAutoBusy(true); try { await hrApi('/badges/run-auto', { method: 'POST', body: '{}' }); await load(); toast('Milestone badges updated.'); } catch (e) { toast(e.message); } setAutoBusy(false); };
   return (
-    <div>
+    <div style={{ fontFamily: REC_FONT }}>
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-        <div className="text-[12px] text-slate-400">Every appreciation, review and conduct flag given across {data && data.scopedBranch ? 'your branch' : 'the company'}. Auto badges (attendance milestones) are awarded automatically.</div>
-        <button onClick={runAuto} disabled={autoBusy} className="text-[12px] font-bold rounded-lg px-3 py-1.5 disabled:opacity-50" style={{ background: '#EDE9FE', color: '#7C3AED' }}>{autoBusy ? 'Checking…' : '⚡ Run milestone check'}</button>
+        <div className="text-[12px] text-slate-400 max-w-2xl">Every appreciation, review and conduct flag given across {data && data.scopedBranch ? 'your branch' : 'the company'}. Auto badges (attendance milestones) are awarded automatically.</div>
+        <button onClick={runAuto} disabled={autoBusy} className="text-[12px] font-bold rounded-xl px-3 py-1.5 disabled:opacity-50" style={{ background: '#EDE9FE', color: '#7C3AED' }}>{autoBusy ? 'Checking…' : '⚡ Run milestone check'}</button>
       </div>
-      <div className="bg-white border border-slate-200 rounded-xl p-3 mb-3 flex flex-wrap gap-2 items-center">
+      <div className="bg-white border border-slate-200/80 shadow-sm rounded-2xl p-3 mb-3 flex flex-wrap gap-2 items-center">
         <select className={sel} value={f.type} onChange={(e) => set('type', e.target.value)}><option value="">All types</option><option value="praise">Appreciation</option><option value="review">Review</option><option value="yellow">Yellow card</option><option value="red">Red card</option></select>
         {data && data.scopedBranch ? (
           <span className="text-[12px] font-bold text-slate-500 rounded-lg bg-slate-100 px-2.5 py-1.5">🏢 {data.scopedBranch}</span>
@@ -1407,23 +1469,23 @@ function AllRecognition({ onOpenEmployee }) {
         <span className="text-slate-400 text-sm">→</span>
         <input type="date" className={sel} value={f.to} onChange={(e) => set('to', e.target.value)} />
       </div>
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+      <div className="bg-white border border-slate-200/80 shadow-sm rounded-2xl overflow-hidden">
         <table className="w-full text-[13px]">
           <thead><tr className="text-[10px] font-extrabold uppercase tracking-wide text-slate-400 bg-slate-50">
-            <th className="text-left px-4 py-2.5">Recognition</th><th className="text-left px-4 py-2.5">Employee</th><th className="text-left px-4 py-2.5">Given by</th><th className="text-left px-4 py-2.5">Date</th>
+            <th className="text-left px-4 py-3">Recognition</th><th className="text-left px-4 py-3">Employee</th><th className="text-left px-4 py-3">Given by</th><th className="text-left px-4 py-3">Date</th>
           </tr></thead>
           <tbody>
             {(!data || (data.rows || []).length === 0) ? (
-              <tr><td colSpan={4} className="px-4 py-10 text-center text-slate-400">No recognition matches these filters.</td></tr>
+              <tr><td colSpan={4} className="px-4 py-12 text-center text-slate-400">No recognition matches these filters.</td></tr>
             ) : (data.rows || []).map((r) => {
               const meta = REC_PERF[r.kind] || REC_PERF.review;
               const icon = r.badge ? r.badge.icon : meta.icon;
               return (
-                <tr key={r.id} className="border-t border-slate-50">
-                  <td className="px-4 py-2.5"><div className="flex items-center gap-2.5"><span className="w-8 h-8 rounded-lg flex items-center justify-center text-base shrink-0" style={{ background: r.badge ? (r.badge.color + '22') : meta.bg }}>{icon}</span><div><div className="text-[12px] font-extrabold text-[#050A1F]">{r.title || meta.label}</div><span className="text-[9px] font-extrabold rounded-full px-2 py-0.5" style={{ background: meta.bg, color: meta.fg }}>{meta.label.toUpperCase()}</span></div></div></td>
-                  <td className="px-4 py-2.5"><button onClick={() => onOpenEmployee(r.employeeId)} className="text-[13px] font-bold text-[#0A0E28] hover:text-orange-600">{r.employeeName}</button><div className="text-[11px] text-slate-400">{[r.department, r.branch].filter(Boolean).join(' · ')}</div></td>
-                  <td className="px-4 py-2.5"><div className="text-[12px] font-semibold">{r.by}</div><div className="text-[10px] text-slate-400">{r.byRole}</div></td>
-                  <td className="px-4 py-2.5 text-[12px] text-slate-600">{fmt(r.date)}</td>
+                <tr key={r.id} className="border-t border-slate-50 hover:bg-slate-50/60">
+                  <td className="px-4 py-3"><div className="flex items-center gap-2.5"><span className="w-9 h-9 rounded-[11px] flex items-center justify-center text-[17px] shrink-0" style={{ background: r.badge ? (r.badge.color + '22') : meta.bg }}>{icon}</span><div><div className="text-[13px] font-bold text-slate-900">{r.title || meta.label}</div><span className="inline-flex text-[10px] font-semibold rounded-full px-2 py-0.5 mt-0.5" style={{ background: meta.bg, color: meta.fg }}>{meta.label}</span></div></div></td>
+                  <td className="px-4 py-3"><div className="flex items-center gap-2.5"><RecAvatar name={r.employeeName} size={30} /><div><button onClick={() => onOpenEmployee(r.employeeId)} className="text-[13px] font-bold text-slate-900 hover:text-orange-600">{r.employeeName}</button><div className="text-[11px] text-slate-400">{[r.department, r.branch].filter(Boolean).join(' · ')}</div></div></div></td>
+                  <td className="px-4 py-3"><div className="text-[12px] font-semibold text-slate-700">{r.by}</div><div className="text-[10px] text-slate-400">{r.byRole}</div></td>
+                  <td className="px-4 py-3 text-[12px] text-slate-600">{fmt(r.date)}</td>
                 </tr>
               );
             })}
@@ -1432,9 +1494,9 @@ function AllRecognition({ onOpenEmployee }) {
       </div>
       {data && data.pages > 1 && (
         <div className="flex items-center justify-between mt-3">
-          <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="rounded-lg border border-slate-300 px-3 py-1.5 text-[12px] font-bold text-slate-600 disabled:opacity-40">‹ Prev</button>
+          <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="rounded-xl border border-slate-200 px-3 py-1.5 text-[12px] font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40">‹ Prev</button>
           <span className="text-[12px] text-slate-400">Page {data.page} of {data.pages} · {data.total} records</span>
-          <button onClick={() => setPage((p) => Math.min(data.pages, p + 1))} disabled={page === data.pages} className="rounded-lg border border-slate-300 px-3 py-1.5 text-[12px] font-bold text-slate-600 disabled:opacity-40">Next ›</button>
+          <button onClick={() => setPage((p) => Math.min(data.pages, p + 1))} disabled={page === data.pages} className="rounded-xl border border-slate-200 px-3 py-1.5 text-[12px] font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40">Next ›</button>
         </div>
       )}
     </div>
