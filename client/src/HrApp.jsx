@@ -2475,7 +2475,9 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
   const syncEditor = () => { if (edRef.current) { const v = htmlToMarkers(edRef.current.innerHTML); setText(v); } };
   // Set the editor's content from markers (bold/italic) — used for AI results etc.
   const setEditor = (markerText) => {
-    const html = String(markerText || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/_([^_]+)_/g, '<i>$1</i>').replace(/\n/g, '<br>');
+    // Italic only on word-boundary underscores (same rule as fmtBody) so
+    // identifiers / pasted keys keep their underscores when loaded into the editor.
+    const html = String(markerText || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/(^|[\s.,;:!?(])_([^_\s][^_]*?)_(?=$|[\s.,;:!?)])/g, '$1<i>$2</i>').replace(/\n/g, '<br>');
     if (edRef.current) edRef.current.innerHTML = html;
     setText(markerText || '');
   };
@@ -2502,9 +2504,12 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
     const parts = raw.split(/(`[^`]+`)/);
     return parts.map((seg, i) => {
       if (i % 2 === 1) {
-        // inline code: strip the backticks, escape, render in a mono chip, no formatting/linkify.
+        // inline code: strip the backticks, escape, render in a mono chip, no
+        // formatting/linkify. Explicit dark-on-light colours so it stays
+        // readable inside BOTH the orange "mine" bubble (which sets white text)
+        // and the grey "others" bubble.
         const code = seg.slice(1, -1);
-        return `<code style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:4px;padding:0 4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.9em">${esc(code)}</code>`;
+        return `<code style="background:#0f172a;color:#e2e8f0;border:1px solid rgba(255,255,255,0.12);border-radius:5px;padding:1px 5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.88em;word-break:break-all;white-space:pre-wrap">${esc(code)}</code>`;
       }
       let t = esc(seg);
       // Bold: **text** (text may not contain '*').
@@ -2520,6 +2525,14 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
       return t;
     }).join('');
   };
+  // Plain text for "Copy text" — removes only the formatting markers, never
+  // literal underscores inside code/identifiers. Backtick fences drop, ** drops,
+  // and _italic_ markers drop ONLY when they sit on word boundaries (same rule
+  // as fmtBody), so `public_RBdum...` and some_var_name copy verbatim.
+  const plainText = (s) => String(s || '')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/(^|[\s.,;:!?(])_([^_\s][^_]*?)_(?=$|[\s.,;:!?)])/g, '$1$2');
   // AI: suggest 3 replies from recent messages.
   const aiSuggestReply = async () => {
     setAiBusy('sug');
@@ -2898,7 +2911,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
                             <button onClick={() => { setReplyTo(m); setMoreMenuFor(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 text-left"><span className="w-4 text-center">↩</span> Reply</button>
                             <button onClick={() => { setForwarding(m); setMoreMenuFor(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 text-left"><span className="w-4 text-center">↪</span> Forward</button>
                             {m.body && <button onClick={() => { setTaskFromMsg(m); setMoreMenuFor(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 text-left"><span className="w-4 text-center">✅</span> Turn into task</button>}
-                            {m.body && <button onClick={() => { navigator.clipboard && navigator.clipboard.writeText(m.body.replace(/\*\*/g, '').replace(/_/g, '')); setMoreMenuFor(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 text-left"><span className="w-4 text-center">⧉</span> Copy text</button>}
+                            {m.body && <button onClick={() => { navigator.clipboard && navigator.clipboard.writeText(plainText(m.body)); setMoreMenuFor(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 text-left"><span className="w-4 text-center">⧉</span> Copy text</button>}
                             {mine && !m.kindTag && m.body && <button onClick={() => { setEditingMsg({ id: m.id, body: m.body }); setMoreMenuFor(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 text-left"><span className="w-4 text-center">✏️</span> Edit</button>}
                             {mine && <button onClick={() => { deleteMsg(m); setMoreMenuFor(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-red-600 hover:bg-red-50 text-left border-t border-slate-100 mt-1"><span className="w-4 text-center">🗑</span> Delete</button>}
                           </div>
