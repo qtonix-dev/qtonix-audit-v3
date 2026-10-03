@@ -1684,7 +1684,7 @@ export function DirectorEditModal({ director, onClose, onSaved }) {
 
 export function EditEmployeeModal({ user, branches, departments, reportingOptions, shifts, isAdmin, onClose, onSaved }) {
   const [f, setF] = useState({
-    name: user.name || '', employeeId: user.employeeId || '', deviceId: user.deviceId || '', phone: user.phone || '', designation: user.designation || '',
+    name: user.name || '', email: user.email || '', employeeId: user.employeeId || '', deviceId: user.deviceId || '', phone: user.phone || '', designation: user.designation || '',
     type: user.type || 'employee', branch: user.branch || '', department: user.department || '',
     joiningDate: user.joiningDate || '', birthday: user.birthday || '', maritalStatus: user.maritalStatus || '', anniversary: user.anniversary || '',
     reportsTo: user.reportsToId ? `hr:${user.reportsToId}` : (user.reportsToAdminId ? `admin:${user.reportsToAdminId}` : ''),
@@ -1698,11 +1698,13 @@ export function EditEmployeeModal({ user, branches, departments, reportingOption
   const isHrDept = /^(hr|human resource|human resources)$/i.test(String(f.department || '').trim());
   const save = async () => {
     if (!f.name.trim()) return setErr('Name is required.');
+    const emailTrim = String(f.email || '').trim();
+    if (emailTrim && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrim)) return setErr('Please enter a valid email address.');
     setBusy(true); setErr('');
     const [kind, id] = (f.reportsTo || '').split(':');
     try {
       await hrApi(`/users/${user._id}`, { method: 'PUT', body: JSON.stringify({
-        name: f.name, employeeId: f.employeeId, deviceId: f.deviceId, phone: f.phone, designation: f.designation, type: f.type,
+        name: f.name, email: emailTrim, employeeId: f.employeeId, deviceId: f.deviceId, phone: f.phone, designation: f.designation, type: f.type,
         branch: f.branch, department: f.department, joiningDate: f.joiningDate || null, birthday: f.birthday || null,
         maritalStatus: f.maritalStatus || null, anniversary: f.anniversary || null,
         reportsToId: kind === 'hr' ? Number(id) : null, reportsToAdminId: kind === 'admin' ? Number(id) : null,
@@ -1722,6 +1724,7 @@ export function EditEmployeeModal({ user, branches, departments, reportingOption
         <div className="p-6 grid grid-cols-2 gap-3">
           {err && <div className="col-span-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
           <label className="text-xs font-bold text-slate-500">Name<input className={inputCls} value={f.name} onChange={(e) => set('name', e.target.value)} /></label>
+          <label className="text-xs font-bold text-slate-500">Login email<input type="email" className={inputCls} value={f.email} onChange={(e) => set('email', e.target.value)} placeholder="name@qtonix.com" /></label>
           <label className="text-xs font-bold text-slate-500">Employee ID<input className={inputCls} value={f.employeeId} onChange={(e) => set('employeeId', e.target.value)} /></label>
           <label className="text-xs font-bold text-slate-500">Device ID<input className={inputCls} value={f.deviceId || ''} onChange={(e) => set('deviceId', e.target.value)} placeholder="Biometric User ID (e.g. 423)" /></label>
           <label className="text-xs font-bold text-slate-500">Phone<input className={inputCls} value={f.phone} onChange={(e) => set('phone', e.target.value)} /></label>
