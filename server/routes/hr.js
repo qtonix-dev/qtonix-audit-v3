@@ -4313,7 +4313,12 @@ router.patch('/feedback/:id', requireHrAccess, requireHrAdmin, async (req, res, 
     if (!row) return res.status(404).json({ error: 'Report not found.' });
     const b = req.body || {};
     const wasResolved = row.status === 'resolved';
-    if (b.status !== undefined && ['new', 'seen', 'resolved'].includes(b.status)) row.status = b.status;
+    if (b.status !== undefined && ['new', 'seen', 'resolved'].includes(b.status)) {
+      row.status = b.status;
+      // Stamp / clear the resolved time so the admin list can show "Resolved on …".
+      if (b.status === 'resolved' && !wasResolved) row.resolvedAt = new Date();
+      else if (b.status !== 'resolved') row.resolvedAt = null;
+    }
     if (b.adminNote !== undefined) row.adminNote = String(b.adminNote || '').slice(0, 2000);
     await row.save();
 

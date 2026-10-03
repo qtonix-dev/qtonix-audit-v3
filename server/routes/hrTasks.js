@@ -430,8 +430,10 @@ router.get('/my-summary', guard, async (req, res, next) => {
       if (due && due < today) overdue++;
     }
     const pct = totalToday > 0 ? Math.round((completedToday / totalToday) * 100) : (pending === 0 ? 100 : 0);
-    // Deficit vs 8 working hours (for the day-end popup warning). Based on the
-    // employee's own clock-in + worked time so far today, minus breaks.
+    // Deficit vs the 8-hour requirement (for the day-end popup warning). The
+    // requirement is 8h of PRESENCE (login → logout); the break is paid and
+    // counts toward the 8 hours, so it is NOT deducted. e.g. 10:26 → 18:37 is
+    // 8h11m present and therefore NOT short, even with a 1h break.
     let deficitMin = null;
     try {
       const models = require('../models');
@@ -452,11 +454,11 @@ router.get('/my-summary', guard, async (req, res, next) => {
           const loginMin = toMin(att.loginTime);
           let endMin = att.logoutTime ? toMin(att.logoutTime) : nowMin;
           if (endMin < loginMin) endMin += 1440; // spans midnight
-          let worked = endMin - loginMin;
-          const breaks = Array.isArray(att.breaks) ? att.breaks : [];
-          for (const br of breaks) { if (br.start && br.end) { let d = toMin(br.end) - toMin(br.start); if (d < 0) d += 1440; worked -= d; } }
+          // Presence = login → now/logout. Break is paid and counts toward the
+          // 8 hours, so it is deliberately NOT subtracted.
+          const presentMin = endMin - loginMin;
           const WORK_MIN = Number(process.env.WORK_HOURS_MIN || 480);
-          deficitMin = Math.max(0, WORK_MIN - worked); // excess (worked>8h) → deficit 0, not counted
+          deficitMin = Math.max(0, WORK_MIN - presentMin); // excess (present>8h) → deficit 0, not counted
         }
       }
     } catch {}

@@ -1790,6 +1790,8 @@ const HrFeedback = sequelize.define('HrFeedback', {
   // Set when the reporter was notified that their report was resolved, so we
   // never notify twice even if the status is toggled.
   resolvedNotifiedAt: { type: DataTypes.DATE, allowNull: true },
+  // When the report was marked resolved (shown in the admin list).
+  resolvedAt: { type: DataTypes.DATE, allowNull: true },
 }, {
   tableName: 'hr_feedback',
   indexes: [{ name: 'idx_hr_feedback_status', fields: ['status'] }],

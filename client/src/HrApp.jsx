@@ -1380,7 +1380,7 @@ function RecognitionPage({ user, onOpenEmployee }) {
   useEffect(() => { load(); }, []);
   const fmt = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }); } catch { return d; } };
   return (
-    <div className="max-w-5xl mx-auto px-4 py-6 space-y-5" style={{ fontFamily: REC_FONT }}>
+    <div className="space-y-5" style={{ fontFamily: REC_FONT }}>
       <div>
         <div className="flex items-center gap-3">
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">🏅 Recognition</h1>
@@ -2488,11 +2488,38 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
     else { el.appendChild(document.createTextNode(frag)); }
     setText(htmlToMarkers(el.innerHTML));
   };
-  // Render **bold** / _italic_ in sent messages.
-  const fmtBody = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/_([^_]+)_/g, '<i>$1</i>')
-    // Linkify URLs (http/https and bare www.) — opens in a new tab.
-    .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noreferrer" style="text-decoration:underline">$1</a>')
-    .replace(/(^|[\s(])(www\.[^\s<]+)/g, '$1<a href="https://$2" target="_blank" rel="noreferrer" style="text-decoration:underline">$2</a>');
+  // Render **bold** / _italic_ in sent messages — WITHOUT mangling code.
+  // Developers paste things like `public_RBdum0M5...` or some_var_name; the
+  // naive `_..._` → italic rule used to eat the underscores and the text
+  // between them. So we (1) carve out `backtick` code spans and leave their
+  // contents completely untouched, (2) treat URLs as atomic, and (3) only
+  // honour _italic_ when the underscores sit on word boundaries, so
+  // identifiers with internal underscores are left exactly as typed.
+  const fmtBody = (s) => {
+    const esc = (t) => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const raw = String(s || '');
+    // Split on `code spans` — odd indexes are code, kept verbatim (escaped only).
+    const parts = raw.split(/(`[^`]+`)/);
+    return parts.map((seg, i) => {
+      if (i % 2 === 1) {
+        // inline code: strip the backticks, escape, render in a mono chip, no formatting/linkify.
+        const code = seg.slice(1, -1);
+        return `<code style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:4px;padding:0 4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.9em">${esc(code)}</code>`;
+      }
+      let t = esc(seg);
+      // Bold: **text** (text may not contain '*').
+      t = t.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+      // Italic: _text_ only when underscores are on a boundary (not inside an
+      // identifier like a_b_c or a pasted key like public_xxx). Requires the
+      // opening _ to be preceded by start/space/punct and the closing _ to be
+      // followed by end/space/punct, and the inner text to hold no underscore.
+      t = t.replace(/(^|[\s.,;:!?(])_([^_\s][^_]*?)_(?=$|[\s.,;:!?)])/g, '$1<i>$2</i>');
+      // Linkify URLs (http/https and bare www.) — opens in a new tab.
+      t = t.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noreferrer" style="text-decoration:underline">$1</a>')
+        .replace(/(^|[\s(])(www\.[^\s<]+)/g, '$1<a href="https://$2" target="_blank" rel="noreferrer" style="text-decoration:underline">$2</a>');
+      return t;
+    }).join('');
+  };
   // AI: suggest 3 replies from recent messages.
   const aiSuggestReply = async () => {
     setAiBusy('sug');
@@ -2522,7 +2549,23 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
     setUploading(false);
   };
 
-  const fmtTime = (d) => { try { return new Date(d).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' }); } catch { return ''; } };
+  // Smart Buzz timestamp: today → time only ("5:30 PM"); earlier this week →
+  // weekday + time ("Monday 5:30 PM"); older → date + time ("22 Sep 2026,
+  // 5:30 PM"). The week boundary is the most recent Monday (IST).
+  const fmtTime = (d) => {
+    try {
+      const dt = new Date(d);
+      const time = dt.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
+      const now = new Date();
+      const sameDay = dt.toDateString() === now.toDateString();
+      if (sameDay) return time;
+      // Start of the current week (Monday 00:00, local).
+      const weekStart = new Date(now); const dow = (now.getDay() + 6) % 7; // Mon=0
+      weekStart.setHours(0, 0, 0, 0); weekStart.setDate(now.getDate() - dow);
+      if (dt >= weekStart) return `${dt.toLocaleDateString('en-IN', { weekday: 'long' })} ${time}`;
+      return `${dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}, ${time}`;
+    } catch { return ''; }
+  };
   const fmtSize = (b) => b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : b > 1024 ? `${Math.round(b / 1024)} KB` : `${b} B`;
   const dirShown = directory.filter((u) => !q || u.name.toLowerCase().includes(q.toLowerCase()));
 
@@ -2932,6 +2975,26 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
                             return;
                           }
                         }
+                      }
+                      // Paste TEXT as plain text. The browser's default rich paste
+                      // injects styled spans / <b> / <i> that htmlToMarkers would
+                      // turn into ** and _ markers — which is exactly how pasted
+                      // code (e.g. public_RBdum0M5..., some_var_name) loses its
+                      // underscores. Inserting the raw text verbatim keeps code
+                      // exactly as the developer copied it.
+                      const text = e.clipboardData && e.clipboardData.getData('text/plain');
+                      if (text != null && text !== '') {
+                        e.preventDefault();
+                        const sel = window.getSelection();
+                        if (sel && sel.rangeCount) {
+                          const r = sel.getRangeAt(0);
+                          r.deleteContents();
+                          r.insertNode(document.createTextNode(text));
+                          r.collapse(false); sel.removeAllRanges(); sel.addRange(r);
+                        } else if (edRef.current) {
+                          edRef.current.appendChild(document.createTextNode(text));
+                        }
+                        if (edRef.current) { setText(htmlToMarkers(edRef.current.innerHTML)); pingTyping(); }
                       }
                     }}
                     data-ph={active.team && active.team.isTask ? 'Add a note or message…' : (active.channel ? `Message #${active.channel}…` : `Message ${active.other ? active.other.name : ''}…`)}
@@ -11209,8 +11272,14 @@ function ErrorReportTab({ setErr }) {
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [filter]);
   const setStatus = async (id, status) => {
+    // Optimistically update the row so the button state (e.g. Resolve → hidden,
+    // "Resolved on …") flips immediately, then reconcile with the server.
+    setData((prev) => ({
+      ...prev,
+      items: (prev.items || []).map((it) => it._id === id ? { ...it, status, resolvedAt: status === 'resolved' ? new Date().toISOString() : null } : it),
+    }));
     try { await hrApi(`/feedback/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }); load(); }
-    catch (e) { setErr && setErr(e.message); }
+    catch (e) { setErr && setErr(e.message); load(); }
   };
   const fmt = (d) => { try { return new Date(d).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }); } catch { return d; } };
   const kindBadge = (k) => k === 'bug' ? { t: '🐞 Bug', c: '#DC2626', bg: '#FEF2F2' } : k === 'suggestion' ? { t: '💡 Suggestion', c: '#B45309', bg: '#FEF3C7' } : { t: '💬 Other', c: '#0369A1', bg: '#E0F2FE' };
@@ -11243,6 +11312,7 @@ function ErrorReportTab({ setErr }) {
                         <span className="text-[10px] font-extrabold rounded px-1.5 py-0.5" style={{ background: kb.bg, color: kb.c }}>{kb.t}</span>
                         <span className="text-[10px] font-extrabold rounded px-1.5 py-0.5" style={{ background: sb.bg, color: sb.c }}>{sb.t}</span>
                         <span className="text-[11px] text-slate-400">{fmt(f.createdAt)}</span>
+                        {f.status === 'resolved' && (f.resolvedAt || f.updatedAt) && <span className="text-[10px] font-bold text-green-600">✓ Resolved · {fmt(f.resolvedAt || f.updatedAt)}</span>}
                       </div>
                       <div className="text-sm text-slate-700 whitespace-pre-wrap">{f.message}</div>
                       <div className="text-[11px] text-slate-400 mt-1.5">
