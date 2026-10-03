@@ -1455,27 +1455,30 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     // sales targets of agents who report directly to the admin (i.e. not under
     // any manager). An agent is "under a manager" only if their managerId points
     // at an actual manager user.
-    const managerIds = new Set(owners.filter((u) => u.role === 'manager').map((u) => u.id));
+    // A deactivated or archived employee no longer contributes to targets — their
+    // monthly target must drop out of both the team roll-up and the company total.
+    const isActiveUser = (u) => u && u.active !== false && u.archived !== true;
+    const managerIds = new Set(owners.filter((u) => u.role === 'manager' && isActiveUser(u)).map((u) => u.id));
     const agentSalesByMgr = {};
     owners.forEach((u) => {
-      if (u.role === 'agent' && u.managerId && managerIds.has(u.managerId) && u.targets && u.targets.sales && u.targets.sales.enabled) {
+      if (isActiveUser(u) && u.role === 'agent' && u.managerId && managerIds.has(u.managerId) && u.targets && u.targets.sales && u.targets.sales.enabled) {
         agentSalesByMgr[u.managerId] = (agentSalesByMgr[u.managerId] || 0) + Number(u.targets.sales.monthly || 0);
       }
     });
     let companyTarget = 0;
     // Managers' team targets: an explicit override wins; otherwise the computed
-    // sum = their agents' sales targets + the manager's OWN sales target.
+    // sum = their (active) agents' sales targets + the manager's OWN sales target.
     owners.forEach((u) => {
-      if (u.role === 'manager') {
+      if (u.role === 'manager' && isActiveUser(u)) {
         const tt = u.targets && u.targets.team;
         const ownSales = (u.targets && u.targets.sales && u.targets.sales.enabled) ? Number(u.targets.sales.monthly || 0) : 0;
         companyTarget += (tt && tt.override) ? Number(tt.monthly || 0) : ((agentSalesByMgr[u.id] || 0) + ownSales);
       }
     });
-    // Plus agents reporting directly to the admin (no manager, or manager isn't a
-    // manager user) — their individual sales targets.
+    // Plus active agents reporting directly to the admin (no manager, or manager
+    // isn't a manager user) — their individual sales targets.
     owners.forEach((u) => {
-      if (u.role === 'agent' && !(u.managerId && managerIds.has(u.managerId)) && u.targets && u.targets.sales && u.targets.sales.enabled) {
+      if (u.role === 'agent' && isActiveUser(u) && !(u.managerId && managerIds.has(u.managerId)) && u.targets && u.targets.sales && u.targets.sales.enabled) {
         companyTarget += Number(u.targets.sales.monthly || 0);
       }
     });

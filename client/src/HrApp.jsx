@@ -11931,9 +11931,11 @@ function HrAdmin({ user, onOpenCandidate }) {
     setErr('');
     if (edit.newPassword && edit.newPassword.length < 8) return setErr('Password must be at least 8 characters.');
     if (!edit.shiftId) return setErr('Please assign a shift.');
+    const emailTrim = String(edit.email || '').trim();
+    if (emailTrim && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrim)) return setErr('Please enter a valid email address.');
     try {
       const body = {
-        name: edit.name, phone: edit.phone, designation: edit.designation, type: edit.type,
+        name: edit.name, email: emailTrim, phone: edit.phone, designation: edit.designation, type: edit.type,
         employeeId: edit.employeeId, branch: edit.branch, department: edit.department, joiningDate: edit.joiningDate,
         shiftId: edit.shiftId || null, branchIncharge: edit.branchIncharge, targets: edit.targets, hrManagerScope: edit.hrManagerScope || '', ...splitReports(edit.reportsTo),
         probationEndDate: edit.probationEndDate || null, probationStatus: edit.probationStatus || '',
@@ -11988,6 +11990,7 @@ function HrAdmin({ user, onOpenCandidate }) {
               <h3 className="font-bold text-sm mb-4 text-[#050A1F]">Edit {edit.name}</h3>
               <div className="grid grid-cols-2 gap-4">
                 <SharedField label="Name"><input className={inputCls} value={edit.name || ''} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></SharedField>
+                <SharedField label="Login email"><input type="email" className={inputCls} value={edit.email || ''} onChange={(e) => setEdit({ ...edit, email: e.target.value })} placeholder="name@qtonix.com" /></SharedField>
                 <SharedField label="Employee ID"><input className={inputCls} value={edit.employeeId || ''} onChange={(e) => setEdit({ ...edit, employeeId: e.target.value })} /></SharedField>
                 <SharedField label="Device ID"><input className={inputCls} value={edit.deviceId || ''} onChange={(e) => setEdit({ ...edit, deviceId: e.target.value })} placeholder="Biometric User ID" /></SharedField>
                 <SharedField label="Phone"><input className={inputCls} value={edit.phone || ''} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} /></SharedField>
