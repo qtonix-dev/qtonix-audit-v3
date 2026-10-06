@@ -57,6 +57,18 @@ function lastPaymentDate(lead) {
   }
   return latest;
 }
+// A deal is eligible to be cancelled only when it has an UNPAID installment
+// whose due date is more than 30 days in the past — i.e. the invoice has gone
+// badly overdue. Until then the Cancel button is hidden (keep chasing it).
+function dealOverdue30(deal) {
+  if (!deal || deal.stage !== 'closed_won') return false;
+  const cutoff = Date.now() - 30 * 86400000;
+  return (deal.installments || []).some((it) => {
+    if (!it || it.paid || !it.dueDate) return false;
+    const due = new Date(`${String(it.dueDate).slice(0, 10)}T00:00:00`).getTime();
+    return !Number.isNaN(due) && due < cutoff;
+  });
+}
 // "12 Sep 2026 (7 days left)" / "(overdue)" when past, badge only within 30 days.
 function renewalLabel(dateStr) {
   if (!dateStr) return { text: '—', tone: 'muted' };
@@ -6276,13 +6288,14 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                     </div>
                   )}
 
-                  {/* Projects — cancel / reinstate (admin). A cancelled project's
-                      remaining dues drop out of amounts owed, kept for reference. */}
-                  {isAdmin && s.won.filter((d) => d.planType !== 'recurring').length > 0 && (
+                  {/* Projects — cancel / reinstate (admin). Cancel only appears
+                      once an invoice is more than 30 days overdue; a cancelled
+                      project keeps its Reinstate control. */}
+                  {isAdmin && s.won.filter((d) => d.planType !== 'recurring' && (d.cancelled || dealOverdue30(d))).length > 0 && (
                     <div className="mt-3">
                       <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Projects</div>
                       <div className="space-y-1.5">
-                        {s.won.filter((d) => d.planType !== 'recurring').map((d) => (
+                        {s.won.filter((d) => d.planType !== 'recurring' && (d.cancelled || dealOverdue30(d))).map((d) => (
                           <div key={d.id} className="flex items-center gap-2 flex-wrap rounded-lg px-2.5 py-2 bg-slate-50 border border-slate-100">
                             <span className="text-xs font-bold text-slate-700 truncate max-w-[150px]" title={d.name}>{d.name}</span>
                             {d.service && <span className="text-[10px] text-slate-400">{d.service}</span>}
@@ -6405,69 +6418,80 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
             {/* 1) Upcoming & Pending Payments */}
             {convTab === 'pending' && (<>
             <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">💳 Upcoming &amp; Pending Payments · {pendingClients.length}</div>
-            <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm mb-6">
-              {pendingClients.length === 0 ? (
-                <div className="text-slate-300 text-sm text-center py-8">No pending payments — everyone's paid up. 🎉</div>
-              ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100">
-                      <th className="text-left px-4 py-3">Client</th>
-                      <th className="text-left px-4 py-3">Owner</th>
-                      <th className="text-left px-4 py-3">Next due</th>
-                      <th className="text-left px-4 py-3">Outstanding</th>
-                      <th className="px-4 py-3"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pendingClients.map((p) => (
-                      <tr key={`pay-${p.leadId}`} onClick={() => onOpen(p.leadId, 'deals')} className="border-t border-slate-50 hover:bg-amber-50/40 cursor-pointer">
-                        <td className="px-4 py-3 font-bold text-[#050A1F]">{p.name}<div className="text-[11px] text-slate-400 font-normal">{p.website || ''}</div></td>
-                        <td className="px-4 py-3 text-slate-500 text-xs">{p.ownerName}</td>
-                        <td className="px-4 py-3 text-xs"><span className="text-slate-600">{p.nextDue ? fmtDate(p.nextDue) : '—'}</span></td>
-                        <td className="px-4 py-3 text-xs font-bold text-amber-600">${(p.due || 0).toLocaleString()}</td>
-                        <td className="px-4 py-3 text-right"><span className="text-[10px] font-bold text-slate-400">{p.count} payment{p.count === 1 ? '' : 's'} →</span></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
+            {pendingClients.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm text-slate-300 text-sm text-center py-10 mb-6">No pending payments — everyone's paid up. 🎉</div>
+            ) : (
+              <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
+                {pendingClients.slice().sort((a, b) => String(a.nextDue || '9999').localeCompare(String(b.nextDue || '9999'))).map((p) => {
+                  const dl = p.nextDue ? daysLeftLabel(p.nextDue) : '';
+                  const n = p.nextDue ? daysUntil(p.nextDue) : null;
+                  const accent = (n != null && n < 0) ? { bar: '#dc2626', chip: 'bg-red-100 text-red-700' }
+                    : (n != null && n <= 7) ? { bar: '#f59e0b', chip: 'bg-amber-100 text-amber-700' }
+                    : { bar: '#059669', chip: 'bg-emerald-100 text-emerald-700' };
+                  return (
+                    <div key={`pay-${p.leadId}`} onClick={() => onOpen(p.leadId, 'deals')}
+                      className="relative bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer overflow-hidden">
+                      <div className="absolute left-0 top-0 bottom-0 w-1.5" style={{ background: accent.bar }} />
+                      <div className="p-4 pl-5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-sm font-extrabold text-[#050A1F] truncate">{p.name}</div>
+                            <div className="text-[11px] text-slate-400 truncate">{p.website || ''}</div>
+                          </div>
+                          {p.nextDue && <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-extrabold whitespace-nowrap ${accent.chip}`}>{dl}</span>}
+                        </div>
+                        <div className="mt-3 flex items-end justify-between">
+                          <div>
+                            <div className="text-lg font-extrabold text-amber-600">${(p.due || 0).toLocaleString()}</div>
+                            <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">outstanding · {p.count} payment{p.count === 1 ? '' : 's'}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-[11px] text-slate-500 font-semibold inline-flex items-center gap-1"><Icon.Calendar size={12} />{p.nextDue ? fmtDate(p.nextDue).split(',')[0] : '—'}</div>
+                            <div className="text-[10px] text-slate-400 mt-0.5">Owner: {p.ownerName || '—'}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             </>)}
 
-            {/* 2) Upcoming Renewals */}
+            {/* 2) Upcoming Renewals — soonest first, as boxes */}
             {convTab === 'renewals' && (<>
             <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">🔁 Upcoming Renewals · {renewalClients.length}</div>
-            <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm mb-6">
-              {renewalClients.length === 0 ? (
-                <div className="text-slate-300 text-sm text-center py-8">No renewals scheduled.</div>
-              ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100">
-                      <th className="text-left px-4 py-3">Client</th>
-                      <th className="text-left px-4 py-3">Owner</th>
-                      <th className="text-left px-4 py-3">Service</th>
-                      <th className="text-left px-4 py-3">Renewal date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {renewalClients.map((rc) => {
-                      const rl = renewalLabel(rc.date);
-                      const tone = rl.tone === 'overdue' ? 'text-red-600' : rl.tone === 'soon' ? 'text-orange-600' : 'text-slate-600';
-                      return (
-                        <tr key={`ren-${rc.leadId}`} onClick={() => onOpen(rc.leadId, 'deals')} className="border-t border-slate-50 hover:bg-indigo-50/40 cursor-pointer">
-                          <td className="px-4 py-3 font-bold text-[#050A1F]">{rc.name}<div className="text-[11px] text-slate-400 font-normal">{rc.website || ''}</div></td>
-                          <td className="px-4 py-3 text-slate-500 text-xs">{rc.ownerName}</td>
-                          <td className="px-4 py-3 text-slate-500 text-xs">{rc.service || '—'}</td>
-                          <td className={`px-4 py-3 text-xs font-bold ${tone}`}>{rl.text}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
-            </div>
+            {renewalClients.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm text-slate-300 text-sm text-center py-10 mb-6">No renewals scheduled.</div>
+            ) : (
+              <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
+                {renewalClients.slice().sort((a, b) => String(a.date || '9999').localeCompare(String(b.date || '9999'))).map((rc) => {
+                  const rl = renewalLabel(rc.date);
+                  const accent = rl.tone === 'overdue' ? { bar: '#dc2626', chip: 'bg-red-100 text-red-700' }
+                    : rl.tone === 'soon' ? { bar: '#f59e0b', chip: 'bg-amber-100 text-amber-700' }
+                    : { bar: '#4f46e5', chip: 'bg-indigo-100 text-indigo-700' };
+                  return (
+                    <div key={`ren-${rc.leadId}`} onClick={() => onOpen(rc.leadId, 'deals')}
+                      className="relative bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer overflow-hidden">
+                      <div className="absolute left-0 top-0 bottom-0 w-1.5" style={{ background: accent.bar }} />
+                      <div className="p-4 pl-5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-sm font-extrabold text-[#050A1F] truncate">{rc.name}</div>
+                            <div className="text-[11px] text-slate-400 truncate">{rc.website || ''}</div>
+                          </div>
+                          <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-extrabold whitespace-nowrap ${accent.chip}`}>{rl.text}</span>
+                        </div>
+                        <div className="mt-3 flex items-center justify-between text-[11px]">
+                          <span className="inline-flex items-center gap-1.5 text-slate-500 font-semibold">🔁 {rc.service || 'Renewal'}</span>
+                          <span className="text-slate-400">Owner: <span className="font-semibold text-slate-600">{rc.ownerName || '—'}</span></span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             </>)}
 
             {/* 2b) Cancelled projects — written-off dues, kept for reference */}
@@ -6663,11 +6687,11 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                           {/* Non-recurring won projects: cancel / reinstate. A
                               cancelled project's remaining dues drop out of the
                               amounts owed, but stay listed below for reference. */}
-                          {isAdmin && s.won.filter((d) => d.planType !== 'recurring').length > 0 && (
+                          {isAdmin && s.won.filter((d) => d.planType !== 'recurring' && (d.cancelled || dealOverdue30(d))).length > 0 && (
                             <div className="mb-3">
                               <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-2">Projects</div>
                               <div className="space-y-1.5">
-                                {s.won.filter((d) => d.planType !== 'recurring').map((d) => (
+                                {s.won.filter((d) => d.planType !== 'recurring' && (d.cancelled || dealOverdue30(d))).map((d) => (
                                   <div key={d.id} className="flex items-center gap-3 flex-wrap bg-white rounded-lg border border-slate-100 px-3 py-2">
                                     <span className="text-xs font-bold text-[#050A1F] truncate max-w-[200px]" title={d.name}>{d.name}</span>
                                     <span className="text-[10px] text-slate-400">{d.service || ''}</span>
