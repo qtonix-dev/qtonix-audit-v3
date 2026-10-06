@@ -349,13 +349,13 @@ function taskAdditionalInfoRequest({ candidateName, role, messageHtml, deadlineT
 
 // ---- Employee celebration emails (auto-sent, founder-signed) --------------
 // All three share the founder signature + a warm, non-recruitment footer line.
-const FOUNDER_SIG = { name: 'Sandeep Kumar Swain', title: 'Founder / Director \u00b7 Qtonix', email: 'adam@qtonix.com' };
+const FOUNDER_SIG = { name: 'Sandeep Kumar Swain', title: 'Founder / CEO', email: 'adam@qtonix.com' };
 const CELEBRATION_FOOTER = 'Sent with warm wishes from Qtonix.';
 
 // Birthday wish — sent on the employee's birthday.
 function birthdayWish({ employeeName }) {
   return shell({
-    kicker: 'A note from the Founder',
+    kicker: 'A note from the Management Team',
     headline: `Happy Birthday, ${esc(firstName(employeeName))}! \uD83C\uDF82`,
     subhead: 'Wishing you a wonderful year ahead.',
     greetingName: employeeName,
@@ -374,7 +374,7 @@ function workAnniversary({ employeeName, years, joinedText, department, branch }
     (department || branch) ? { label: 'Team', value: esc([department, branch].filter(Boolean).join(' \u00b7 ')) } : null,
   ].filter(Boolean);
   return shell({
-    kicker: 'A note from the Founder',
+    kicker: 'A note from the Management Team',
     headline: `Happy ${yLabel} Work Anniversary! \uD83C\uDFC6`,
     subhead: `${years} year${years === 1 ? '' : 's'} of making Qtonix better.`,
     greetingName: employeeName,
@@ -392,7 +392,7 @@ function welcomeJoinee({ employeeName, designation, department, branch }) {
     (department || branch) ? { label: 'Team', value: esc([department, branch].filter(Boolean).join(' \u00b7 ')) } : null,
   ].filter(Boolean);
   return shell({
-    kicker: 'A note from the Founder',
+    kicker: 'A note from the Management Team',
     headline: `Welcome to Qtonix, ${esc(firstName(employeeName))}! \uD83D\uDC4B`,
     subhead: 'We\u2019re glad to have you on board.',
     greetingName: employeeName,

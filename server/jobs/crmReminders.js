@@ -124,7 +124,7 @@ async function sendOnce(models, s, sender, { dedupeKey, type, userId, to, cc, su
 // Reminder emails: neutral sales-team signature (sent from sales@qtonix.com).
 const reminderSig = (sender) => ({ name: 'Qtonix Sales Team', title: 'Qtonix', email: (sender && sender.email) || 'sales@qtonix.com' });
 // Congratulations emails: signed by the Founder/CEO (sent from adam@qtonix.com).
-const congratsSig = (sender) => ({ name: 'Sandeep Kumar Swain', title: 'Founder / CEO · Qtonix', email: (sender && sender.email) || 'adam@qtonix.com' });
+const congratsSig = (sender) => ({ name: 'Sandeep Kumar Swain', title: 'Founder / CEO', email: (sender && sender.email) || 'adam@qtonix.com' });
 
 // ---- 1) Activity reminders (15 min before) ---------------------------------
 async function runActivityReminders(models, s, sender) {
@@ -255,7 +255,7 @@ async function runTargetCongrats(models, s, sender) {
       const bodyHtml = tpl.targetHit({ agentName: rec.name, achievedUsd: Math.round(rec.achievedUsd), targetUsd: Math.round(rec.targetUsd), signature: sig });
       await sendOnce(models, s, sender, {
         dedupeKey: `target_hit:${rec.id}:${periodKey}`, type: 'target_hit', userId: rec.id, to: rec.email,
-        cc: Array.from(cc),
+        cc: Array.from(cc), fromName: 'Management Team',
         subject: `🎉 Congratulations ${String(rec.name).split(' ')[0]} — you hit your monthly target!`, bodyHtml,
       });
     }
@@ -266,7 +266,7 @@ async function runTargetCongrats(models, s, sender) {
       const bodyHtml = tpl.teamTargetHit({ managerName: rec.name, achievedUsd: Math.round(rec.teamAchievedUsd || 0), targetUsd: Math.round(rec.teamTargetUsd), signature: sig });
       await sendOnce(models, s, sender, {
         dedupeKey: `team_target_hit:${rec.id}:${periodKey}`, type: 'team_target_hit', userId: rec.id, to: rec.email,
-        cc: Array.from(cc),
+        cc: Array.from(cc), fromName: 'Management Team',
         subject: `🏆 Congratulations ${String(rec.name).split(' ')[0]} — your team hit its target!`, bodyHtml,
       });
     }
@@ -310,7 +310,7 @@ async function runEncouragement(models, s, sender, nowParts) {
       sig = { name: mgr.name, title: 'Sales Manager \u00b7 Qtonix', email: mgr.email };
       cc.add(mgr.email.toLowerCase());
     } else {
-      fromName = 'Sandeep Kumar Swain';
+      fromName = 'Management Team';
       replyTo = undefined;
       sig = congratsSig(sender);
     }

@@ -8129,9 +8129,9 @@ const HR_EMAIL_CATALOG = [
   { id: 'offer', name: 'Offer', description: 'Sends the offer email (with attachments) to a selected candidate.', sentTo: 'The candidate', subjectMatch: ['regarding your offer', 'your offer', 'offer of employment'] },
   // Employee celebration emails — founder-signed, auto-sent from adam@qtonix.com.
   // Their activity comes from CrmEmailLog (employee recipients, not candidates).
-  { id: 'celebration_birthday', name: 'Birthday wish', description: 'Auto-sent to an employee on their birthday, signed by the Founder.', sentTo: 'The employee', source: 'celebration', logType: 'hr_birthday' },
-  { id: 'celebration_anniversary', name: 'Work anniversary', description: 'Auto-sent to an employee on their work anniversary (1+ years), signed by the Founder.', sentTo: 'The employee', source: 'celebration', logType: 'hr_anniversary' },
-  { id: 'celebration_welcome', name: 'Welcome (new joinee)', description: 'Auto-sent to a new employee on their joining day, signed by the Founder.', sentTo: 'The employee', source: 'celebration', logType: 'hr_welcome' },
+  { id: 'celebration_birthday', name: 'Birthday wish', description: 'Auto-sent to an employee on their birthday, from the Management Team.', sentTo: 'The employee', source: 'celebration', logType: 'hr_birthday' },
+  { id: 'celebration_anniversary', name: 'Work anniversary', description: 'Auto-sent to an employee on their work anniversary (1+ years), from the Management Team.', sentTo: 'The employee', source: 'celebration', logType: 'hr_anniversary' },
+  { id: 'celebration_welcome', name: 'Welcome (new joinee)', description: 'Auto-sent to a new employee on their joining day, from the Management Team.', sentTo: 'The employee', source: 'celebration', logType: 'hr_welcome' },
 ];
 
 function hrPreviewHtml(id, sig, mailbox) {

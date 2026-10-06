@@ -695,6 +695,16 @@ function DashHero({ greeting, name, scopeLabel, deltas }) {
             <div className="text-2xl font-extrabold mt-0.5">{usd(d.pipelineUsd || 0)}</div>
             <div className="text-[11px] mt-0.5 text-slate-400">open deals</div>
           </div>
+          {/* Admin-owned sales — admin viewer only. Kept OUT of team/company
+              target; shown here and in the sales trend so the admin can see
+              their own closed business this month. */}
+          {d.adminSalesUsd != null && (
+            <div className="min-w-[108px] pl-6 border-l border-white/15">
+              <div className="text-[10px] font-bold uppercase tracking-wide text-indigo-300">Admin-owned sales</div>
+              <div className="text-2xl font-extrabold mt-0.5">{usd(d.adminSalesUsd || 0)}</div>
+              <div className="text-[11px] mt-0.5 text-slate-400">your own · this month</div>
+            </div>
+          )}
         </div>
       </div>
     </div>

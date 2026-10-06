@@ -47,7 +47,7 @@ async function sendOnce(models, s, sender, { dedupeKey, type, userId, toName, to
   catch { return true; } // unique violation → another tick already handling it
   try {
     await gmail.sendMessage(s, sender.token, sender.email, {
-      from: `${JSON.stringify('Sandeep Kumar Swain')} <${sender.email}>`,
+      from: `${JSON.stringify('Management Team')} <${sender.email}>`,
       to, subject, bodyHtml,
     });
     logRow.status = 'sent'; logRow.sentAt = new Date(); await logRow.save();
