@@ -6275,6 +6275,42 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                       )}
                     </div>
                   )}
+
+                  {/* Projects — cancel / reinstate (admin). A cancelled project's
+                      remaining dues drop out of amounts owed, kept for reference. */}
+                  {isAdmin && s.won.filter((d) => d.planType !== 'recurring').length > 0 && (
+                    <div className="mt-3">
+                      <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Projects</div>
+                      <div className="space-y-1.5">
+                        {s.won.filter((d) => d.planType !== 'recurring').map((d) => (
+                          <div key={d.id} className="flex items-center gap-2 flex-wrap rounded-lg px-2.5 py-2 bg-slate-50 border border-slate-100">
+                            <span className="text-xs font-bold text-slate-700 truncate max-w-[150px]" title={d.name}>{d.name}</span>
+                            {d.service && <span className="text-[10px] text-slate-400">{d.service}</span>}
+                            {d.cancelled && <span className="rounded bg-slate-200 text-slate-600 px-1.5 py-0.5 text-[9px] font-bold" title={d.cancelReason || ''}>Cancelled</span>}
+                            {d.cancelled
+                              ? <button onClick={(e) => { e.stopPropagation(); uncancelProject(l, d); }} className="ml-auto rounded-md border border-green-200 bg-green-50 px-2.5 py-1 text-[10px] font-bold text-green-700 hover:bg-green-100 shrink-0">Reinstate</button>
+                              : <button onClick={(e) => { e.stopPropagation(); cancelProject(l, d); }} className="ml-auto rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-bold text-red-600 hover:bg-red-100 shrink-0">Cancel project</button>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Cancelled dues — reference only, excluded from totals. */}
+                  {s.cancelled && s.cancelled.length > 0 && (
+                    <div className="mt-3">
+                      <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">🚫 Cancelled — not collectable · {s.cancelled.length}</div>
+                      <div className="space-y-1.5">
+                        {s.cancelled.slice(0, 3).map(({ deal, inst }) => (
+                          <div key={inst.id} className="rounded-lg px-2.5 py-2 bg-slate-50 border border-slate-100 opacity-75">
+                            <div className="text-sm font-bold text-slate-500 line-through">{deal.currency} {Number(inst.amount || 0).toLocaleString()}<span className="text-[10px] font-bold text-slate-400 ml-1.5 no-underline">instalment {inst.seq}</span></div>
+                            <div className="text-[11px] font-semibold mt-0.5 text-slate-400 flex items-center gap-1"><Icon.Calendar size={12} />{inst.dueDate || 'no due date'} · cancelled</div>
+                          </div>
+                        ))}
+                        {s.cancelled.length > 3 && <div className="text-[10px] text-slate-400 mt-1.5">+{s.cancelled.length - 3} more</div>}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Won deals + converted date (reference tags strip) */}
