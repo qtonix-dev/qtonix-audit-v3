@@ -2367,6 +2367,7 @@ router.get('/converted', requireAuth, async (req, res, next) => {
     let recentPayments = [];
     let pendingPayments = [];
     let upcomingRenewals = [];
+    let cancelledProjects = [];
     try {
       const allForRecent = (!from && !q)
         ? await Lead.findAll({ where, order: [['updatedAt', 'DESC']] })
@@ -2420,6 +2421,20 @@ router.get('/converted', requireAuth, async (req, res, next) => {
           });
         }
 
+        // --- Cancelled projects: cancelled deals with the amount written off. ---
+        for (const d of deals) {
+          if (!d || !d.cancelled || !Array.isArray(d.installments)) continue;
+          const unpaid = d.installments.filter((it) => it && !it.paid);
+          const writtenOff = unpaid.reduce((sum, it) => sum + Number(it.amount || 0), 0);
+          cancelledProjects.push({
+            leadId: l.id, name: nm, website: l.website || '', ownerName: l.ownerName || '',
+            dealId: d.id, dealName: d.name || d.service || '', service: d.service || '',
+            currency: d.currency || 'USD',
+            writtenOff, unpaidCount: unpaid.length,
+            reason: d.cancelReason || '', cancelledAt: d.cancelledAt || null, cancelledBy: d.cancelledBy || '',
+          });
+        }
+
         // --- Upcoming renewals: soonest active renewal date across deals ---
         const renewDates = [];
         for (const d of deals) {
@@ -2439,7 +2454,8 @@ router.get('/converted', requireAuth, async (req, res, next) => {
       // Pending: soonest due first (nulls last). Renewals: soonest date first.
       pendingPayments.sort((a, b2) => String(a.nextDue || '9999').localeCompare(String(b2.nextDue || '9999')));
       upcomingRenewals.sort((a, b2) => String(a.date).localeCompare(String(b2.date)));
-    } catch { recentPayments = []; pendingPayments = []; upcomingRenewals = []; }
+      cancelledProjects.sort((a, b2) => String(b2.cancelledAt || '').localeCompare(String(a.cancelledAt || '')));
+    } catch { recentPayments = []; pendingPayments = []; upcomingRenewals = []; cancelledProjects = []; }
 
     res.json({
       items: rows.map((l) => {
@@ -2500,7 +2516,7 @@ router.get('/converted', requireAuth, async (req, res, next) => {
       }),
       total: count, page, perPage,
       pages: Math.max(1, Math.ceil(count / perPage)),
-      period, recentPayments, pendingPayments, upcomingRenewals,
+      period, recentPayments, pendingPayments, upcomingRenewals, cancelledProjects,
     });
   } catch (e) { next(e); }
 });

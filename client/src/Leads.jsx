@@ -5666,6 +5666,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const [recentPayments, setRecentPayments] = useState([]);
   const [pendingPayments, setPendingPayments] = useState([]);
   const [upcomingRenewals, setUpcomingRenewals] = useState([]);
+  const [cancelledProjects, setCancelledProjects] = useState([]);
   const [recentOpen, setRecentOpen] = useState(false); // Boxes "Recently received" section — minimized by default
   const [convTab, setConvTab] = useState('pending'); // pending | renewals | recent | all
   const [q, setQ] = useState('');
@@ -5818,6 +5819,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
         setRecentPayments(r.recentPayments || []);
         setPendingPayments(r.pendingPayments || []);
         setUpcomingRenewals(r.upcomingRenewals || []);
+        setCancelledProjects(r.cancelledProjects || []);
         setPageInfo({ total: r.total || 0, pages: r.pages || 1 });
         setConfig(cfg.config || {});
       })
@@ -6076,6 +6078,25 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
         </div>
       ) : effViewMode === 'table' ? null : (
         <>
+        {Array.isArray(cancelledProjects) && cancelledProjects.length > 0 && (
+          <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 overflow-hidden">
+            <div className="px-4 py-2.5 text-[11px] font-bold uppercase tracking-wide text-slate-500 flex items-center justify-between">
+              <span>🚫 Cancelled projects · {cancelledProjects.length}</span>
+              <span className="text-[10px] font-semibold text-slate-400 normal-case">Dues written off — not collectable</span>
+            </div>
+            <div className="divide-y divide-slate-100 bg-white">
+              {cancelledProjects.slice(0, 8).map((c) => (
+                <div key={`cc-${c.leadId}-${c.dealId}`} onClick={() => onOpen(c.leadId, 'deals')} className="px-4 py-2.5 flex items-center gap-3 flex-wrap hover:bg-slate-50 cursor-pointer">
+                  <span className="text-xs font-bold text-[#050A1F]">{c.name}</span>
+                  <span className="text-[11px] text-slate-400">{c.dealName || c.service || ''}</span>
+                  {c.reason && <span className="text-[11px] text-slate-400 italic truncate max-w-[220px]" title={c.reason}>“{c.reason}”</span>}
+                  <span className="ml-auto text-[11px] font-bold text-slate-400">{c.writtenOff > 0 ? <span className="line-through">{c.currency} {Math.round(c.writtenOff).toLocaleString()}</span> : '—'}{c.unpaidCount > 0 && <span className="ml-1.5 font-semibold">({c.unpaidCount} unpaid)</span>}</span>
+                </div>
+              ))}
+              {cancelledProjects.length > 8 && <div className="px-4 py-2 text-[10px] text-slate-400">+{cancelledProjects.length - 8} more — switch to table view for the full list</div>}
+            </div>
+          </div>
+        )}
         {recent.length > 0 && (
           <div className="mb-5">
             <button onClick={() => setRecentOpen((o) => !o)} className="w-full flex items-center justify-between mb-2 group">
@@ -6325,10 +6346,12 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
         // in-scope lists (not the current page) so they aren't capped to ~20.
         const pendingClients = Array.isArray(pendingPayments) ? pendingPayments : [];
         const renewalClients = Array.isArray(upcomingRenewals) ? upcomingRenewals : [];
+        const cancelledList = Array.isArray(cancelledProjects) ? cancelledProjects : [];
         const TABS = [
           ['pending', 'Upcoming & Pending Payments', pendingClients.length],
           ['renewals', 'Upcoming Renewals', renewalClients.length],
           ['recent', 'Recently received · 30 days', recent.length],
+          ['cancelled', 'Cancelled projects', cancelledList.length],
           ['all', 'All converted clients', filtered.length],
         ];
         return (
@@ -6405,6 +6428,39 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                         </tr>
                       );
                     })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            </>)}
+
+            {/* 2b) Cancelled projects — written-off dues, kept for reference */}
+            {convTab === 'cancelled' && (<>
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">🚫 Cancelled projects · {cancelledList.length}</div>
+            <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm mb-6">
+              {cancelledList.length === 0 ? (
+                <div className="text-slate-300 text-sm text-center py-8">No cancelled projects.</div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100">
+                      <th className="text-left px-4 py-3">Client</th>
+                      <th className="text-left px-4 py-3">Project</th>
+                      <th className="text-left px-4 py-3">Reason</th>
+                      <th className="text-left px-4 py-3">Written off</th>
+                      <th className="text-left px-4 py-3">Cancelled</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cancelledList.map((c) => (
+                      <tr key={`can-${c.leadId}-${c.dealId}`} onClick={() => onOpen(c.leadId, 'deals')} className="border-t border-slate-50 hover:bg-slate-50/60 cursor-pointer">
+                        <td className="px-4 py-3 font-bold text-[#050A1F]">{c.name}<div className="text-[11px] text-slate-400 font-normal">{c.website || ''}</div></td>
+                        <td className="px-4 py-3 text-slate-600 text-xs">{c.dealName || c.service || '—'}</td>
+                        <td className="px-4 py-3 text-slate-500 text-xs max-w-[280px]"><span title={c.reason}>{c.reason ? (c.reason.length > 60 ? c.reason.slice(0, 60) + '…' : c.reason) : '—'}</span></td>
+                        <td className="px-4 py-3 text-xs font-bold text-slate-500">{c.writtenOff > 0 ? <span className="line-through">{c.currency} {Math.round(c.writtenOff).toLocaleString()}</span> : <span className="text-slate-400">—</span>}{c.unpaidCount > 0 && <span className="ml-1.5 text-[10px] font-semibold text-slate-400">({c.unpaidCount} unpaid)</span>}</td>
+                        <td className="px-4 py-3 text-xs text-slate-400">{c.cancelledAt ? fmtDate(c.cancelledAt) : '—'}{c.cancelledBy ? <div className="text-[10px]">by {c.cancelledBy}</div> : null}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               )}
