@@ -78,30 +78,37 @@ function DialogHost() {
   const close = (result) => { dlg.resolve(result); setDlg(null); };
   const isPrompt = dlg.kind === 'prompt';
   const accent = dlg.danger ? '#DC2626' : '#FF6A00';
+  const FONT = "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif";
+  // A title may carry a blank-line body ("Do X?\n\ndetails"). Show the first
+  // line as the bold title and the rest as regular-weight body, so it matches
+  // the app's type scale instead of rendering a whole paragraph in bold.
+  const parts = String(dlg.title || '').split(/\n\s*\n/);
+  const titleText = parts[0];
+  const bodyText = dlg.message || (parts.length > 1 ? parts.slice(1).join('\n\n') : '');
   return (
     <div onClick={() => close(isPrompt ? null : false)}
-      style={{ position: 'fixed', inset: 0, zIndex: 2147483600, background: 'rgba(10,14,40,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, fontFamily: 'Plus Jakarta Sans, system-ui, sans-serif', animation: 'qtx-dlg-fade .15s ease-out' }}>
+      style={{ position: 'fixed', inset: 0, zIndex: 2147483600, background: 'rgba(10,14,40,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, fontFamily: FONT, animation: 'qtx-dlg-fade .15s ease-out' }}>
       <div onClick={(e) => e.stopPropagation()}
-        style={{ background: '#fff', borderRadius: 18, width: '100%', maxWidth: 400, boxShadow: '0 30px 70px rgba(2,6,23,.35)', overflow: 'hidden', animation: 'qtx-dlg-pop .2s cubic-bezier(.2,.9,.3,1.15)' }}>
+        style={{ fontFamily: FONT, background: '#fff', borderRadius: 18, width: '100%', maxWidth: 400, boxShadow: '0 30px 70px rgba(2,6,23,.35)', overflow: 'hidden', animation: 'qtx-dlg-pop .2s cubic-bezier(.2,.9,.3,1.15)' }}>
         <div style={{ padding: '22px 22px 6px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginBottom: dlg.message ? 8 : 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginBottom: bodyText ? 8 : 0 }}>
             <span style={{ width: 38, height: 38, borderRadius: 11, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, background: dlg.danger ? '#FEF2F2' : '#FFF7ED' }}>{dlg.danger ? '🗑️' : (isPrompt ? '✏️' : '❓')}</span>
-            <div style={{ fontSize: 16.5, fontWeight: 800, color: '#0A0E28', lineHeight: 1.25 }}>{dlg.title}</div>
+            <div style={{ fontFamily: FONT, fontSize: 16, fontWeight: 800, color: '#050A1F', lineHeight: 1.3, letterSpacing: '-0.01em', whiteSpace: 'pre-line' }}>{titleText}</div>
           </div>
-          {dlg.message && <div style={{ fontSize: 13.5, color: '#64748b', lineHeight: 1.5, paddingLeft: 49 }}>{dlg.message}</div>}
+          {bodyText && <div style={{ fontFamily: FONT, fontSize: 13, fontWeight: 500, color: '#64748b', lineHeight: 1.5, paddingLeft: 49, whiteSpace: 'pre-line' }}>{bodyText}</div>}
           {isPrompt && (
             <div style={{ marginTop: 14 }}>
               <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} placeholder={dlg.placeholder || ''}
                 onKeyDown={(e) => { if (e.key === 'Enter') close(val); if (e.key === 'Escape') close(null); }}
-                style={{ width: '100%', border: '1px solid #e2e8f0', borderRadius: 10, padding: '10px 12px', fontSize: 14, outline: 'none' }} />
+                style={{ width: '100%', fontFamily: FONT, border: '1px solid #e2e8f0', borderRadius: 10, padding: '10px 12px', fontSize: 14, fontWeight: 500, color: '#050A1F', outline: 'none' }} />
             </div>
           )}
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '16px 22px 20px' }}>
           <button onClick={() => close(isPrompt ? null : false)}
-            style={{ background: '#f1f5f9', color: '#64748b', border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>{dlg.cancelText || 'Cancel'}</button>
+            style={{ fontFamily: FONT, background: '#f1f5f9', color: '#64748b', border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>{dlg.cancelText || 'Cancel'}</button>
           <button autoFocus={!isPrompt} onClick={() => close(isPrompt ? val : true)}
-            style={{ background: dlg.danger ? '#DC2626' : 'linear-gradient(90deg,#FF6A00,#FF4500)', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 18px', fontSize: 13, fontWeight: 800, cursor: 'pointer' }}>{dlg.confirmText || (dlg.danger ? 'Delete' : (isPrompt ? 'Save' : 'Confirm'))}</button>
+            style={{ fontFamily: FONT, background: dlg.danger ? '#DC2626' : 'linear-gradient(90deg,#FF6A00,#FF4500)', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 18px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>{dlg.confirmText || (dlg.danger ? 'Delete' : (isPrompt ? 'Save' : 'Confirm'))}</button>
         </div>
       </div>
       <style>{`@keyframes qtx-dlg-fade{from{opacity:0}to{opacity:1}}@keyframes qtx-dlg-pop{from{opacity:0;transform:scale(.96) translateY(8px)}to{opacity:1;transform:none}}`}</style>
