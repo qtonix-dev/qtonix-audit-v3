@@ -5679,8 +5679,9 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const [pendingPayments, setPendingPayments] = useState([]);
   const [upcomingRenewals, setUpcomingRenewals] = useState([]);
   const [cancelledProjects, setCancelledProjects] = useState([]);
+  const [allDue, setAllDue] = useState([]);
   const [recentOpen, setRecentOpen] = useState(false); // Boxes "Recently received" section — minimized by default
-  const [convTab, setConvTab] = useState('pending'); // pending | renewals | recent | all
+  const [convTab, setConvTab] = useState('alldue'); // alldue | pending | renewals | recent | cancelled | all
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(null);
   // Cards, table, or both. Remembered per user, since it's a lasting
@@ -5776,6 +5777,31 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
       setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
     } catch (e) { toast(e.message); }
   };
+  // Inline actions for the "All" tab rows (which carry ids, not full objects).
+  const [rowBusy, setRowBusy] = useState('');
+  const markPaidRow = async (row) => {
+    if (!row || !row.instId) { toast('Open the client to record this payment.'); return; }
+    if (!(await confirmDialog({ title: `Mark ${row.currency || ''} ${Number(row.amount || 0).toLocaleString()} from ${row.name} as paid?` }))) return;
+    setRowBusy(row.instId);
+    try {
+      await api(`/leads/${row.leadId}/deals/${row.dealId}/installments/${row.instId}`, {
+        method: 'PATCH', body: JSON.stringify({ paid: true, paidDate: new Date().toISOString().slice(0, 10) }),
+      });
+      await load(); toast('Payment recorded ✓');
+    } catch (e) { toast(e.message); }
+    setRowBusy('');
+  };
+  const cancelInvoiceRow = async (row) => {
+    if (!row || !row.dealId) return;
+    const reason = await promptDialog({ title: `Cancel this invoice for "${row.dealName || row.name}"?\n\nThe remaining dues on this project stop showing as collectable. Give a reason:` });
+    if (reason == null || !String(reason).trim()) return;
+    setRowBusy(row.instId || row.dealId);
+    try {
+      await api(`/leads/${row.leadId}/deals/${row.dealId}/recurring`, { method: 'POST', body: JSON.stringify({ action: 'cancel', reason: String(reason).trim() }) });
+      await load(); toast('Invoice cancelled');
+    } catch (e) { toast(e.message); }
+    setRowBusy('');
+  };
 
   // Backfill tenure + renewal date onto the latest paid installment of an old
   // deal (recorded before renewals existed).
@@ -5832,6 +5858,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
         setPendingPayments(r.pendingPayments || []);
         setUpcomingRenewals(r.upcomingRenewals || []);
         setCancelledProjects(r.cancelledProjects || []);
+        setAllDue(r.allDue || []);
         setPageInfo({ total: r.total || 0, pages: r.pages || 1 });
         setConfig(cfg.config || {});
       })
@@ -6396,13 +6423,28 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
         const pendingClients = Array.isArray(pendingPayments) ? pendingPayments : [];
         const renewalClients = Array.isArray(upcomingRenewals) ? upcomingRenewals : [];
         const cancelledList = Array.isArray(cancelledProjects) ? cancelledProjects : [];
+        const allDueList = Array.isArray(allDue) ? allDue : [];
         const TABS = [
+          ['alldue', 'All', allDueList.length],
           ['pending', 'Upcoming & Pending Payments', pendingClients.length],
           ['renewals', 'Upcoming Renewals', renewalClients.length],
           ['recent', 'Recently received · 30 days', recent.length],
           ['cancelled', 'Cancelled projects', cancelledList.length],
           ['all', 'All converted clients', filtered.length],
         ];
+        // Urgency state for a due date: overdue (red) · today/≤2 days (orange) ·
+        // upcoming (slate). Returns chip classes + label.
+        const dueState = (iso) => {
+          const n = iso ? daysUntil(iso) : null;
+          if (n == null) return { cls: 'bg-slate-100 text-slate-500', label: '—', rail: 'transparent' };
+          if (n < 0) return { cls: 'bg-red-100 text-red-700', label: daysLeftLabel(iso), rail: '#dc2626' };
+          if (n <= 2) return { cls: 'bg-orange-100 text-orange-700', label: n === 0 ? 'due today' : daysLeftLabel(iso), rail: '#f97316' };
+          return { cls: 'bg-slate-100 text-slate-500', label: daysLeftLabel(iso), rail: 'transparent' };
+        };
+        const monthLabel = (iso) => { try { return new Date(`${String(iso).slice(0, 10)}T00:00:00`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }); } catch { return 'Undated'; } };
+        const dayLabel = (iso) => { try { return new Date(`${String(iso).slice(0, 10)}T00:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }); } catch { return '—'; } };
+        const IconCheck = <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>;
+        const IconX = <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>;
         return (
           <div className={effViewMode === 'table' ? '' : 'mt-6'}>
             {/* Tab bar */}
@@ -6415,83 +6457,148 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
               ))}
             </div>
 
-            {/* 1) Upcoming & Pending Payments */}
-            {convTab === 'pending' && (<>
-            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">💳 Upcoming &amp; Pending Payments · {pendingClients.length}</div>
-            {pendingClients.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm text-slate-300 text-sm text-center py-10 mb-6">No pending payments — everyone's paid up. 🎉</div>
-            ) : (
-              <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
-                {pendingClients.slice().sort((a, b) => String(a.nextDue || '9999').localeCompare(String(b.nextDue || '9999'))).map((p) => {
-                  const dl = p.nextDue ? daysLeftLabel(p.nextDue) : '';
-                  const n = p.nextDue ? daysUntil(p.nextDue) : null;
-                  const accent = (n != null && n < 0) ? { bar: '#dc2626', chip: 'bg-red-100 text-red-700' }
-                    : (n != null && n <= 7) ? { bar: '#f59e0b', chip: 'bg-amber-100 text-amber-700' }
-                    : { bar: '#059669', chip: 'bg-emerald-100 text-emerald-700' };
-                  return (
-                    <div key={`pay-${p.leadId}`} onClick={() => onOpen(p.leadId, 'deals')}
-                      className="relative bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer overflow-hidden">
-                      <div className="absolute left-0 top-0 bottom-0 w-1.5" style={{ background: accent.bar }} />
-                      <div className="p-4 pl-5">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="text-sm font-extrabold text-[#050A1F] truncate">{p.name}</div>
-                            <div className="text-[11px] text-slate-400 truncate">{p.website || ''}</div>
-                          </div>
-                          {p.nextDue && <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-extrabold whitespace-nowrap ${accent.chip}`}>{dl}</span>}
-                        </div>
-                        <div className="mt-3 flex items-end justify-between">
-                          <div>
-                            <div className="text-lg font-extrabold text-amber-600">${(p.due || 0).toLocaleString()}</div>
-                            <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">outstanding · {p.count} payment{p.count === 1 ? '' : 's'}</div>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-[11px] text-slate-500 font-semibold inline-flex items-center gap-1"><Icon.Calendar size={12} />{p.nextDue ? fmtDate(p.nextDue).split(',')[0] : '—'}</div>
-                            <div className="text-[10px] text-slate-400 mt-0.5">Owner: {p.ownerName || '—'}</div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            {/* 0) ALL — payments + renewals in one table, grouped & sorted by month */}
+            {convTab === 'alldue' && (<>
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">📋 All upcoming payments &amp; renewals · {allDueList.length}</div>
+            {/* legend */}
+            <div className="flex flex-wrap gap-4 mb-3 text-[11px] font-bold text-slate-500">
+              <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-red-500" />Overdue</span>
+              <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-orange-500" />Due today / in 2 days</span>
+              <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-green-500" />Paid</span>
+              <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-slate-300" />Upcoming</span>
+            </div>
+            <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm mb-6">
+              {allDueList.length === 0 ? (
+                <div className="text-slate-300 text-sm text-center py-10">Nothing upcoming — all payments collected and no renewals due. 🎉</div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100">
+                      <th className="text-left px-4 py-3 w-[128px]">Date</th>
+                      <th className="text-left px-4 py-3">Client</th>
+                      <th className="text-left px-4 py-3">Type</th>
+                      <th className="text-left px-4 py-3">Service / Deal</th>
+                      <th className="text-left px-4 py-3">Amount</th>
+                      <th className="text-left px-4 py-3">Owner</th>
+                      <th className="px-4 py-3 text-right w-[96px]">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      const rows = []; let lastMonth = null;
+                      for (const r of allDueList) {
+                        const mo = monthLabel(r.date);
+                        if (mo !== lastMonth) { rows.push(<tr key={`m-${mo}`} className="bg-slate-50"><td colSpan={7} className="px-4 py-2 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">{mo}</td></tr>); lastMonth = mo; }
+                        const st = dueState(r.date);
+                        const overdue30 = r.kind === 'payment' && r.date && daysUntil(r.date) <= -30;
+                        const key = `${r.kind}-${r.leadId}-${r.dealId}-${r.instId || r.date}`;
+                        rows.push(
+                          <tr key={key} onClick={() => onOpen(r.leadId, 'deals')} className="border-t border-slate-50 hover:bg-slate-50/60 cursor-pointer">
+                            <td className="px-4 py-3 whitespace-nowrap" style={{ boxShadow: st.rail !== 'transparent' ? `inset 3px 0 0 ${st.rail}` : 'none' }}>
+                              <div className="font-extrabold text-[#050A1F] text-[13px]">{dayLabel(r.date)}</div>
+                              <span className={`inline-block mt-0.5 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${st.cls}`}>{st.label}</span>
+                            </td>
+                            <td className="px-4 py-3 font-bold text-[#050A1F]">{r.name}<div className="text-[11px] text-slate-400 font-normal">{r.website || ''}</div></td>
+                            <td className="px-4 py-3">{r.kind === 'renewal'
+                              ? <span className="rounded-full px-2.5 py-1 text-[10px] font-extrabold bg-indigo-50 text-indigo-600">Renewal</span>
+                              : <span className="rounded-full px-2.5 py-1 text-[10px] font-extrabold bg-orange-50 text-orange-700">Payment</span>}</td>
+                            <td className="px-4 py-3 text-slate-500 text-xs">{r.kind === 'renewal' ? (r.service || '—') : `${r.dealName || r.service || '—'}${r.seq ? ` · inst ${r.seq}` : ''}`}</td>
+                            <td className="px-4 py-3 text-xs font-bold text-amber-600">{r.kind === 'renewal' ? <span className="text-slate-400 font-semibold">renewal</span> : `${r.currency || ''} ${Number(r.amount || 0).toLocaleString()}`}</td>
+                            <td className="px-4 py-3 text-slate-500 text-xs">{r.ownerName || '—'}</td>
+                            <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                              {r.kind === 'payment' ? (
+                                <div className="flex items-center gap-1.5 justify-end">
+                                  <button title="Mark paid" disabled={rowBusy === r.instId} onClick={() => markPaidRow(r)}
+                                    className="w-[30px] h-[30px] rounded-lg bg-[#050A1F] text-white flex items-center justify-center hover:opacity-90 disabled:opacity-40">{IconCheck}</button>
+                                  <button title={overdue30 ? 'Cancel invoice (30+ days overdue)' : 'Cancel available after 30 days overdue'}
+                                    disabled={!overdue30 || rowBusy === (r.instId || r.dealId)} onClick={() => overdue30 && cancelInvoiceRow(r)}
+                                    className={`w-[30px] h-[30px] rounded-lg flex items-center justify-center border ${overdue30 ? 'bg-red-50 border-red-200 text-red-600 hover:bg-red-100' : 'bg-white border-slate-200 text-slate-300 cursor-not-allowed'}`}>{IconX}</button>
+                                </div>
+                              ) : <div className="text-right text-slate-300 text-xs">—</div>}
+                            </td>
+                          </tr>,
+                        );
+                      }
+                      return rows;
+                    })()}
+                  </tbody>
+                </table>
+              )}
+            </div>
             </>)}
 
-            {/* 2) Upcoming Renewals — soonest first, as boxes */}
+            {/* 1) Upcoming & Pending Payments — table */}
+            {convTab === 'pending' && (<>
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">💳 Upcoming &amp; Pending Payments · {pendingClients.length}</div>
+            <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm mb-6">
+              {pendingClients.length === 0 ? (
+                <div className="text-slate-300 text-sm text-center py-8">No pending payments — everyone's paid up. 🎉</div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100">
+                      <th className="text-left px-4 py-3 w-[128px]">Next due</th>
+                      <th className="text-left px-4 py-3">Client</th>
+                      <th className="text-left px-4 py-3">Owner</th>
+                      <th className="text-left px-4 py-3">Outstanding</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pendingClients.slice().sort((a, b) => String(a.nextDue || '9999').localeCompare(String(b.nextDue || '9999'))).map((p) => {
+                      const st = dueState(p.nextDue);
+                      return (
+                        <tr key={`pay-${p.leadId}`} onClick={() => onOpen(p.leadId, 'deals')} className="border-t border-slate-50 hover:bg-amber-50/40 cursor-pointer">
+                          <td className="px-4 py-3 whitespace-nowrap" style={{ boxShadow: st.rail !== 'transparent' ? `inset 3px 0 0 ${st.rail}` : 'none' }}>
+                            <div className="font-extrabold text-[#050A1F] text-[13px]">{p.nextDue ? dayLabel(p.nextDue) : '—'}</div>
+                            {p.nextDue && <span className={`inline-block mt-0.5 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${st.cls}`}>{st.label}</span>}
+                          </td>
+                          <td className="px-4 py-3 font-bold text-[#050A1F]">{p.name}<div className="text-[11px] text-slate-400 font-normal">{p.website || ''}</div></td>
+                          <td className="px-4 py-3 text-slate-500 text-xs">{p.ownerName}</td>
+                          <td className="px-4 py-3 text-xs font-bold text-amber-600">${(p.due || 0).toLocaleString()} <span className="text-[10px] font-semibold text-slate-400">· {p.count} payment{p.count === 1 ? '' : 's'}</span></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            </>)}
+
+            {/* 2) Upcoming Renewals — table */}
             {convTab === 'renewals' && (<>
             <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">🔁 Upcoming Renewals · {renewalClients.length}</div>
-            {renewalClients.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm text-slate-300 text-sm text-center py-10 mb-6">No renewals scheduled.</div>
-            ) : (
-              <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
-                {renewalClients.slice().sort((a, b) => String(a.date || '9999').localeCompare(String(b.date || '9999'))).map((rc) => {
-                  const rl = renewalLabel(rc.date);
-                  const accent = rl.tone === 'overdue' ? { bar: '#dc2626', chip: 'bg-red-100 text-red-700' }
-                    : rl.tone === 'soon' ? { bar: '#f59e0b', chip: 'bg-amber-100 text-amber-700' }
-                    : { bar: '#4f46e5', chip: 'bg-indigo-100 text-indigo-700' };
-                  return (
-                    <div key={`ren-${rc.leadId}`} onClick={() => onOpen(rc.leadId, 'deals')}
-                      className="relative bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer overflow-hidden">
-                      <div className="absolute left-0 top-0 bottom-0 w-1.5" style={{ background: accent.bar }} />
-                      <div className="p-4 pl-5">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="text-sm font-extrabold text-[#050A1F] truncate">{rc.name}</div>
-                            <div className="text-[11px] text-slate-400 truncate">{rc.website || ''}</div>
-                          </div>
-                          <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-extrabold whitespace-nowrap ${accent.chip}`}>{rl.text}</span>
-                        </div>
-                        <div className="mt-3 flex items-center justify-between text-[11px]">
-                          <span className="inline-flex items-center gap-1.5 text-slate-500 font-semibold">🔁 {rc.service || 'Renewal'}</span>
-                          <span className="text-slate-400">Owner: <span className="font-semibold text-slate-600">{rc.ownerName || '—'}</span></span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm mb-6">
+              {renewalClients.length === 0 ? (
+                <div className="text-slate-300 text-sm text-center py-8">No renewals scheduled.</div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100">
+                      <th className="text-left px-4 py-3 w-[128px]">Renewal date</th>
+                      <th className="text-left px-4 py-3">Client</th>
+                      <th className="text-left px-4 py-3">Owner</th>
+                      <th className="text-left px-4 py-3">Service</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {renewalClients.slice().sort((a, b) => String(a.date || '9999').localeCompare(String(b.date || '9999'))).map((rc) => {
+                      const st = dueState(rc.date);
+                      return (
+                        <tr key={`ren-${rc.leadId}`} onClick={() => onOpen(rc.leadId, 'deals')} className="border-t border-slate-50 hover:bg-indigo-50/40 cursor-pointer">
+                          <td className="px-4 py-3 whitespace-nowrap" style={{ boxShadow: st.rail !== 'transparent' ? `inset 3px 0 0 ${st.rail}` : 'none' }}>
+                            <div className="font-extrabold text-[#050A1F] text-[13px]">{dayLabel(rc.date)}</div>
+                            <span className={`inline-block mt-0.5 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${st.cls}`}>{st.label}</span>
+                          </td>
+                          <td className="px-4 py-3 font-bold text-[#050A1F]">{rc.name}<div className="text-[11px] text-slate-400 font-normal">{rc.website || ''}</div></td>
+                          <td className="px-4 py-3 text-slate-500 text-xs">{rc.ownerName}</td>
+                          <td className="px-4 py-3 text-slate-500 text-xs">{rc.service || '—'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
             </>)}
 
             {/* 2b) Cancelled projects — written-off dues, kept for reference */}

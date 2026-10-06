@@ -2368,6 +2368,7 @@ router.get('/converted', requireAuth, async (req, res, next) => {
     let pendingPayments = [];
     let upcomingRenewals = [];
     let cancelledProjects = [];
+    let allDue = []; // combined payments + renewals for the Converted "All" tab
     try {
       const allForRecent = (!from && !q)
         ? await Lead.findAll({ where, order: [['updatedAt', 'DESC']] })
@@ -2409,7 +2410,10 @@ router.get('/converted', requireAuth, async (req, res, next) => {
             if (it && !it.paid) {
               const amt = Number(it.amount || 0);
               due += amt;
-              pendingInsts.push({ dueDate: it.dueDate || null, amount: amt, seq: it.seq || null, dealId: d.id, dealName: d.name || d.service || '' });
+              // instId + currency + planType let the "All" tab mark-paid / cancel inline.
+              const row = { dueDate: it.dueDate || null, amount: amt, seq: it.seq || null, dealId: d.id, instId: it.id, currency: d.currency || 'USD', dealName: d.name || d.service || '', service: d.service || '', planType: d.planType || 'one-time' };
+              pendingInsts.push(row);
+              allDue.push({ kind: 'payment', leadId: l.id, name: nm, website: l.website || '', ownerName: l.ownerName || '', date: it.dueDate || null, ...row });
             }
           }
         }
@@ -2447,6 +2451,7 @@ router.get('/converted', requireAuth, async (req, res, next) => {
           renewDates.sort((a, b2) => String(a.date).localeCompare(String(b2.date)));
           const fut = renewDates.find((r) => r.date >= todayStr2) || renewDates[0];
           upcomingRenewals.push({ leadId: l.id, name: nm, website: l.website || '', ownerName: l.ownerName || '', date: fut.date, service: fut.service });
+          allDue.push({ kind: 'renewal', leadId: l.id, name: nm, website: l.website || '', ownerName: l.ownerName || '', date: fut.date, service: fut.service, dealId: fut.dealId });
         }
       }
       recentPayments.sort((a, b2) => new Date(b2.at) - new Date(a.at));
@@ -2455,7 +2460,8 @@ router.get('/converted', requireAuth, async (req, res, next) => {
       pendingPayments.sort((a, b2) => String(a.nextDue || '9999').localeCompare(String(b2.nextDue || '9999')));
       upcomingRenewals.sort((a, b2) => String(a.date).localeCompare(String(b2.date)));
       cancelledProjects.sort((a, b2) => String(b2.cancelledAt || '').localeCompare(String(a.cancelledAt || '')));
-    } catch { recentPayments = []; pendingPayments = []; upcomingRenewals = []; cancelledProjects = []; }
+      allDue.sort((a, b2) => String(a.date || '9999').localeCompare(String(b2.date || '9999')));
+    } catch { recentPayments = []; pendingPayments = []; upcomingRenewals = []; cancelledProjects = []; allDue = []; }
 
     res.json({
       items: rows.map((l) => {
@@ -2516,7 +2522,7 @@ router.get('/converted', requireAuth, async (req, res, next) => {
       }),
       total: count, page, perPage,
       pages: Math.max(1, Math.ceil(count / perPage)),
-      period, recentPayments, pendingPayments, upcomingRenewals, cancelledProjects,
+      period, recentPayments, pendingPayments, upcomingRenewals, cancelledProjects, allDue,
     });
   } catch (e) { next(e); }
 });

@@ -658,7 +658,7 @@ const deltaStr = (n, { pct = false, unit = '' } = {}) => {
 };
 
 // Dark hero band with month-over-month headline figures.
-function DashHero({ greeting, name, scopeLabel, deltas }) {
+function DashHero({ greeting, name, scopeLabel, deltas, adminSalesUsd }) {
   const d = deltas || {};
   const cmp = !!d.compareLastMonth; // before the 15th this is false → "this month so far"
   const soFar = <span className="text-slate-400">this month so far</span>;
@@ -698,10 +698,10 @@ function DashHero({ greeting, name, scopeLabel, deltas }) {
           {/* Admin-owned sales — admin viewer only. Kept OUT of team/company
               target; shown here and in the sales trend so the admin can see
               their own closed business this month. */}
-          {d.adminSalesUsd != null && (
+          {adminSalesUsd != null && (
             <div className="min-w-[108px] pl-6 border-l border-white/15">
               <div className="text-[10px] font-bold uppercase tracking-wide text-indigo-300">Admin-owned sales</div>
-              <div className="text-2xl font-extrabold mt-0.5">{usd(d.adminSalesUsd || 0)}</div>
+              <div className="text-2xl font-extrabold mt-0.5">{usd(adminSalesUsd || 0)}</div>
               <div className="text-[11px] mt-0.5 text-slate-400">your own · this month</div>
             </div>
           )}
@@ -875,7 +875,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
 
       {/* HERO — dark band with month-over-month deltas + view switcher. */}
       <div className="relative">
-        <DashHero greeting={greeting} name={user.name.split(' ')[0]} scopeLabel={scopeLabel} deltas={deltas} />
+        <DashHero greeting={greeting} name={user.name.split(' ')[0]} scopeLabel={scopeLabel} deltas={deltas} adminSalesUsd={(m && m.adminSalesUsd != null) ? m.adminSalesUsd : null} />
         {(isAdmin || isManager) && onModeChange && (
           <div className="absolute right-5 top-5 inline-flex items-center gap-1 bg-white/10 border border-white/20 rounded-2xl p-1.5 backdrop-blur-sm">
             {[['overview', 'Overview'], ['analytics', 'Analytics']].map(([id, label]) => (
