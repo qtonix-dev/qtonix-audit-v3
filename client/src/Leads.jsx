@@ -4876,7 +4876,7 @@ function DealsTab({ lead, config, user, onChange }) {
                                   onChange={(e) => changeDue(d, it, e.target.value, e)}
                                   className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 bg-white" />
                                 {it.dueDate && (
-                                  <span className={`text-[10px] font-bold ${overdue ? 'text-red-500' : 'text-slate-400'}`}>
+                                  <span className={`text-[10px] font-bold shrink-0 whitespace-nowrap ${overdue ? 'text-red-500' : 'text-slate-400'}`}>
                                     {daysLeftLabel(it.dueDate)}
                                   </span>
                                 )}
@@ -5746,6 +5746,23 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
       setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
     } catch (e) { toast(e.message); }
   };
+  // Cancel a project (any plan type): its remaining unpaid installments stop
+  // counting as due, but stay visible under a "Cancelled" line for reference.
+  const cancelProject = async (lead, deal) => {
+    const reason = await promptDialog({ title: `Cancel the project "${deal.name}"?\n\nRemaining unpaid dues will stop showing as collectable. Give a reason:` });
+    if (reason == null || !String(reason).trim()) return;
+    try {
+      const u = await api(`/leads/${lead._id}/deals/${deal.id}/recurring`, { method: 'POST', body: JSON.stringify({ action: 'cancel', reason: String(reason).trim() }) });
+      setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
+    } catch (e) { toast(e.message); }
+  };
+  const uncancelProject = async (lead, deal) => {
+    if (!(await confirmDialog({ title: `Reinstate "${deal.name}"? Its remaining dues will show as collectable again.` }))) return;
+    try {
+      const u = await api(`/leads/${lead._id}/deals/${deal.id}/recurring`, { method: 'POST', body: JSON.stringify({ action: 'uncancel' }) });
+      setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
+    } catch (e) { toast(e.message); }
+  };
 
   // Backfill tenure + renewal date onto the latest paid installment of an old
   // deal (recorded before renewals existed).
@@ -5855,9 +5872,13 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
     let booked = 0, collected = 0, collectedInPeriod = 0, instTotal = 0, instPaid = 0, nextDue = null;
     const pending = [];
     const recurringUpcoming = [];
+    const cancelled = []; // remaining unpaid installments of cancelled projects (reference only)
     for (const d of won) {
       const isRecurring = d.planType === 'recurring';
-      if (!isRecurring) booked += toUsd(d.amount, d.currency);
+      const isCancelled = !!d.cancelled;
+      // Booked still counts money already earned, but a cancelled one-time/
+      // installment deal does not book its full (partly-unpaid) amount.
+      if (!isRecurring && !isCancelled) booked += toUsd(d.amount, d.currency);
       for (const it of (d.installments || [])) {
         instTotal++;
         if (it.paid) {
@@ -5865,9 +5886,12 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
           collected += toUsd(it.amount, d.currency);
           // Only count toward the period figure if the money landed in-window.
           if (paidInWindow(it)) collectedInPeriod += toUsd(it.amount, d.currency);
-          if (isRecurring) booked += toUsd(it.amount, d.currency);
+          if (isRecurring || isCancelled) booked += toUsd(it.amount, d.currency);
+        } else if (isCancelled) {
+          // Keep it visible as a cancelled line, but it is NOT a live due.
+          cancelled.push({ deal: d, inst: it });
         } else if (isRecurring) {
-          recurringUpcoming.push({ deal: d, inst: it });
+          if (!d.recurringStopped) recurringUpcoming.push({ deal: d, inst: it });
         } else {
           pending.push({ deal: d, inst: it, recurring: false });
           if (it.dueDate && (!nextDue || it.dueDate < nextDue)) nextDue = it.dueDate;
@@ -5892,7 +5916,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
       won, open, booked: Math.round(booked), collected: Math.round(collected),
       collectedInPeriod: Math.round(collectedInPeriod),
       due: Math.round(booked - collected), instTotal, instPaid, nextDue,
-      pending, nextInst: pending[0] || null, recurringUpcoming, hasRecurring, recurringDeals, dealsMissingRenewal,
+      pending, nextInst: pending[0] || null, recurringUpcoming, cancelled, hasRecurring, recurringDeals, dealsMissingRenewal,
     };
   };
 
@@ -6150,10 +6174,9 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                                     {deal.currency} {Number(inst.amount || 0).toLocaleString()}
                                     <span className="text-[10px] font-bold text-slate-400 ml-1.5">instalment {inst.seq}</span>
                                   </div>
-                                  <div className={`text-[11px] font-semibold mt-0.5 flex items-center gap-1 ${overdue ? 'text-red-600' : soon ? 'text-amber-700' : 'text-slate-500'}`}>
-                                    <Icon.Calendar size={12} />
-                                    {inst.dueDate || 'no due date'}
-                                    {inst.dueDate && <span className="font-bold">({daysLeftLabel(inst.dueDate)})</span>}
+                                  <div className={`text-[11px] font-semibold mt-0.5 flex items-center flex-wrap gap-x-1.5 gap-y-0.5 ${overdue ? 'text-red-600' : soon ? 'text-amber-700' : 'text-slate-500'}`}>
+                                    <span className="inline-flex items-center gap-1"><Icon.Calendar size={12} />{inst.dueDate || 'no due date'}</span>
+                                    {inst.dueDate && <span className={`font-extrabold rounded px-1.5 py-0.5 whitespace-nowrap ${overdue ? 'bg-red-100 text-red-700' : soon ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-600'}`}>{daysLeftLabel(inst.dueDate)}</span>}
                                   </div>
                                 </div>
                                 {isAdmin ? (
@@ -6202,10 +6225,9 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                                   {deal.currency} {Number(inst.amount || 0).toLocaleString()}
                                   <span className="text-[10px] font-bold text-indigo-400 ml-1.5">cycle {inst.seq}</span>
                                 </div>
-                                <div className="text-[11px] font-semibold mt-0.5 flex items-center gap-1 text-slate-500">
-                                  <Icon.Calendar size={12} />
-                                  {inst.dueDate || 'no date'}
-                                  {inst.dueDate && <span className="font-bold">({daysLeftLabel(inst.dueDate)})</span>}
+                                <div className="text-[11px] font-semibold mt-0.5 flex items-center flex-wrap gap-x-1.5 gap-y-0.5 text-slate-500">
+                                  <span className="inline-flex items-center gap-1"><Icon.Calendar size={12} />{inst.dueDate || 'no date'}</span>
+                                  {inst.dueDate && <span className="font-extrabold rounded px-1.5 py-0.5 whitespace-nowrap bg-indigo-100 text-indigo-600">{daysLeftLabel(inst.dueDate)}</span>}
                                 </div>
                               </div>
                               {isAdmin ? (
@@ -6543,6 +6565,48 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                                     </div>
                                   );
                                 })}
+                              </div>
+                            </div>
+                          )}
+                          {/* Non-recurring won projects: cancel / reinstate. A
+                              cancelled project's remaining dues drop out of the
+                              amounts owed, but stay listed below for reference. */}
+                          {isAdmin && s.won.filter((d) => d.planType !== 'recurring').length > 0 && (
+                            <div className="mb-3">
+                              <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-2">Projects</div>
+                              <div className="space-y-1.5">
+                                {s.won.filter((d) => d.planType !== 'recurring').map((d) => (
+                                  <div key={d.id} className="flex items-center gap-3 flex-wrap bg-white rounded-lg border border-slate-100 px-3 py-2">
+                                    <span className="text-xs font-bold text-[#050A1F] truncate max-w-[200px]" title={d.name}>{d.name}</span>
+                                    <span className="text-[10px] text-slate-400">{d.service || ''}</span>
+                                    {d.cancelled && <span className="rounded bg-slate-200 text-slate-600 px-2 py-0.5 text-[10px] font-bold" title={d.cancelReason || ''}>Cancelled{d.cancelReason ? `: ${d.cancelReason.length > 36 ? d.cancelReason.slice(0, 36) + '…' : d.cancelReason}` : ''}</span>}
+                                    <div className="ml-auto">
+                                      {d.cancelled
+                                        ? <button onClick={() => uncancelProject(l, d)} className="rounded-md border border-green-200 bg-green-50 px-3 py-1 text-[10px] font-bold text-green-700 hover:bg-green-100">Reinstate</button>
+                                        : <button onClick={() => cancelProject(l, d)} className="rounded-md border border-red-200 bg-red-50 px-3 py-1 text-[10px] font-bold text-red-600 hover:bg-red-100">Cancel project</button>}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Cancelled dues — reference only, excluded from totals. */}
+                          {s.cancelled && s.cancelled.length > 0 && (
+                            <div className="mb-3">
+                              <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">🚫 Cancelled — not collectable · {s.cancelled.length}</div>
+                              <div className="space-y-1.5">
+                                {s.cancelled.slice(0, 4).map(({ deal, inst }) => (
+                                  <div key={inst.id} className="rounded-lg px-2.5 py-2 bg-slate-50 border border-slate-100 opacity-75">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div className="min-w-0">
+                                        <div className="text-sm font-bold text-slate-500 line-through">{deal.currency} {Number(inst.amount || 0).toLocaleString()}<span className="text-[10px] font-bold text-slate-400 ml-1.5 no-underline">instalment {inst.seq}</span></div>
+                                        <div className="text-[11px] font-semibold mt-0.5 text-slate-400 flex items-center gap-1"><Icon.Calendar size={12} />{inst.dueDate || 'no due date'} · cancelled</div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                                {s.cancelled.length > 4 && <div className="text-[10px] text-slate-400 mt-1.5">+{s.cancelled.length - 4} more — open the client to see all</div>}
                               </div>
                             </div>
                           )}

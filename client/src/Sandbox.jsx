@@ -63,7 +63,7 @@ function scoreTechnical(c) {
   if (!c.https) { s -= 20; issues.push({ severity: 'critical', title: 'Site is not served over HTTPS', detail: 'Browsers mark the site "Not secure". Suppresses rankings and conversions.' }); }
   if (!c.hasViewport) { s -= 15; issues.push({ severity: 'critical', title: 'No mobile viewport tag', detail: 'Cannot render correctly on phones, where most searches happen.' }); }
   if (!c.sitemap || !c.sitemap.exists) { s -= 8; issues.push({ severity: 'warning', title: 'No XML sitemap found', detail: 'Search engines discover your pages by chance.' }); }
-  if (c.blocksAiCrawlers) { s -= 12; issues.push({ severity: 'critical', title: 'robots.txt blocks AI crawlers', detail: 'GPTBot / ClaudeBot / PerplexityBot disallowed. Invisible to AI search by configuration.' }); }
+  if (c.blocksAiCrawlers) { s -= 12; issues.push({ severity: 'critical', title: 'robots.txt blocks AI crawlers', detail: 'Major AI crawlers disallowed. Invisible to AI search by configuration.' }); }
   if (!c.serverRenderedContent) { s -= 12; issues.push({ severity: 'critical', title: 'Content requires JavaScript to appear', detail: 'Most AI crawlers will see an effectively blank page.' }); }
   return { score: clamp(s), issues };
 }
@@ -159,14 +159,14 @@ function simulate(domain, businessName) {
     { label: 'FAQ / Q&A structured content', pass: rng(0, 10, 93) > 7, detail: 'Answer-formatted content is what gets quoted in AI answers.' },
     { label: 'E-E-A-T signals (author, credentials)', pass: rng(0, 10, 94) > 6, detail: 'AI weights demonstrated expertise heavily.' },
     { label: 'Content readable without JavaScript', pass: crawl.serverRenderedContent, detail: 'Most AI crawlers cannot execute JavaScript.' },
-    { label: 'AI crawlers allowed in robots.txt', pass: !crawl.blocksAiCrawlers, detail: 'Blocking GPTBot/ClaudeBot makes you invisible by choice.' },
+    { label: 'AI crawlers allowed in robots.txt', pass: !crawl.blocksAiCrawlers, detail: 'Blocking major AI crawlers makes you invisible by choice.' },
   ];
   const ai = {
     promptsTested: 8, mentions: Math.round((sov / 100) * 8), shareOfVoice: sov, readiness,
     readinessScore: Math.round((readiness.filter((r) => r.pass).length / readiness.length) * 100),
     aiOverview: { gapCount: rng(4, 32, 95), citedCount: sov > 0 ? rng(0, 4, 96) : 0 },
     rivals: [{ name: 'Competitor One', count: rng(4, 8, 97), outOf: 8 }, { name: 'Competitor Two', count: rng(2, 6, 98), outOf: 8 }, { name: 'Competitor Three', count: rng(1, 4, 99), outOf: 8 }],
-    methodology: 'Assistant recall measured by asking Claude buyer-intent questions with no brand hint. AI Overview data from live Google SERP tracking.',
+    methodology: 'Assistant recall measured by asking a leading AI assistant buyer-intent questions with no brand hint. AI Overview data from live search-result tracking.',
   };
   const keywordData = { totalKeywords: rng(30, 260, 6), page1Keywords: rng(0, 10, 25) > 7 ? rng(1, 5, 26) : 0, traffic: rng(40, 900, 5), topKeywords: keywords, strikingDistance: keywords.filter((k) => k.position >= 11 && k.position <= 20) };
   const backlinks = { total: refs * rng(3, 9, 27), referringDomains: refs, domainAuthority: rng(2, 22, 1), quality, neutral: refs - toxic - quality, toxic, sampled: refs, toxicPercentage: Math.round((toxic / refs) * 100) };
@@ -578,7 +578,7 @@ function FullReport({ r, settings, printRef }) {
       <Page n="8" {...P}>
         <Sec n="06" name="AI SEARCH VISIBILITY" col={col} />
         <H2 a="Your buyers don't only ask Google anymore." b="They ask ChatGPT too." col={col} />
-        <p className="text-xs text-slate-600 leading-relaxed">Customers increasingly ask ChatGPT, Google AI Overviews, Gemini, Perplexity and Claude for recommendations before they ever click. We asked an AI assistant {r.ai.promptsTested} real buying questions from your category — never mentioning your name — and recorded who it recommended.</p>
+        <p className="text-xs text-slate-600 leading-relaxed">Customers increasingly ask AI assistants and AI-powered search for recommendations before they ever click. We tested {r.ai.promptsTested} real buying questions from your category against today's leading AI search — never mentioning your name — and recorded who it recommended.</p>
         <div className="grid grid-cols-4 gap-2.5 mt-4">
           <Stat v={`${r.ai.mentions}/${r.ai.promptsTested}`} l="Times you were recommended" c={tone(r.ai.shareOfVoice, 20, 60)} />
           <Stat v={r.ai.shareOfVoice + '%'} l="Your AI share of voice" c={tone(r.ai.shareOfVoice, 20, 60)} />

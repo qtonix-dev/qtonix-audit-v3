@@ -2403,6 +2403,7 @@ router.get('/converted', requireAuth, async (req, res, next) => {
         let due = 0;
         for (const d of deals) {
           if (!d || d.stage !== 'closed_won' || !Array.isArray(d.installments)) continue;
+          if (d.cancelled) continue; // cancelled project → its remaining dues are no longer collectable
           for (const it of d.installments) {
             if (it && !it.paid) {
               const amt = Number(it.amount || 0);
@@ -2422,7 +2423,7 @@ router.get('/converted', requireAuth, async (req, res, next) => {
         // --- Upcoming renewals: soonest active renewal date across deals ---
         const renewDates = [];
         for (const d of deals) {
-          if (d && d.recurringStopped) continue;
+          if (d && (d.recurringStopped || d.cancelled)) continue;
           for (const it of (d && d.installments || [])) {
             if (it && it.renewalDate) renewDates.push({ date: it.renewalDate, service: d.service || d.name || '', dealId: d.id });
           }
@@ -2462,7 +2463,7 @@ router.get('/converted', requireAuth, async (req, res, next) => {
         // show "next renewal" and build the Upcoming Renewals table.
         const renewDates = [];
         for (const d of deals) {
-          if (d && d.recurringStopped) continue; // stopped → no active renewal
+          if (d && (d.recurringStopped || d.cancelled)) continue; // stopped/cancelled → no active renewal
           for (const it of (d && d.installments || [])) {
             if (it && it.renewalDate) renewDates.push({ date: it.renewalDate, service: d.service || d.name || '', dealId: d.id });
           }
@@ -3906,6 +3907,25 @@ router.post('/:id/deals/:dealId/recurring', requireAuth, async (req, res, next) 
       deal.stoppedAt = null;
       deal.stoppedBy = null;
       pushTimeline(lead, 'deal', `Recurring resumed for "${deal.name}"`, req.user.name);
+    } else if (action === 'cancel') {
+      // Cancel the whole project (any plan type). Money already collected stays;
+      // the remaining UNPAID installments keep existing but are marked cancelled
+      // so they drop out of "due" totals while staying visible for reference.
+      const reason = String(b.reason || '').trim();
+      if (!reason) return res.status(400).json({ error: 'A reason for cancellation is required.' });
+      deal.cancelled = true;
+      deal.cancelReason = reason.slice(0, 1000);
+      deal.cancelledAt = new Date().toISOString();
+      deal.cancelledBy = req.user.name;
+      // A cancelled recurring contract also stops generating future cycles.
+      if (deal.planType === 'recurring') deal.recurringStopped = true;
+      pushTimeline(lead, 'deal', `Project cancelled — "${deal.name}" — ${reason}`, req.user.name);
+    } else if (action === 'uncancel') {
+      deal.cancelled = false;
+      deal.cancelReason = null;
+      deal.cancelledAt = null;
+      deal.cancelledBy = null;
+      pushTimeline(lead, 'deal', `Project cancellation reversed for "${deal.name}"`, req.user.name);
     } else {
       return res.status(400).json({ error: 'Unknown action.' });
     }

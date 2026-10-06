@@ -245,7 +245,7 @@ function analyseAiReadiness(crawl) {
     label: 'AI crawlers allowed in robots.txt',
     pass: !crawl.blocksAiCrawlers,
     detail: crawl.blocksAiCrawlers
-      ? 'robots.txt blocks GPTBot / ClaudeBot / PerplexityBot — you are invisible by choice.'
+      ? 'robots.txt blocks major AI crawlers — you are invisible to AI search by choice.'
       : 'AI crawlers are permitted.',
   });
 
@@ -314,7 +314,7 @@ async function runAiVisibility(apiKey, ctx) {
     // Real Google AI Overview data from SE Ranking, kept distinct from the probe.
     aiOverview: aiOverview || null,
     methodology:
-      'Assistant recall measured by asking Claude (Sonnet 4.6) buyer-intent questions with no brand hint. AI Overview data sourced from live Google SERP tracking.',
+      'Assistant recall measured by asking a leading AI assistant buyer-intent questions with no brand hint. AI Overview data sourced from live search-result tracking.',
   };
 }
 

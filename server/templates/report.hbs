@@ -487,7 +487,7 @@ body{ background:#525659; margin:0; padding:24px 0; }
   {{#if moreIssues}}<p class="note">…and {{moreIssues}} further issues documented in the full technical appendix, provided when we begin work.</p>{{/if}}
 </div>
 
-<!-- ================= ON-PAGE TAGS (title + meta, Claude remark) ================= -->
+<!-- ================= ON-PAGE TAGS (title + meta, our remark) ================= -->
 {{#if onPageAssessment}}
 <div class="page">
   <div class="sec-head"><span class="sec-dia"></span><span class="sec-num">◆</span><span class="sec-rule"></span><span class="sec-name">ON-PAGE TAGS</span></div>
@@ -507,7 +507,7 @@ body{ background:#525659; margin:0; padding:24px 0; }
   </div>
 
   <div class="quote accent"><span class="qd"></span><p>{{onPageAssessment.overall}}</p></div>
-  <p class="note">Assessment by Claude, based on your live homepage tags. Ideal lengths: title 50–60 characters, meta description 140–160.</p>
+  <p class="note">Assessment based on your live homepage tags. Ideal lengths: title 50–60 characters, meta description 140–160.</p>
 </div>
 {{/if}}
 
@@ -718,8 +718,8 @@ body{ background:#525659; margin:0; padding:24px 0; }
 {{#if ai}}
 <div class="page page-break-before">
   <div class="sec-head"><span class="sec-dia"></span><span class="sec-num">06</span><span class="sec-rule"></span><span class="sec-name">AI SEARCH VISIBILITY</span></div>
-  <h2>Your buyers don't only ask Google anymore. <span class="b">They ask ChatGPT too.</span></h2>
-  <p class="lead">Search is changing fast. Customers increasingly ask ChatGPT, Google AI Overviews, Gemini, Perplexity and Claude for recommendations before they ever click. We asked an AI assistant {{ai.promptsTested}} real buying questions from your category — never mentioning your name — and recorded who it recommended.</p>
+  <h2>Your buyers don't only ask Google anymore. <span class="b">They ask AI assistants too.</span></h2>
+  <p class="lead">Search is changing fast. Customers increasingly ask AI assistants and AI-powered search for recommendations before they ever click. We tested {{ai.promptsTested}} real buying questions from your category against today's leading AI search — never mentioning your name — and recorded who it recommended.</p>
 
   <div class="stats">
     <div class="stat"><div class="stat-v {{toneFor ai.shareOfVoice 20 60}}">{{ai.mentions}}/{{ai.promptsTested}}</div>
