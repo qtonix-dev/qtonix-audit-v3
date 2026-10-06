@@ -3893,8 +3893,36 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
             <button onClick={() => setOpenTask(t)} className="w-6 h-6 rounded-md flex items-center justify-center text-slate-400 hover:text-[#050A1F] hover:bg-slate-100" title="View task"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg></button>
           </div>
         </div>
-        {/* inline subtasks */}
-        {expanded && (t.subtasks || []).map((s) => <GridRow key={s._id} t={s} isSub />)}
+        {/* inline subtasks — open first, then completed grouped by the day they
+            were completed (newest day first). Same rows & columns as before;
+            only the ORDER changes and a slim date divider is inserted. */}
+        {expanded && (() => {
+          const subs = t.subtasks || [];
+          const open = subs.filter((s) => s.stage !== 'completed');
+          const done = subs.filter((s) => s.stage === 'completed');
+          const istDay = (iso) => { try { return new Date(new Date(iso).getTime() + 330 * 60000).toISOString().slice(0, 10); } catch { return '0000-00-00'; } };
+          const todayIst = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+          const yestIst = new Date(Date.now() + 330 * 60000 - 86400000).toISOString().slice(0, 10);
+          const gm = {}; for (const s of done) { const k = s.completedAt ? istDay(s.completedAt) : '0000-00-00'; (gm[k] = gm[k] || []).push(s); }
+          const keys = Object.keys(gm).sort((a, b) => b.localeCompare(a));
+          for (const k of keys) gm[k].sort((a, b) => new Date(b.completedAt || 0) - new Date(a.completedAt || 0));
+          const glabel = (k) => k === '0000-00-00' ? 'Completed' : k === todayIst ? 'Today' : k === yestIst ? 'Yesterday' : (() => { try { return new Date(k + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return k; } })();
+          const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' }); } catch { return ''; } };
+          return (
+            <>
+              {open.map((s) => <GridRow key={s._id} t={s} isSub />)}
+              {keys.map((k) => (
+                <React.Fragment key={`g-${k}`}>
+                  <div className="border-b border-slate-200 bg-green-50/40 flex items-center gap-2 pl-[70px] pr-4 py-1.5">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-green-700">✓ Completed · {glabel(k)}</span>
+                    <span className="text-[10px] font-semibold text-green-500/80">{gm[k].length}</span>
+                  </div>
+                  {gm[k].map((s) => <GridRow key={s._id} t={s} isSub completedTime={fmtTime(s.completedAt)} />)}
+                </React.Fragment>
+              ))}
+            </>
+          );
+        })()}
       </>
     );
   };
@@ -4239,7 +4267,9 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
   };
   const load = () => hrApi(`/tasks/tasks/${taskId}/detail`).then(setData).catch(() => {});
   useEffect(() => { load(); }, [taskId]);
-  const patch = async (p) => { await hrApi(`/tasks/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify(p) }); load(); onChange && onChange(); };
+  // Always PATCH the record actually loaded in THIS drawer (its own id), never a
+  // parent — so completing a subtask only completes that subtask.
+  const patch = async (p) => { const id = (data && data.task && data.task._id) || taskId; await hrApi(`/tasks/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(p) }); load(); onChange && onChange(); };
   const addNote = async () => { if (!note.trim()) return; await hrApi(`/tasks/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ body: note.trim() }) }); setNote(''); setNoteSuggestions([]); load(); };
   const saveEditNote = async (commentId) => {
     if (!editingNoteText.trim()) return;
@@ -4358,28 +4388,68 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
                 ))}</div>}
           </div>
 
-          {!t.parentTaskId && (
-            <div className="mb-5">
-              <div className="text-xs font-bold text-slate-500 mb-1">Subtasks {data.subtasks.length > 0 && <span className="text-slate-400 font-normal">· {data.subtasks.filter((s) => s.stage === 'completed').length}/{data.subtasks.length}</span>}</div>
-              <div className="rounded-lg border border-slate-200 divide-y divide-slate-100">
-                {data.subtasks.map((s) => (
-                  <div key={s._id} className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer" onClick={() => setSubOpen(s._id)}>
-                    <button onClick={(e) => { e.stopPropagation(); toggleSub(s); }} className={`w-4 h-4 rounded-full border-2 shrink-0 ${s.stage === 'completed' ? 'bg-green-500 border-green-500' : 'border-slate-300 hover:border-green-400'}`} />
-                    <span className={`text-sm flex-1 truncate ${s.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{s.title}</span>
-                    {s.dueDate && <span className="text-[10px] text-slate-400">{new Date(String(s.dueDate).slice(0, 10) + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>}
-                    <div className="flex items-center shrink-0">
-                      {((s.assignees && s.assignees.length) ? s.assignees : (s.assignee ? [s.assignee] : [])).slice(0, 3).map((a, i) => (
-                        <span key={a.id || i} style={{ marginLeft: i ? -6 : 0, zIndex: 3 - i }} className="ring-2 ring-white rounded-full inline-flex"><TAvatar person={a} size={20} /></span>
-                      ))}
-                      {((s.assignees && s.assignees.length) || 0) > 3 && <span className="ml-[-6px] w-5 h-5 rounded-full bg-slate-200 text-slate-500 text-[9px] font-extrabold flex items-center justify-center ring-2 ring-white">+{s.assignees.length - 3}</span>}
-                    </div>
-                    <span className="text-slate-300 text-xs">›</span>
-                  </div>
-                ))}
-                <div className="flex items-center gap-2 px-3 py-2"><input value={newSub} onChange={(e) => setNewSub(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addSub()} placeholder="+ Add subtask" className="flex-1 text-sm focus:outline-none bg-transparent" /></div>
+          {!t.parentTaskId && (() => {
+            // One subtask row (shared by the open list and the completed groups).
+            const SubRow = (s) => (
+              <div key={s._id} className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer" onClick={() => setSubOpen(s._id)}>
+                <button onClick={(e) => { e.stopPropagation(); toggleSub(s); }} className={`w-4 h-4 rounded-full border-2 shrink-0 ${s.stage === 'completed' ? 'bg-green-500 border-green-500' : 'border-slate-300 hover:border-green-400'}`} />
+                <span className={`text-sm flex-1 truncate ${s.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{s.title}</span>
+                {s.stage === 'completed' && s.completedAt
+                  ? <span className="text-[10px] text-slate-400">{new Date(s.completedAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}</span>
+                  : (s.dueDate && <span className="text-[10px] text-slate-400">Due {new Date(String(s.dueDate).slice(0, 10) + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>)}
+                <div className="flex items-center shrink-0">
+                  {((s.assignees && s.assignees.length) ? s.assignees : (s.assignee ? [s.assignee] : [])).slice(0, 3).map((a, i) => (
+                    <span key={a.id || i} style={{ marginLeft: i ? -6 : 0, zIndex: 3 - i }} className="ring-2 ring-white rounded-full inline-flex"><TAvatar person={a} size={20} /></span>
+                  ))}
+                  {((s.assignees && s.assignees.length) || 0) > 3 && <span className="ml-[-6px] w-5 h-5 rounded-full bg-slate-200 text-slate-500 text-[9px] font-extrabold flex items-center justify-center ring-2 ring-white">+{s.assignees.length - 3}</span>}
+                </div>
+                <span className="text-slate-300 text-xs">›</span>
               </div>
-            </div>
-          )}
+            );
+            const subs = data.subtasks || [];
+            const open = subs.filter((s) => s.stage !== 'completed');
+            const done = subs.filter((s) => s.stage === 'completed');
+            // Group completed by the day they were completed (IST), newest first.
+            const istDay = (iso) => { try { return new Date(new Date(iso).getTime() + 330 * 60000).toISOString().slice(0, 10); } catch { return '0000-00-00'; } };
+            const todayIst = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+            const yestIst = new Date(Date.now() + 330 * 60000 - 86400000).toISOString().slice(0, 10);
+            const groupsMap = {};
+            for (const s of done) { const k = s.completedAt ? istDay(s.completedAt) : '0000-00-00'; (groupsMap[k] = groupsMap[k] || []).push(s); }
+            const groupKeys = Object.keys(groupsMap).sort((a, b) => b.localeCompare(a)); // newest first
+            for (const k of groupKeys) groupsMap[k].sort((a, b) => new Date(b.completedAt || 0) - new Date(a.completedAt || 0));
+            const groupLabel = (k) => {
+              if (k === '0000-00-00') return 'Completed';
+              if (k === todayIst) return 'Today';
+              if (k === yestIst) return 'Yesterday';
+              try { return new Date(k + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return k; }
+            };
+            return (
+              <div className="mb-5">
+                <div className="text-xs font-bold text-slate-500 mb-1">Subtasks {subs.length > 0 && <span className="text-slate-400 font-normal">· {done.length}/{subs.length}</span>}</div>
+                {/* Open subtasks on top + add row */}
+                <div className="rounded-lg border border-slate-200 divide-y divide-slate-100">
+                  {open.map((s) => SubRow(s))}
+                  <div className="flex items-center gap-2 px-3 py-2"><input value={newSub} onChange={(e) => setNewSub(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addSub()} placeholder="+ Add subtask" className="flex-1 text-sm focus:outline-none bg-transparent" /></div>
+                </div>
+                {/* Completed, grouped by date (newest first) */}
+                {done.length > 0 && (
+                  <div className="mt-3">
+                    <div className="text-[11px] font-extrabold text-green-700 mb-1 flex items-center gap-1.5">✓ Completed <span className="text-green-500 font-semibold">· {done.length}</span></div>
+                    <div className="rounded-lg border border-slate-200 overflow-hidden">
+                      {groupKeys.map((k) => (
+                        <div key={k}>
+                          <div className="bg-slate-50 px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-slate-500 flex items-center justify-between border-b border-slate-100">
+                            <span>{groupLabel(k)}</span><span className="font-semibold text-slate-400">{groupsMap[k].length}</span>
+                          </div>
+                          <div className="divide-y divide-slate-100">{groupsMap[k].map((s) => SubRow(s))}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           <div className="mb-3">
             <div className="text-xs font-bold text-slate-500 mb-1">Notes</div>
