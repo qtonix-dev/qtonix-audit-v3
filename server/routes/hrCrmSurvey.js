@@ -56,6 +56,60 @@ async function settingsKey(name) {
   return s && s.getKey ? s.getKey(name) : null;
 }
 
+// Resolve the HR mailbox { email, token } used to send survey emails. Prefers a
+// mailbox whose address is hr@qtonix.com; otherwise the default HR mailbox.
+function resolveHrMailbox(s) {
+  const getKey = (k) => (s.getKey ? s.getKey(k) : null);
+  const list = Array.isArray(s.hrMailboxes) ? s.hrMailboxes : [];
+  // 1) Prefer an explicitly-linked hr@qtonix.com mailbox.
+  const hrBox = list.find((m) => String(m.email || '').toLowerCase() === 'hr@qtonix.com');
+  if (hrBox) { const t = hrBox.id === 'default' ? getKey('hrMailboxToken') : getKey(`hrMailboxToken:${hrBox.id}`); if (t) return { email: hrBox.email, token: t }; }
+  // 2) Default mailbox (token under 'hrMailboxToken').
+  const defToken = getKey('hrMailboxToken');
+  const defMeta = list.find((m) => m.id === 'default');
+  const defEmail = (defMeta && defMeta.email) || (s.hrMailbox && s.hrMailbox.email) || '';
+  if (defEmail && defToken) return { email: defEmail, token: defToken };
+  // 3) Any other linked mailbox.
+  for (const m of list) { if (m.id === 'default') continue; const t = getKey(`hrMailboxToken:${m.id}`); if (m.email && t) return { email: m.email, token: t }; }
+  return { email: '', token: '' };
+}
+
+// The HR Team signature + sender name used on survey emails.
+const HR_TEAM_SIG = (mailbox) => ({ name: 'HR Team', title: 'Human Resources · Qtonix', email: 'hr@qtonix.com' });
+const HR_FROM = (mailbox) => `"HR Team" <${mailbox}>`;
+
+// Email every active employee that a new survey is live. From the HR mailbox,
+// signed by the HR Team. Best-effort; never blocks activation.
+async function notifySurveyLaunched(survey) {
+  const s = await Settings.findOne();
+  if (!s) return;
+  const { email: mailbox, token } = resolveHrMailbox(s);
+  if (!mailbox || !token) { console.error('[hr-survey] no HR mailbox linked — skipping launch emails'); return; }
+  const tpl = require('../services/crmEmailTemplate');
+  const recipients = await HrUser.findAll({ where: { active: true } });
+  const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+  const surveyUrl = `${appUrl}/survey`;
+  for (const u of recipients) {
+    if (!u.email) continue;
+    try {
+      const bodyHtml = tpl.surveyLaunch({ recipientName: u.name, surveyName: survey.name, description: survey.description, deadlineText: '', surveyUrl, signature: HR_TEAM_SIG(mailbox) });
+      await require('../services/hrEmailLog').sendAndLog(s, token, mailbox, { from: HR_FROM(mailbox), to: u.email, subject: `Please complete: ${survey.name}`, bodyHtml }, { type: 'hr_survey_launch' });
+    } catch (e) { console.error('[hr-survey] launch email to', u.email, 'failed:', e.message); }
+  }
+}
+
+// Thank-you email to an employee after they submit. From the HR mailbox.
+async function notifySurveyCompleted(survey, user) {
+  if (!user || !user.email) return;
+  const s = await Settings.findOne();
+  if (!s) return;
+  const { email: mailbox, token } = resolveHrMailbox(s);
+  if (!mailbox || !token) return;
+  const tpl = require('../services/crmEmailTemplate');
+  const bodyHtml = tpl.surveyDone({ recipientName: user.name, surveyName: survey.name, signature: HR_TEAM_SIG(mailbox) });
+  await require('../services/hrEmailLog').sendAndLog(s, token, mailbox, { from: HR_FROM(mailbox), to: user.email, subject: `Thanks for completing ${survey.name}`, bodyHtml }, { type: 'hr_survey_done' });
+}
+
 // ---- Admin: list / create / update / delete ----
 router.get('/', requireHrAccess, requireAllBranchOrAdmin, async (req, res, next) => {
   try {
@@ -102,7 +156,10 @@ router.put('/:id', requireHrAccess, requireAllBranchOrAdmin, async (req, res, ne
     if (b.status !== undefined && ['draft', 'active', 'closed'].includes(b.status)) row.status = b.status;
     await row.save();
     // When a survey goes live, announce it in #the-hub so everyone can respond.
-    if (!wasActive && row.status === 'active') { try { await require('../services/chatCompany').postCompanyCard({ kindTag: 'company_survey', body: `📋 New survey: "${row.name}" — share your feedback!`, meta: { surveyId: row.id } }); } catch {} }
+    if (!wasActive && row.status === 'active') {
+      try { await require('../services/chatCompany').postCompanyCard({ kindTag: 'company_survey', body: `📋 New survey: "${row.name}" — share your feedback!`, meta: { surveyId: row.id } }); } catch {}
+      try { await notifySurveyLaunched(row); } catch (e) { console.error('[hr-survey] launch notify failed:', e.message); }
+    }
     res.json(row.toJSON());
   } catch (e) { next(e); }
 });
@@ -190,6 +247,7 @@ router.post('/:id/respond', requireHrAccess, async (req, res, next) => {
 
     let message = `Thank you, ${(me.name || '').split(' ')[0]}. Your feedback truly helps us improve.`;
     try { const key = await anthropicKey(); if (key) { const { successMessage } = require('../services/hrSurveyAI'); message = await successMessage(key, { employeeName: me.name, avgScore, sentimentLabel: hasLow ? 'low' : 'ok', hasLowScores: hasLow }); } } catch {}
+    try { await notifySurveyCompleted(survey, me); } catch (e) { console.error('[hr-survey] done notify failed:', e.message); }
     res.json({ ok: true, id: row.id, message });
   } catch (e) { next(e); }
 });

@@ -2692,12 +2692,29 @@ const hhmmToMin = (t) => { if (!t) return null; const [h, m] = String(t).split('
 // (default 6 AM) is attributed to the PREVIOUS calendar date — so a 7 PM
 // clock-in and 2 AM activity land on the same attendance day, and the clock
 // doesn't reset (or appear logged-out) at midnight.
+// Is the employee working from home on this attendance date? WFH is recorded
+// either as an approved leave of type 'wfh' OR as an attendance row marked
+// 'wfh'. A WFH day is treated like a hybrid/split day for clock purposes, so
+// the employee can clock out and back in across the day from home.
+async function isWfhDay(empId, date) {
+  try {
+    const lv = await HrLeave.findOne({ where: { employeeId: empId, date, type: 'wfh', status: 'approved' } });
+    if (lv) return true;
+    const att = await HrAttendance.findOne({ where: { employeeId: empId, date } });
+    if (att && att.status === 'wfh') return true;
+  } catch {}
+  return false;
+}
+
 async function attendanceDayFor(emp) {
   const ist = nowIST();
   let cutoff = 0, crosses = false, hybrid = false;
   try {
     if (emp && emp.shiftId) { const sh = await HrShift.findByPk(emp.shiftId); if (sh) { if (sh.crossesMidnight) { crosses = true; cutoff = Number(sh.dayCutoffHour) || 6; } if (sh.hybridSplit) hybrid = true; } }
   } catch {}
+  // A WFH day is treated as hybrid: anchor after-midnight home punches to the
+  // day that still has an open/started session, same as a hybrid shift.
+  if (!hybrid) { try { const todayIst = ist.toISOString().slice(0, 10); if (await isWfhDay(emp.id, todayIst)) hybrid = true; else { const prevIst = new Date(ist.getTime() - 24 * 3600000).toISOString().slice(0, 10); if (await isWfhDay(emp.id, prevIst)) hybrid = true; } } catch {} }
   // Hybrid/split (Sales) OR any employee acting in the small hours: an action
   // before 6 AM belongs to the PREVIOUS day if that day still has an open
   // session (clocked in, not out). This keeps after-midnight home punches on the
@@ -2805,15 +2822,18 @@ router.post('/me/clock', requireHrAccess, async (req, res, next) => {
     const action = String((req.body && req.body.action) || '');
     const date = await attendanceDayFor(emp);
     const time = istHHMM();
-    // Block clocking on a full-day approved leave.
-    const leave = await HrLeave.findOne({ where: { employeeId: emp.id, date, status: 'approved', duration: 'full' } });
+    // Block clocking on a full-day approved leave — but NOT on a WFH day, since
+    // WFH means the employee is working (just from home) and must clock in.
+    const leave = await HrLeave.findOne({ where: { employeeId: emp.id, date, status: 'approved', duration: 'full', type: { [Op.ne]: 'wfh' } } });
     if (leave && action === 'in') return res.status(400).json({ error: 'You are on approved leave today.' });
 
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     const policy = getHrPolicy(s);
     const grace = Number(policy.lateRule.graceMinutes) || 30;
     const shiftRow = emp.shiftId ? await HrShift.findByPk(emp.shiftId) : null;
-    const isHybrid = !!(shiftRow && shiftRow.hybridSplit);
+    // A WFH day is treated as hybrid/split: the employee can clock out and back
+    // in across the day (the gap recorded as a break), just like a hybrid shift.
+    const isHybrid = !!(shiftRow && shiftRow.hybridSplit) || await isWfhDay(emp.id, date);
     let [row] = await HrAttendance.findOrCreate({ where: { employeeId: emp.id, date }, defaults: { status: 'present', source: 'api' } });
 
     if (action === 'in') {
