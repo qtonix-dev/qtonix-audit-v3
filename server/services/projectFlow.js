@@ -84,6 +84,7 @@ function computeSchedule(stages, startDate, branch, holSet) {
         name: s.name || 'Step', department: s.department || '', dayOffset: offset,
         dueDate, rolledFrom: dueDate !== target ? target : null,
         needsClientApproval: !!s.needsClientApproval, isRecurringMonthly: !!s.isRecurringMonthly, isOptional: !!s.isOptional,
+        subtasks: (Array.isArray(s.subtasks) ? s.subtasks : []).map((st) => ({ name: st.name || '', team: st.team || s.department || '', role: st.role || 'Team' })),
       });
     }
     // Next stage starts the working day after this stage's last due date.

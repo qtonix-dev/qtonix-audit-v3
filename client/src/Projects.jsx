@@ -846,6 +846,17 @@ function DayPreview({ preview, busy, onRefresh }) {
                               {r.isOptional && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded" style={{ background: '#fef3c7', color: '#b45309' }}>Optional</span>}
                               {r.rolledFrom && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded inline-flex items-center gap-0.5" style={{ background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a' }} title={`Scheduled for ${r.rolledFrom} (a weekend/holiday) — moved to the next working day`}>↪ rolled</span>}
                             </div>
+                            {(r.subtasks || []).length > 0 && (
+                              <div className="mt-1.5 space-y-1">
+                                {r.subtasks.map((st, si2) => (
+                                  <div key={si2} className="flex items-center gap-1.5 text-[11.5px] text-slate-600">
+                                    <span className="text-slate-300">↳</span>
+                                    <span className="flex-1 min-w-0 truncate">{st.name || <span className="text-slate-300 italic">untitled subtask</span>}</span>
+                                    <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded shrink-0" style={{ background: (DEPT_COLOR[st.team] || '#64748b') + '1a', color: DEPT_COLOR[st.team] || '#64748b' }}>{st.team}{st.role && st.role !== 'Team' ? ` · ${st.role}` : ''}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         </div>
                       ))}
