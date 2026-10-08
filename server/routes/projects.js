@@ -90,6 +90,22 @@ router.delete('/templates/:id', guard, requireHrAdmin, async (req, res, next) =>
   try { const t = await ProjectTemplate.findByPk(req.params.id); if (t) await t.destroy(); res.json({ ok: true }); } catch (e) { next(e); }
 });
 
+// Day-by-day preview of a template's flow — same engine the real project uses,
+// so Admin can sanity-check the schedule (parallel teams, weekend roll-forward)
+// before a project is created. Accepts the (possibly unsaved) stages in the body.
+router.post('/templates/preview', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const stages = Array.isArray(b.stages) ? b.stages : [];
+    const branch = String(b.branch || 'bhubaneswar');
+    const startDate = b.startDate || flow.rollToWorkingDay(flow.istToday(), branch, await flow.loadHolidaySet());
+    const holSet = await flow.loadHolidaySet();
+    const start = flow.rollToWorkingDay(startDate, branch, holSet);
+    const sched = flow.computeSchedule(stages, start, branch, holSet);
+    res.json({ startDate: start, branch, schedule: sched });
+  } catch (e) { next(e); }
+});
+
 // ---- Projects list (admin only for now) --------------------------------------
 router.get('/', guard, requireHrAdmin, async (req, res, next) => {
   try {

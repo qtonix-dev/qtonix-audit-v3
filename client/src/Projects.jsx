@@ -793,6 +793,74 @@ const TEMPLATE_SERVICES = [
 ];
 const DEPT_COLOR = { PM: '#4F46E5', Design: '#7C3AED', Development: '#EA580C', SEO: '#2563EB', Content: '#16A34A', 'Social Media': '#DB2777', 'Performance Marketing': '#0891B2', Support: '#64748B' };
 
+// Day-by-day read-only preview of a template's flow. Groups the server-computed
+// schedule by due date (each day), and within a day groups tasks by team so
+// parallel work (e.g. SEO + Social on the same day) reads clearly.
+function DayPreview({ preview, busy, onRefresh }) {
+  if (busy && !preview) return <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center text-[13px] text-slate-400">Building day-by-day schedule…</div>;
+  const sched = (preview && preview.schedule) || [];
+  if (!sched.length) return <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center text-[13px] text-slate-400">Add some stages and steps, then switch here to see the day-by-day flow.</div>;
+
+  const fmt = (ds) => { const d = new Date(ds + 'T00:00:00Z'); return { d: d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', timeZone: 'UTC' }), wd: d.toLocaleDateString('en-IN', { weekday: 'long', timeZone: 'UTC' }) }; };
+  // Group by dueDate (sorted), assign sequential "Day N" labels by appearance.
+  const byDate = {};
+  for (const r of sched) (byDate[r.dueDate] = byDate[r.dueDate] || []).push(r);
+  const dates = Object.keys(byDate).sort();
+  const start = preview.startDate;
+  const dayNum = (ds) => Math.round((new Date(ds + 'T00:00:00Z') - new Date(start + 'T00:00:00Z')) / 86400000) + 1;
+  const anyRolled = sched.some((r) => r.rolledFrom);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2 px-1">
+        <div className="text-[12px] text-slate-500 font-semibold">Preview starts <b className="text-[#050A1F]">{fmt(start).wd}, {fmt(start).d}</b> · weekends &amp; holidays skipped (Bhubaneswar calendar)</div>
+        <button type="button" onClick={onRefresh} className="text-[12px] font-bold text-orange-600 hover:text-orange-700">↻ Refresh</button>
+      </div>
+      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+        {dates.map((ds, i) => {
+          const rows = byDate[ds];
+          const f = fmt(ds);
+          const teams = {};
+          for (const r of rows) (teams[r.department || '—'] = teams[r.department || '—'] || []).push(r);
+          return (
+            <div key={ds} className="grid border-b border-slate-100 last:border-b-0" style={{ gridTemplateColumns: '92px 1fr' }}>
+              <div className="px-3 py-3 border-r border-slate-100 bg-slate-50/50">
+                <div className="text-[10.5px] font-extrabold uppercase tracking-wide text-orange-600">Day {dayNum(ds)}</div>
+                <div className="text-[12.5px] font-bold text-[#050A1F] mt-0.5">{f.d}</div>
+                <div className="text-[10.5px] font-semibold text-slate-400">{f.wd}</div>
+              </div>
+              <div className="p-2.5 space-y-2">
+                {Object.keys(teams).map((dep) => (
+                  <div key={dep}>
+                    <div className="flex items-center gap-1.5 mb-1"><span className="w-2 h-2 rounded-full" style={{ background: DEPT_COLOR[dep] || '#94a3b8' }} /><span className="text-[10.5px] font-extrabold uppercase tracking-wide" style={{ color: DEPT_COLOR[dep] || '#64748b' }}>{dep}</span>{teams[dep].length > 1 && <span className="text-[10px] text-slate-300 font-bold">· {teams[dep].length}</span>}</div>
+                    <div className="space-y-1.5 pl-3.5">
+                      {teams[dep].map((r, k) => (
+                        <div key={k} className="flex items-start gap-2 border border-slate-100 rounded-lg px-2.5 py-1.5 bg-slate-50/40">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[12.5px] font-semibold text-[#050A1F]">{r.name}</div>
+                            <div className="flex flex-wrap gap-1 mt-0.5 items-center">
+                              <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded" style={{ background: '#eef2ff', color: '#4338ca' }}>{r.stageName}</span>
+                              {r.needsClientApproval && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded" style={{ background: '#f5f3ff', color: '#7c3aed' }}>Client approval</span>}
+                              {r.isRecurringMonthly && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded" style={{ background: '#FFF7ED', color: '#c2410c' }}>Monthly</span>}
+                              {r.isOptional && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded" style={{ background: '#fef3c7', color: '#b45309' }}>Optional</span>}
+                              {r.rolledFrom && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded inline-flex items-center gap-0.5" style={{ background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a' }} title={`Scheduled for ${r.rolledFrom} (a weekend/holiday) — moved to the next working day`}>↪ rolled</span>}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {anyRolled && <div className="text-[11px] text-slate-400 font-semibold mt-2 px-1">↪ rolled = the task's day fell on a weekend/holiday and was moved to the next working day.</div>}
+    </div>
+  );
+}
+
 function TemplateEditor({ tmpl, onBack }) {
   const init = JSON.parse(JSON.stringify(tmpl));
   if (!init.services) init.services = init.projectType ? [init.projectType] : [];
@@ -803,9 +871,20 @@ function TemplateEditor({ tmpl, onBack }) {
   const addStage = () => setT((s) => ({ ...s, stages: [...(s.stages || []), { name: `Stage ${(s.stages || []).length + 1}`, steps: [] }] }));
   const updStage = (i, k, v) => setT((s) => { const st = [...s.stages]; st[i] = { ...st[i], [k]: v }; return { ...s, stages: st }; });
   const delStage = (i) => setT((s) => ({ ...s, stages: s.stages.filter((_, x) => x !== i) }));
-  const addStep = (si) => setT((s) => { const st = [...s.stages]; st[si] = { ...st[si], steps: [...(st[si].steps || []), { name: '', department: 'PM', deadlineDays: 3, needsClientApproval: false, isRecurringMonthly: false, isOptional: false }] }; return { ...s, stages: st }; });
+  const addStep = (si) => setT((s) => { const st = [...s.stages]; const nextDay = ((st[si].steps || []).reduce((m, x) => Math.max(m, Number(x.dayOffset) || 1), 0) || 0) + 1; st[si] = { ...st[si], steps: [...(st[si].steps || []), { name: '', department: 'PM', dayOffset: nextDay, needsClientApproval: false, isRecurringMonthly: false, isOptional: false }] }; return { ...s, stages: st }; });
   const updStep = (si, pi, k, v) => setT((s) => { const st = [...s.stages]; const steps = [...st[si].steps]; steps[pi] = { ...steps[pi], [k]: v }; st[si] = { ...st[si], steps }; return { ...s, stages: st }; });
   const delStep = (si, pi) => setT((s) => { const st = [...s.stages]; st[si] = { ...st[si], steps: st[si].steps.filter((_, x) => x !== pi) }; return { ...s, stages: st }; });
+  // View mode + day-by-day preview (computed server-side, same engine as real projects).
+  const [viewMode, setViewMode] = useState('edit'); // 'edit' | 'day'
+  const [preview, setPreview] = useState(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const loadPreview = async () => {
+    setPreviewBusy(true);
+    try { const r = await hrApi('/projects/templates/preview', { method: 'POST', body: JSON.stringify({ stages: t.stages || [] }) }); setPreview(r); }
+    catch (e) { toast(e.message); }
+    setPreviewBusy(false);
+  };
+  const showDay = () => { setViewMode('day'); loadPreview(); };
   const save = async () => {
     if (!t.name.trim()) { toast('Give the template a name'); return; }
     if (!(t.services || []).length) { toast('Select at least one service'); return; }
@@ -833,8 +912,15 @@ function TemplateEditor({ tmpl, onBack }) {
       </div>
 
       {/* Stages */}
-      <div className="flex items-center justify-between mb-2 px-1"><div className="text-[13px] font-extrabold text-[#050A1F]">Stages & Steps</div><div className="text-[12px] text-slate-400">{(t.stages || []).length} stages · {stepCount} steps</div></div>
-      {(t.stages || []).map((stage, si) => (
+      <div className="flex items-center justify-between mb-2 px-1">
+        <div className="text-[13px] font-extrabold text-[#050A1F]">Stages & Steps <span className="text-[12px] font-medium text-slate-400 ml-1">{(t.stages || []).length} stages · {stepCount} steps</span></div>
+        <div className="inline-flex bg-white border border-slate-200 rounded-xl p-1 gap-1 shadow-sm">
+          <button type="button" onClick={() => setViewMode('edit')} className="px-3 py-1.5 rounded-lg text-[12px] font-bold transition" style={viewMode === 'edit' ? { background: '#FFF7ED', color: '#C2410C' } : { color: '#64748b' }}>✏️ Edit</button>
+          <button type="button" onClick={showDay} className="px-3 py-1.5 rounded-lg text-[12px] font-bold transition" style={viewMode === 'day' ? { background: '#FFF7ED', color: '#C2410C' } : { color: '#64748b' }}>📅 View by Day</button>
+        </div>
+      </div>
+      {viewMode === 'day' && <DayPreview preview={preview} busy={previewBusy} onRefresh={loadPreview} />}
+      {viewMode === 'edit' && (t.stages || []).map((stage, si) => (
         <div key={si} className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-3">
           <div className="flex items-center gap-2 px-4 py-3 bg-slate-50 border-b border-slate-100">
             <span className="w-6 h-6 rounded-full bg-slate-800 text-white text-[11px] font-extrabold flex items-center justify-center shrink-0">{si + 1}</span>
@@ -854,10 +940,10 @@ function TemplateEditor({ tmpl, onBack }) {
                     <span className="text-[11px] text-slate-400 font-semibold">Team</span>
                     <select value={step.department} onChange={(e) => updStep(si, pi, 'department', e.target.value)} className="border border-slate-200 rounded-lg px-2 py-1.5 text-[12px] font-semibold bg-white" style={{ color: DEPT_COLOR[step.department] || '#334155' }}>{DEPARTMENTS.map((d) => <option key={d}>{d}</option>)}</select>
                   </div>
-                  <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg px-2 py-1">
-                    <span className="text-[11px] text-slate-400 font-semibold">Due +</span>
-                    <input type="number" value={step.deadlineDays} onChange={(e) => updStep(si, pi, 'deadlineDays', Number(e.target.value))} className="w-10 text-[12.5px] font-bold text-center focus:outline-none" />
-                    <span className="text-[11px] text-slate-400">days</span>
+                  <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg px-2 py-1" title="Day within this stage. Steps on the same day run in parallel (e.g. SEO + Social on Day 2).">
+                    <span className="text-[11px] text-slate-400 font-semibold">Day</span>
+                    <input type="number" min="1" value={step.dayOffset != null ? step.dayOffset : (step.deadlineDays || 1)} onChange={(e) => updStep(si, pi, 'dayOffset', Math.max(1, Number(e.target.value) || 1))} className="w-10 text-[12.5px] font-bold text-center focus:outline-none" />
+                    <span className="text-[11px] text-slate-400">of stage</span>
                   </div>
                   <button type="button" onClick={() => updStep(si, pi, 'needsClientApproval', !step.needsClientApproval)} className="px-2.5 py-1.5 rounded-lg text-[11.5px] font-bold border-2 transition" style={{ borderColor: step.needsClientApproval ? '#7C3AED' : '#e2e8f0', background: step.needsClientApproval ? '#F5F3FF' : '#fff', color: step.needsClientApproval ? '#7C3AED' : '#94a3b8' }}>{step.needsClientApproval ? '✓ ' : ''}Client approval</button>
                   <button type="button" onClick={() => updStep(si, pi, 'isRecurringMonthly', !step.isRecurringMonthly)} className="px-2.5 py-1.5 rounded-lg text-[11.5px] font-bold border-2 transition" style={{ borderColor: step.isRecurringMonthly ? '#EA580C' : '#e2e8f0', background: step.isRecurringMonthly ? '#FFF7ED' : '#fff', color: step.isRecurringMonthly ? '#EA580C' : '#94a3b8' }}>{step.isRecurringMonthly ? '✓ ' : ''}Monthly</button>
@@ -869,7 +955,7 @@ function TemplateEditor({ tmpl, onBack }) {
           </div>
         </div>
       ))}
-      <button onClick={addStage} className="text-[13px] font-bold text-slate-500 hover:text-orange-600 border-2 border-dashed border-slate-300 rounded-2xl px-4 py-3 w-full mb-4 transition">+ Add stage</button>
+      {viewMode === 'edit' && <button onClick={addStage} className="text-[13px] font-bold text-slate-500 hover:text-orange-600 border-2 border-dashed border-slate-300 rounded-2xl px-4 py-3 w-full mb-4 transition">+ Add stage</button>}
 
       <div className="flex justify-between items-center sticky bottom-0 bg-slate-50/80 backdrop-blur py-2 -mx-1 px-1 rounded-lg">
         <button onClick={del} className="text-[13px] font-bold text-red-500">{t.id ? '🗑 Delete template' : ''}</button>

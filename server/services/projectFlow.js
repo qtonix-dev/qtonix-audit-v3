@@ -6,10 +6,91 @@
  * Tasks are created in the existing HRMS task system (server/models Task) so they
  * appear on boards, notify via Buzz #task, and roll into the Daily Report.
  */
-const { Op, Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, Task, HrUser, HrDepartment } = require('../models');
+const { Op, Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, Task, HrUser, HrDepartment, HrHoliday } = require('../models');
 
 function istToday() { return new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10); }
 function addDays(dateStr, n) { const d = new Date((dateStr || istToday()) + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+
+// ---- Working-day calendar (mirrors the attendance/task-flow rules) -----------
+// Which occurrence of this weekday within the month (1st Sat, 2nd Sat, ...).
+function nthWeekdayOfMonth(dateStr) { const d = new Date(dateStr + 'T00:00:00Z'); return Math.floor((d.getUTCDate() - 1) / 7) + 1; }
+
+// Branch weekend rules: all branches Sunday off; Kolkata every Saturday;
+// Bhubaneswar 2nd & 4th Saturday. Templates aren't tied to a branch, so they
+// default to 'bhubaneswar' (HQ) unless a branch is passed.
+function branchWeekendOff(dateStr, branch) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  const dow = d.getUTCDay();
+  if (dow === 0) return true;
+  const b = String(branch || 'bhubaneswar').toLowerCase();
+  if (dow === 6) {
+    if (b === 'kolkata') return true;
+    if (b === 'bhubaneswar') { const nth = nthWeekdayOfMonth(dateStr); return nth === 2 || nth === 4; }
+  }
+  return false;
+}
+
+// Preload company + branch holidays as a Set of 'YYYY-MM-DD|branch' keys.
+async function loadHolidaySet() {
+  const set = new Set();
+  try { const hols = await HrHoliday.findAll(); for (const h of hols) set.add(`${String(h.date).slice(0, 10)}|${String(h.branch || '').toLowerCase()}`); } catch {}
+  return set;
+}
+
+function isHoliday(dateStr, branch, holSet) {
+  if (!holSet) return false;
+  return holSet.has(`${dateStr}|`) || holSet.has(`${dateStr}|${String(branch || 'bhubaneswar').toLowerCase()}`);
+}
+
+function isWorkingDay(dateStr, branch, holSet) {
+  return !branchWeekendOff(dateStr, branch) && !isHoliday(dateStr, branch, holSet);
+}
+
+// Roll a date FORWARD to the first working day at/after it (weekend/holiday aware).
+function rollToWorkingDay(dateStr, branch, holSet) {
+  let d = dateStr;
+  for (let i = 0; i < 31 && !isWorkingDay(d, branch, holSet); i++) d = addDays(d, 1);
+  return d;
+}
+
+// Build the day-by-day schedule for a set of stages WITHOUT touching the DB.
+// Each step carries `dayOffset` = its 1-based working day WITHIN its stage
+// (falls back to the legacy cumulative `deadlineDays` if dayOffset is absent).
+// Stages run sequentially (next stage starts the working day after the prior
+// stage's last due date); steps at the same offset land on the same day so
+// multiple teams (SEO + SMO) can share a day. Returns a flat list of
+// { stageIndex, stageName, name, department, dayOffset, dueDate, rolledFrom,
+//   needsClientApproval, isRecurringMonthly, isOptional }.
+function computeSchedule(stages, startDate, branch, holSet) {
+  const out = [];
+  let stageStart = rollToWorkingDay(startDate || istToday(), branch, holSet);
+  for (let si = 0; si < (stages || []).length; si++) {
+    const stage = stages[si] || {};
+    const steps = stage.steps || [];
+    let lastDue = stageStart;
+    // Legacy fallback: if steps have no dayOffset, derive sequential offsets
+    // from their deadlineDays so old templates still render sanely.
+    let legacyAcc = 0;
+    for (const s of steps) {
+      let offset = Number(s.dayOffset);
+      if (!Number.isFinite(offset) || offset < 1) { legacyAcc += Math.max(1, Number(s.deadlineDays) || 1); offset = legacyAcc; }
+      // Day 1 of the stage = stageStart itself; offset N = N-1 calendar steps on,
+      // each landing rolled forward to a working day.
+      const target = addDays(stageStart, offset - 1);
+      const dueDate = rollToWorkingDay(target, branch, holSet);
+      if (dueDate > lastDue) lastDue = dueDate;
+      out.push({
+        stageIndex: si + 1, stageName: stage.name || `Stage ${si + 1}`,
+        name: s.name || 'Step', department: s.department || '', dayOffset: offset,
+        dueDate, rolledFrom: dueDate !== target ? target : null,
+        needsClientApproval: !!s.needsClientApproval, isRecurringMonthly: !!s.isRecurringMonthly, isOptional: !!s.isOptional,
+      });
+    }
+    // Next stage starts the working day after this stage's last due date.
+    stageStart = rollToWorkingDay(addDays(lastDue, 1), branch, holSet);
+  }
+  return out;
+}
 
 // Find the Team Lead (or any senior) of a department to receive a stage's tasks.
 async function departmentLead(department) {
@@ -44,23 +125,22 @@ async function spawnTaskForStep(project, step) {
 // Instantiate a template's steps onto a project (all stages), then activate stage 1.
 async function instantiateFlow(project, template) {
   const stages = (template && template.stages) || [];
-  let order = 0;
   const startDate = project.startDate || istToday();
-  let runningDate = startDate;
+  const branch = project.branch || 'bhubaneswar'; // Project has no branch field today; HQ calendar is the default.
+  const holSet = await loadHolidaySet();
+  // Compute every step's real due date (parallel within stage, working-day aware).
+  const sched = computeSchedule(stages, startDate, branch, holSet);
   const created = [];
-  for (let si = 0; si < stages.length; si++) {
-    const stage = stages[si];
-    for (const s of (stage.steps || [])) {
-      runningDate = addDays(runningDate, Number(s.deadlineDays) || 3);
-      const step = await ProjectStep.create({
-        projectId: project.id, stageIndex: si + 1, stageName: stage.name || `Stage ${si + 1}`,
-        name: s.name || 'Step', department: s.department || '', orderIndex: order++,
-        deadlineDays: Number(s.deadlineDays) || 3, dueDate: runningDate,
-        needsClientApproval: !!s.needsClientApproval, isRecurringMonthly: !!s.isRecurringMonthly,
-        isOptional: !!s.isOptional, status: si === 0 ? 'active' : 'locked',
-      });
-      created.push(step);
-    }
+  let order = 0;
+  for (const row of sched) {
+    const step = await ProjectStep.create({
+      projectId: project.id, stageIndex: row.stageIndex, stageName: row.stageName,
+      name: row.name, department: row.department, orderIndex: order++,
+      dayOffset: row.dayOffset, deadlineDays: row.dayOffset, dueDate: row.dueDate,
+      needsClientApproval: row.needsClientApproval, isRecurringMonthly: row.isRecurringMonthly,
+      isOptional: row.isOptional, status: row.stageIndex === 1 ? 'active' : 'locked',
+    });
+    created.push(step);
   }
   // Spawn tasks for stage 1's (non-optional) steps.
   await activateStage(project, 1);
@@ -152,4 +232,5 @@ async function startCycle(project, template) {
 module.exports = {
   istToday, addDays, departmentLead, spawnTaskForStep, instantiateFlow, activateStage,
   onTaskCompleted, resolveApproval, maybeAdvanceStage, skipStep, startCycle,
+  computeSchedule, loadHolidaySet, rollToWorkingDay, isWorkingDay,
 };

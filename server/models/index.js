@@ -2391,6 +2391,7 @@ const ProjectStep = sequelize.define('ProjectStep', {
   department: { type: DataTypes.STRING(80), defaultValue: '' },
   orderIndex: { type: DataTypes.INTEGER, defaultValue: 0 },
   deadlineDays: { type: DataTypes.INTEGER, defaultValue: 3 },
+  dayOffset: { type: DataTypes.INTEGER, defaultValue: 1 },           // 1-based working day WITHIN its stage (same offset = parallel)
   dueDate: { type: DataTypes.STRING(10), allowNull: true },
   needsClientApproval: { type: DataTypes.BOOLEAN, defaultValue: false },
   isRecurringMonthly: { type: DataTypes.BOOLEAN, defaultValue: false },
