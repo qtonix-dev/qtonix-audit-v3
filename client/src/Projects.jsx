@@ -751,6 +751,7 @@ export function ProjectFlowAdmin() {
 }
 
 const DEPARTMENTS = ['PM', 'Design', 'Development', 'SEO', 'Content', 'Social Media', 'Performance Marketing', 'Support'];
+const SUBTASK_ROLES = ['PM', 'TL', 'Team'];
 
 function FlowTemplatesAdmin() {
   const [templates, setTemplates] = useState(null);
@@ -874,6 +875,10 @@ function TemplateEditor({ tmpl, onBack }) {
   const addStep = (si) => setT((s) => { const st = [...s.stages]; const nextDay = ((st[si].steps || []).reduce((m, x) => Math.max(m, Number(x.dayOffset) || 1), 0) || 0) + 1; st[si] = { ...st[si], steps: [...(st[si].steps || []), { name: '', department: 'PM', dayOffset: nextDay, needsClientApproval: false, isRecurringMonthly: false, isOptional: false }] }; return { ...s, stages: st }; });
   const updStep = (si, pi, k, v) => setT((s) => { const st = [...s.stages]; const steps = [...st[si].steps]; steps[pi] = { ...steps[pi], [k]: v }; st[si] = { ...st[si], steps }; return { ...s, stages: st }; });
   const delStep = (si, pi) => setT((s) => { const st = [...s.stages]; st[si] = { ...st[si], steps: st[si].steps.filter((_, x) => x !== pi) }; return { ...s, stages: st }; });
+  // Subtasks under a step — each has its own name + team + role.
+  const addSub = (si, pi) => setT((s) => { const st = [...s.stages]; const steps = [...st[si].steps]; const subs = Array.isArray(steps[pi].subtasks) ? steps[pi].subtasks : []; steps[pi] = { ...steps[pi], subtasks: [...subs, { name: '', team: steps[pi].department || 'PM', role: 'Team' }] }; st[si] = { ...st[si], steps }; return { ...s, stages: st }; });
+  const updSub = (si, pi, ki, k, v) => setT((s) => { const st = [...s.stages]; const steps = [...st[si].steps]; const subs = [...(steps[pi].subtasks || [])]; subs[ki] = { ...subs[ki], [k]: v }; steps[pi] = { ...steps[pi], subtasks: subs }; st[si] = { ...st[si], steps }; return { ...s, stages: st }; });
+  const delSub = (si, pi, ki) => setT((s) => { const st = [...s.stages]; const steps = [...st[si].steps]; steps[pi] = { ...steps[pi], subtasks: (steps[pi].subtasks || []).filter((_, x) => x !== ki) }; st[si] = { ...st[si], steps }; return { ...s, stages: st }; });
   // View mode + day-by-day preview (computed server-side, same engine as real projects).
   const [viewMode, setViewMode] = useState('edit'); // 'edit' | 'day'
   const [preview, setPreview] = useState(null);
@@ -948,6 +953,23 @@ function TemplateEditor({ tmpl, onBack }) {
                   <button type="button" onClick={() => updStep(si, pi, 'needsClientApproval', !step.needsClientApproval)} className="px-2.5 py-1.5 rounded-lg text-[11.5px] font-bold border-2 transition" style={{ borderColor: step.needsClientApproval ? '#7C3AED' : '#e2e8f0', background: step.needsClientApproval ? '#F5F3FF' : '#fff', color: step.needsClientApproval ? '#7C3AED' : '#94a3b8' }}>{step.needsClientApproval ? '✓ ' : ''}Client approval</button>
                   <button type="button" onClick={() => updStep(si, pi, 'isRecurringMonthly', !step.isRecurringMonthly)} className="px-2.5 py-1.5 rounded-lg text-[11.5px] font-bold border-2 transition" style={{ borderColor: step.isRecurringMonthly ? '#EA580C' : '#e2e8f0', background: step.isRecurringMonthly ? '#FFF7ED' : '#fff', color: step.isRecurringMonthly ? '#EA580C' : '#94a3b8' }}>{step.isRecurringMonthly ? '✓ ' : ''}Monthly</button>
                   <button type="button" onClick={() => updStep(si, pi, 'isOptional', !step.isOptional)} className="px-2.5 py-1.5 rounded-lg text-[11.5px] font-bold border-2 transition" style={{ borderColor: step.isOptional ? '#B45309' : '#e2e8f0', background: step.isOptional ? '#FEF3C7' : '#fff', color: step.isOptional ? '#B45309' : '#94a3b8' }}>{step.isOptional ? '✓ ' : ''}Optional</button>
+                </div>
+                {/* Subtasks — each with its own team + role (PM / TL / Team). */}
+                <div className="pl-6 mt-2.5">
+                  {(step.subtasks || []).length > 0 && (
+                    <div className="space-y-1.5 mb-1.5">
+                      {(step.subtasks || []).map((sub, ki) => (
+                        <div key={ki} className="flex items-center gap-2 bg-white border border-slate-100 rounded-lg px-2 py-1.5">
+                          <span className="text-slate-300 text-[12px] shrink-0">↳</span>
+                          <input value={sub.name} onChange={(e) => updSub(si, pi, ki, 'name', e.target.value)} className="flex-1 min-w-0 text-[12.5px] bg-transparent focus:outline-none" placeholder="Subtask — what's the point to check/do?" />
+                          <select value={sub.team || 'PM'} onChange={(e) => updSub(si, pi, ki, 'team', e.target.value)} title="Responsible team" className="border border-slate-200 rounded-lg px-1.5 py-1 text-[11px] font-bold bg-white shrink-0" style={{ color: DEPT_COLOR[sub.team] || '#334155' }}>{DEPARTMENTS.map((d) => <option key={d}>{d}</option>)}</select>
+                          <select value={sub.role || 'Team'} onChange={(e) => updSub(si, pi, ki, 'role', e.target.value)} title="Role in the team" className="border border-slate-200 rounded-lg px-1.5 py-1 text-[11px] font-semibold bg-slate-50 text-slate-600 shrink-0">{SUBTASK_ROLES.map((r) => <option key={r}>{r}</option>)}</select>
+                          <button onClick={() => delSub(si, pi, ki)} title="Remove subtask" className="text-slate-300 hover:text-red-500 text-[13px] shrink-0">✕</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <button onClick={() => addSub(si, pi)} className="text-[11.5px] font-bold text-slate-400 hover:text-orange-600 border border-dashed border-slate-200 rounded-lg px-3 py-1.5 transition">+ Add subtask</button>
                 </div>
               </div>
             ))}
