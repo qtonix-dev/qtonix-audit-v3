@@ -3,6 +3,7 @@ const router = express.Router();
 const { Op, Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential, ProjectPlan, Lead, HrUser, Task, TaskActivity } = require('../models');
 const { requireHrAccess, requireHrAdmin } = require('../middleware/hrAuth');
 const flow = require('../services/projectFlow');
+const path = require('path');
 
 // Resolve the acting HR user id + admin flag.
 async function actor(req) {
@@ -344,6 +345,117 @@ router.get('/:id/timeline', guard, async (req, res, next) => {
     for (const s of steps) { if (s.status === 'approved' || s.status === 'changes_requested') events.push({ type: 'approval', text: `${s.name} — ${s.status.replace('_', ' ')}`, at: s.updatedAt }); }
     events.sort((a, b) => new Date(b.at) - new Date(a.at));
     res.json({ events: events.slice(0, 80) });
+  } catch (e) { next(e); }
+});
+
+// ========================= PRE-SEO ANALYSIS REPORT =========================
+// Run Report (inside a project) → pick "Pre-SEO Analysis Report" → enter URL →
+// auto-capture + Claude analysis → upload remaining tool screenshots → review →
+// generate branded PDF.
+const multer = require('multer');
+const fsp = require('fs');
+const PRESEO_UPLOAD_DIR = path.join(__dirname, '../../storage/uploads');
+fsp.mkdirSync(PRESEO_UPLOAD_DIR, { recursive: true });
+const shotUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, PRESEO_UPLOAD_DIR),
+    filename: (req, file, cb) => cb(null, `preseo-up-${Date.now()}-${Math.random().toString(36).slice(2, 7)}${path.extname(file.originalname).toLowerCase() || '.png'}`),
+  }),
+  limits: { fileSize: 12 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => (/\.(png|jpe?g|webp)$/i.test(file.originalname) && /^image\//.test(file.mimetype)) ? cb(null, true) : cb(new Error('Image files only')),
+});
+
+const { PreSeoReport } = require('../models');
+const preSeoRunner = require('../services/preSeoRunner');
+
+// Create a Pre-SEO report run and start crawl + capture + analysis in background.
+router.post('/:id/preseo', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const act = await actor(req);
+    const project = req.params.id !== 'none' ? await Project.findByPk(req.params.id) : null;
+    const b = req.body || {};
+    const website = String(b.website || (project && project.website) || '').trim();
+    if (!website || website.length < 4) return res.status(400).json({ error: 'A website URL is required.' });
+    let domain = '';
+    try { domain = flow.istToday && new URL(website.startsWith('http') ? website : 'https://' + website).hostname.replace(/^www\./, ''); } catch { domain = website.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0]; }
+    const report = await PreSeoReport.create({
+      projectId: project ? project.id : null, kind: 'pre_seo', website: website.startsWith('http') ? website : 'https://' + website,
+      domain, businessName: b.businessName || (project && project.customerName) || domain,
+      createdById: act.id, createdByName: act.name || 'Qtonix', status: 'capturing', progress: 5,
+    });
+    // fire-and-forget
+    preSeoRunner.run(report.id).catch((e) => console.error('[preseo] run error:', e.message));
+    res.status(201).json({ id: report.id, status: report.status });
+  } catch (e) { next(e); }
+});
+
+// Poll status + current data.
+router.get('/preseo/:rid', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    res.json({ id: r.id, status: r.status, progress: r.progress, currentStep: r.currentStep, error: r.error, domain: r.domain, businessName: r.businessName, website: r.website, shots: r.shots || {}, data: r.data || null });
+  } catch (e) { next(e); }
+});
+
+// List a project's Pre-SEO reports.
+router.get('/:id/preseo', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const rows = await PreSeoReport.findAll({ where: { projectId: req.params.id }, order: [['createdAt', 'DESC']], attributes: ['id', 'status', 'progress', 'domain', 'businessName', 'createdAt', 'completedAt'] });
+    res.json({ reports: rows });
+  } catch (e) { next(e); }
+});
+
+// Upload a screenshot into a named slot (slot = section number e.g. "2.1" or a key).
+router.post('/preseo/:rid/shot', guard, requireHrAdmin, shotUpload.single('shot'), async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    const slot = String((req.body && req.body.slot) || '').trim();
+    if (!slot || !req.file) return res.status(400).json({ error: 'slot and image required.' });
+    // Promote the just-written local file to ImageKit when configured.
+    const { promoteLocal } = require('../services/preSeoStore');
+    const stored = await promoteLocal(`/uploads/${req.file.filename}`, `preseo-${r.id}-${slot}-${req.file.filename}`);
+    const shots = { ...(r.shots || {}) };
+    shots[slot] = { source: 'upload', url: stored.url, fileId: stored.fileId || null, label: req.body.label || '', note: req.body.note || '' };
+    r.shots = shots; r.changed('shots', true); await r.save();
+    res.json({ ok: true, slot, url: shots[slot].url });
+  } catch (e) { next(e); }
+});
+
+// Save edited report data (the review step).
+router.put('/preseo/:rid', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    if (req.body && req.body.data) { r.data = req.body.data; r.changed('data', true); await r.save(); }
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Generate the PDF from the current data.
+router.post('/preseo/:rid/generate', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    await preSeoRunner.generate(r.id);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Download / view the generated PDF.
+router.get('/preseo/:rid/download', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r || !r.pdfPath) return res.status(404).json({ error: 'PDF not ready.' });
+    res.download(r.pdfPath, `${(r.businessName || r.domain || 'report').replace(/[^\w-]/g, '_')}-Pre-SEO-Audit.pdf`);
+  } catch (e) { next(e); }
+});
+router.get('/preseo/:rid/view', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r || !r.htmlPath) return res.status(404).json({ error: 'Not ready.' });
+    res.set('Cache-Control', 'no-store'); res.sendFile(path.resolve(r.htmlPath));
   } catch (e) { next(e); }
 });
 

@@ -13159,7 +13159,7 @@ export default function HrApp() {
             <DashboardCelebrations />
             <div className="flex justify-end mb-4">
               <div className="inline-flex bg-white border border-slate-200 rounded-xl p-1">
-                <button onClick={() => setDashView('hr')} className={`px-4 py-2 rounded-lg text-[13px] font-extrabold ${dashView === 'hr' ? 'text-white' : 'text-slate-500'}`} style={dashView === 'hr' ? { background: 'linear-gradient(90deg,#FF6A00,#FF4500)' } : {}}>HR Dashboard</button>
+                <button onClick={() => setDashView('hr')} className={`px-4 py-2 rounded-lg text-[13px] font-extrabold ${dashView === 'hr' ? 'text-white' : 'text-slate-500'}`} style={dashView === 'hr' ? { background: 'linear-gradient(90deg,#FF6A00,#FF4500)' } : {}}>Recruitment Dashboard</button>
                 <button onClick={() => setDashView('emp')} className={`px-4 py-2 rounded-lg text-[13px] font-extrabold ${dashView === 'emp' ? 'text-white' : 'text-slate-500'}`} style={dashView === 'emp' ? { background: 'linear-gradient(90deg,#FF6A00,#FF4500)' } : {}}>Employee Dashboard</button>
               </div>
             </div>

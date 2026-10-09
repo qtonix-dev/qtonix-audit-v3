@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{report.businessName}} — Pre-SEO Audit Report</title>
+<style>
+/* ===========================================================================
+   Qtonix Pre-SEO Audit Report — matches the reference design.
+   Plus Jakarta Sans, orange #FF6A00, dark chapter bands, WeasyPrint @page.
+   =========================================================================== */
+{{#if forWeb}}
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;700;800&display=swap');
+{{else}}
+@font-face { font-family:'Plus Jakarta Sans'; src:url('{{fontDir}}/PlusJakartaSans-Regular.ttf'); font-weight:400; }
+@font-face { font-family:'Plus Jakarta Sans'; src:url('{{fontDir}}/PlusJakartaSans-Medium.ttf'); font-weight:500; }
+@font-face { font-family:'Plus Jakarta Sans'; src:url('{{fontDir}}/PlusJakartaSans-Bold.ttf'); font-weight:700; }
+@font-face { font-family:'Plus Jakarta Sans'; src:url('{{fontDir}}/PlusJakartaSans-ExtraBold.ttf'); font-weight:800; }
+{{/if}}
+
+:root{
+  --ink:#0B1020; --navy:#0B1020; --orange:#FF6A00; --orange-deep:#FF4500;
+  --muted:#64748b; --muted2:#94a3b8; --line:#e2e8f0; --line2:#f1f5f9;
+  --red:#dc2626; --amber:#b45309; --green:#16a34a; --violet:#7c3aed; --blue:#2563eb;
+  --tint:#f8fafc; --tint-orange:#FFF7ED;
+}
+*{ margin:0; padding:0; box-sizing:border-box; }
+body{ font-family:'Plus Jakarta Sans', sans-serif; color:var(--ink); font-size:9.5pt; line-height:1.5; }
+
+@page{ size: Letter; margin: 0; }
+@page interior{ size: Letter; margin: 0.62in 0.62in 0.7in 0.62in; }
+
+/* ---------------- COVER ---------------- */
+.cover{ width:8.5in; height:11in; padding:0.9in 0.75in; background:linear-gradient(145deg,#0B1020 0%,#161B33 60%,#0B1020 100%); color:#fff; position:relative; page-break-after:always; overflow:hidden; }
+.cover .orb{ position:absolute; right:-2in; top:1in; width:6in; height:6in; border-radius:50%; border:1px solid rgba(255,106,0,.18); }
+.cover .orb2{ position:absolute; right:-1in; top:2in; width:4in; height:4in; border-radius:50%; background:radial-gradient(circle,rgba(255,106,0,.08),transparent 70%); }
+.cover-top{ display:flex; justify-content:space-between; align-items:flex-start; position:relative; }
+.logo-text{ font-size:21pt; font-weight:800; letter-spacing:-.5px; }
+.logo-text .dot{ color:var(--orange); }
+.cover-series{ text-align:right; font-size:7pt; letter-spacing:2.5px; font-weight:700; color:var(--muted2); line-height:1.6; }
+.eyebrow{ margin-top:1.5in; font-size:8pt; letter-spacing:3px; font-weight:700; color:var(--orange); }
+.eyebrow .dash{ display:inline-block; width:26px; height:2px; background:var(--orange); vertical-align:middle; margin-right:10px; }
+.cover h1{ font-size:42pt; line-height:1.02; letter-spacing:-1.5px; font-weight:800; margin-top:16px; }
+.cover h1 .o{ color:var(--orange); }
+.cover-sub{ margin-top:18px; font-size:11pt; line-height:1.55; color:rgba(255,255,255,.75); max-width:5.2in; }
+.prepared{ margin-top:34px; display:inline-flex; align-items:center; gap:14px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); border-radius:12px; padding:14px 18px; }
+.prepared .lg{ width:48px; height:48px; border-radius:10px; background:rgba(255,255,255,.08); display:flex; align-items:center; justify-content:center; font-size:7pt; font-weight:800; color:var(--muted2); text-align:center; overflow:hidden; }
+.prepared .lg img{ max-width:100%; max-height:100%; }
+.prepared .pl{ font-size:7.5pt; letter-spacing:2px; font-weight:700; color:var(--muted2); }
+.prepared .pn{ font-size:14pt; font-weight:800; margin-top:2px; }
+.prepared .pu{ font-size:9pt; color:var(--orange); font-weight:600; margin-top:1px; }
+.cover-stats{ margin-top:30px; display:flex; gap:26px; }
+.cover-stat{ border-left:3px solid var(--orange); padding-left:14px; }
+.cover-stat b{ font-size:28pt; font-weight:800; line-height:1; }
+.cover-stat span{ display:block; font-size:8pt; color:var(--muted2); margin-top:6px; line-height:1.45; max-width:1.7in; }
+.cover-foot{ position:absolute; left:0.75in; right:0.75in; bottom:0.7in; display:flex; justify-content:space-between; border-top:1px solid rgba(255,255,255,.14); padding-top:14px; }
+.cover-foot .cf{ font-size:7pt; letter-spacing:1.5px; font-weight:700; color:var(--orange); }
+.cover-foot .cfv{ font-size:8.5pt; color:#fff; font-weight:700; margin-top:4px; }
+.cover-foot .cfv .lt{ color:var(--muted2); font-weight:500; }
+.cover-bar{ position:absolute; left:0; right:0; bottom:0; height:10px; background:linear-gradient(90deg,var(--orange),var(--orange-deep)); }
+
+/* ---------------- TOC ---------------- */
+.toc-page{ width:8.5in; height:11in; display:flex; page-break-after:always; }
+.toc-side{ width:2.5in; background:#0B1020; color:#fff; padding:0.75in 0.4in; }
+.toc-side .logo-text{ font-size:17pt; }
+.toc-side .eyebrow{ margin-top:2.6in; color:var(--orange); font-size:7.5pt; }
+.toc-side h2{ font-size:26pt; font-weight:800; line-height:1.05; margin-top:10px; letter-spacing:-.8px; }
+.toc-side .uline{ width:38px; height:3px; background:var(--orange); margin:14px 0; }
+.toc-side p{ font-size:8.5pt; color:var(--muted2); line-height:1.6; }
+.toc-side .foot{ position:absolute; bottom:0.6in; font-size:7.5pt; color:var(--muted2); }
+.toc-main{ flex:1; padding:0.75in 0.6in; }
+.toc-row{ display:flex; gap:16px; padding:9px 0; border-bottom:1px solid var(--line); align-items:baseline; }
+.toc-row:last-child{ border-bottom:0; }
+.toc-n{ color:var(--orange); font-weight:800; font-size:13pt; width:30px; flex:none; }
+.toc-t{ font-weight:800; font-size:11pt; }
+.toc-d{ font-size:8pt; color:var(--muted); margin-top:2px; }
+
+/* ---------------- INTERIOR ---------------- */
+.page{ page:interior; }
+.page-break-before{ break-before:page; }
+.rhead{ display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
+.rhead .l{ font-size:7.5pt; color:var(--muted); font-weight:600; }
+.rhead .r{ font-size:11pt; font-weight:800; }
+.rhead .r .dot{ color:var(--orange); }
+
+.band{ background:#0B1020; color:#fff; border-radius:8px; padding:16px 20px; position:relative; margin-bottom:16px; overflow:hidden; }
+.band.light{ background:#0B1020; }
+.band .ch{ font-size:7.5pt; letter-spacing:3px; font-weight:700; color:var(--orange); }
+.band h2{ font-size:19pt; font-weight:800; margin-top:3px; letter-spacing:-.5px; }
+.band .sub{ font-size:8.5pt; color:rgba(255,255,255,.7); margin-top:4px; max-width:5in; }
+.band .no{ position:absolute; right:20px; top:10px; font-size:34pt; font-weight:800; color:var(--orange); }
+.band::after{ content:''; position:absolute; left:0; right:0; bottom:0; height:4px; background:linear-gradient(90deg,var(--orange),var(--orange-deep)); }
+
+/* orange sub-section heading */
+.sub-h{ font-size:11.5pt; font-weight:800; margin:16px 0 10px; }
+.sub-h .n{ color:var(--orange); margin-right:7px; }
+.sub-h .src{ font-size:8.5pt; font-weight:600; color:var(--muted); margin-left:7px; }
+.sub-h.first{ margin-top:4px; }
+
+/* stat tiles */
+.stats{ display:flex; gap:10px; margin:10px 0 4px; }
+.stat{ flex:1; border:1px solid var(--line); border-radius:8px; padding:11px 13px; }
+.stat b{ font-size:19pt; font-weight:800; color:var(--orange); line-height:1; }
+.stat span{ display:block; font-size:7.5pt; color:var(--muted); margin-top:5px; line-height:1.4; }
+
+/* screenshot placeholder */
+.shot{ border:1.5px dashed var(--orange); border-radius:8px; background:var(--tint-orange); padding:22px 14px; text-align:center; margin:10px 0; }
+.shot .t{ font-size:9.5pt; font-weight:800; color:var(--orange); letter-spacing:1px; }
+.shot .d{ font-size:8.5pt; font-weight:700; margin-top:7px; }
+.shot .n{ font-size:8pt; font-style:italic; color:var(--muted); margin-top:4px; }
+.shot img{ max-width:100%; border-radius:6px; }
+.shotimg{ border:1px solid var(--line); border-radius:8px; padding:6px; margin:10px 0; text-align:center; }
+.shotimg img{ max-width:100%; border-radius:4px; }
+
+/* callouts */
+.callout{ border-left:4px solid var(--violet); background:#f5f3ff; border-radius:0 8px 8px 0; padding:12px 15px; margin:10px 0; }
+.callout.info{ border-color:var(--blue); background:#eff6ff; }
+.callout.crit{ border-color:var(--red); background:#fef2f2; }
+.callout.good{ border-color:var(--green); background:#f0fdf4; }
+.callout .ct{ display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; }
+.callout .cn{ font-size:10pt; font-weight:800; }
+.callout p{ font-size:9pt; line-height:1.55; margin:0; }
+.callout ul{ margin:4px 0 0 16px; }
+.callout li{ font-size:9pt; margin-bottom:3px; }
+.willdo{ border-left:4px solid var(--orange); background:var(--tint-orange); border-radius:0 8px 8px 0; padding:12px 15px; margin:10px 0; }
+.willdo .cn{ font-size:9.5pt; font-weight:800; margin-bottom:4px; }
+.willdo p{ font-size:9pt; margin:0; }
+.willdo ul{ margin:4px 0 0 16px; }
+.willdo li{ font-size:9pt; margin-bottom:3px; }
+
+/* badges */
+.badge{ font-size:7.5pt; font-weight:800; letter-spacing:.5px; }
+.b-crit{ color:var(--red); } .b-high{ color:var(--amber); } .b-med{ color:var(--muted); }
+.b-good{ color:var(--green); } .b-info{ color:var(--blue); } .b-pass{ color:var(--green); }
+.b-fail{ color:var(--red); } .b-pending{ color:var(--blue); } .b-missing{ color:var(--red); }
+.b-optional{ color:var(--muted); } .b-opt{ color:var(--muted); }
+
+/* tables */
+table{ width:100%; border-collapse:collapse; margin:8px 0; font-size:8.5pt; }
+thead th{ background:#0B1020; color:#fff; text-align:left; padding:7px 9px; font-weight:700; font-size:8pt; }
+thead th.c{ text-align:center; } thead th.r{ text-align:right; }
+tbody td{ padding:6px 9px; border-bottom:1px solid var(--line2); vertical-align:top; }
+tbody tr:nth-child(even){ background:#fafbfc; }
+td.c{ text-align:center; } td.r{ text-align:right; }
+td b{ font-weight:800; }
+.miss{ color:var(--red); font-weight:600; }
+
+/* two-column compare */
+.cols{ display:flex; gap:12px; margin:10px 0; }
+.col{ flex:1; border-radius:8px; padding:12px 14px; }
+.col.good{ background:#f0fdf4; border:1px solid #bbf7d0; }
+.col.bad{ background:#fef2f2; border:1px solid #fecaca; }
+.col.neu{ background:var(--tint); border:1px solid var(--line); }
+.col h4{ font-size:10pt; font-weight:800; margin-bottom:7px; }
+.col.good h4{ color:var(--green); } .col.bad h4{ color:var(--red); } .col.neu h4{ color:var(--orange); }
+.col ul{ margin-left:15px; } .col li{ font-size:8.5pt; margin-bottom:4px; line-height:1.4; }
+
+/* health dial */
+.health{ display:flex; gap:20px; align-items:center; border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin:8px 0; }
+.dial{ width:110px; height:110px; border-radius:50%; flex:none; position:relative;
+  background:conic-gradient(var(--orange) 0 {{report.healthScore.deg}}deg, #e9edf3 {{report.healthScore.deg}}deg 360deg); }
+.dial .hole{ position:absolute; inset:14px; border-radius:50%; background:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+.dial .hv{ font-size:24pt; font-weight:800; line-height:1; }
+.dial .hl{ font-size:7.5pt; color:var(--muted); margin-top:3px; }
+.health .bars{ flex:1; }
+.hbar{ display:flex; align-items:center; gap:8px; margin-bottom:4px; font-size:8pt; }
+.hbar .hn{ width:1.5in; color:#334155; font-weight:600; }
+.hbar .ht{ flex:1; height:8px; border-radius:4px; background:#eef2f7; overflow:hidden; }
+.hbar .ht i{ display:block; height:100%; border-radius:4px; }
+.hbar .hs{ width:34px; text-align:right; font-weight:800; color:var(--muted); }
+
+.keyline{ font-size:9pt; color:#374151; margin:8px 0; }
+.keyline b{ color:var(--orange); }
+
+/* back cover */
+.back{ width:8.5in; height:11in; padding:0.9in 0.75in; background:linear-gradient(145deg,#0B1020,#161B33 70%,#0B1020); color:#fff; position:relative; page-break-before:always; overflow:hidden; }
+.back .eyebrow{ margin-top:1.4in; }
+.back h1{ font-size:40pt; line-height:1.03; font-weight:800; letter-spacing:-1.4px; margin-top:14px; }
+.back h1 .o{ color:var(--orange); }
+.back .sub{ margin-top:16px; font-size:11pt; color:rgba(255,255,255,.75); max-width:5in; }
+.back .ns{ margin-top:34px; font-size:7.5pt; letter-spacing:2.5px; font-weight:700; color:var(--muted2); }
+.back .steps{ display:flex; gap:12px; margin-top:12px; }
+.back .step{ flex:1; border:1px solid rgba(255,255,255,.12); border-radius:10px; padding:14px; }
+.back .step .sn{ font-size:16pt; font-weight:800; color:var(--orange); }
+.back .step .st{ font-size:10pt; font-weight:800; margin-top:6px; }
+.back .step .sd{ font-size:8pt; color:var(--muted2); margin-top:5px; line-height:1.5; }
+.back .contact{ position:absolute; left:0.75in; right:0.75in; bottom:0.9in; border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:16px 20px; display:flex; gap:40px; }
+.back .contact .cl{ font-size:7pt; letter-spacing:2px; font-weight:700; color:var(--muted2); }
+.back .contact .cv{ font-size:10pt; font-weight:800; margin-top:4px; }
+.back .contact .cv .lt{ font-weight:500; color:var(--muted2); font-size:8.5pt; }
+.back-bar{ position:absolute; left:0; right:0; bottom:0; height:10px; background:linear-gradient(90deg,var(--orange),var(--orange-deep)); }
+
+.wk{ display:flex; gap:0; margin:10px 0; border-radius:8px; overflow:hidden; }
+.weekrow{ display:flex; margin-bottom:6px; }
+.weekrow .wl{ width:1.3in; flex:none; background:#0B1020; color:#fff; border-radius:8px 0 0 8px; padding:10px 12px; }
+.weekrow .wl b{ font-size:10pt; font-weight:800; display:block; }
+.weekrow .wl span{ font-size:7.5pt; color:var(--muted2); }
+.weekrow .wb{ flex:1; background:var(--tint); border-radius:0 8px 8px 0; padding:10px 14px; position:relative; }
+.weekrow .wb ul{ margin-left:15px; } .weekrow .wb li{ font-size:8.5pt; margin-bottom:2px; }
+.weekrow .wb .who{ position:absolute; right:14px; top:10px; font-size:8pt; font-weight:800; color:var(--orange); }
+</style>
+</head>
+<body>
+
+{{!-- ================= COVER ================= --}}
+<div class="cover">
+  <div class="orb"></div><div class="orb2"></div>
+  <div class="cover-top">
+    <div class="logo-text">Qtonix<span class="dot">.</span></div>
+    <div class="cover-series">SEO AUDIT SERIES<br>{{report.monthYear}}</div>
+  </div>
+  <div class="eyebrow"><span class="dash"></span>PRE-SEO AUDIT REPORT</div>
+  <h1>Website Health &amp;<br>Search Visibility <span class="o">Audit</span></h1>
+  <div class="cover-sub">An in-depth review of technical SEO, on-page content, backlinks, competitors and AI search visibility, with a clear 30-day action plan.</div>
+  <div class="prepared">
+    <div class="lg">{{#if report.clientLogo}}<img src="{{report.clientLogo}}">{{else}}LOGO{{/if}}</div>
+    <div>
+      <div class="pl">PREPARED FOR</div>
+      <div class="pn">{{report.businessName}}</div>
+      <div class="pu">{{report.domain}}</div>
+    </div>
+  </div>
+  <div class="cover-stats">
+    <div class="cover-stat"><b>14</b><span>chapters covering technical, on-page, off-page &amp; AI search</span></div>
+    <div class="cover-stat"><b>{{report.pagesReviewed}}</b><span>website pages reviewed one by one</span></div>
+    <div class="cover-stat"><b>30</b><span>day action plan with clear owners</span></div>
+  </div>
+  <div class="cover-foot">
+    <div><div class="cf">PREPARED BY</div><div class="cfv">{{report.preparedBy}}<span class="lt"> · Qtonix Software Pvt. Ltd.</span></div></div>
+    <div><div class="cf">SCOPE</div><div class="cfv">Technical · On-Page · Off-Page<span class="lt"> · Competitors · AI</span></div></div>
+    <div><div class="cf">AUDIT DATE</div><div class="cfv">{{report.auditDate}}<span class="lt"> · v1.0</span></div></div>
+  </div>
+  <div class="cover-bar"></div>
+</div>
+
+{{!-- ================= TABLE OF CONTENTS ================= --}}
+<div class="toc-page">
+  <div class="toc-side" style="position:relative">
+    <div class="logo-text">Qtonix<span class="dot">.</span></div>
+    <div class="eyebrow">INSIDE THIS REPORT</div>
+    <h2>Table of<br>Contents</h2>
+    <div class="uline"></div>
+    <p>Each chapter shows what we checked, what we found and what we recommend. Screenshots are taken from the tools we use for every audit.</p>
+    <div class="foot">Pre-SEO Audit Report<br>{{report.domain}}</div>
+  </div>
+  <div class="toc-main">
+    {{#each toc}}
+    <div class="toc-row"><div class="toc-n">{{this.n}}</div><div><div class="toc-t">{{this.t}}</div><div class="toc-d">{{this.d}}</div></div></div>
+    {{/each}}
+  </div>
+</div>
+
+{{!-- ================= CH 01 — OVERALL ================= --}}
+<div class="page page-break-before">
+  <div class="rhead"><div class="l">Pre-SEO Audit Report &nbsp;|&nbsp; {{report.domain}}</div><div class="r">Qtonix<span class="dot">.</span></div></div>
+  <div class="band"><div class="no">01</div><div class="ch">OVERVIEW</div><h2>Overall Site Observation</h2><div class="sub">A quick look at where {{report.domain}} stands today, before the campaign starts.</div></div>
+  <div class="stats">
+    {{#each ch1.stats}}<div class="stat"><b>{{this.v}}</b><span>{{this.l}}</span></div>{{/each}}
+  </div>
+  <div class="sub-h"><span class="n">1.1</span> Homepage <span class="src">| {{report.domain}}</span></div>
+  {{#if ch1.homepageShot}}<div class="shotimg"><img src="{{ch1.homepageShot}}"></div>{{else}}<div class="shot"><div class="t">[ HOMEPAGE SCREENSHOT ]</div><div class="n">Homepage of {{report.domain}}</div></div>{{/if}}
+  {{#each ch1.homepageNotes}}<p class="lead">{{this}}</p>{{/each}}
+
+  <div class="sub-h"><span class="n">1.2</span> SEO Health Score <span class="src">| Qtonix audit checklist</span></div>
+  <div class="health">
+    <div class="dial"><div class="hole"><div class="hv">{{report.healthScore.value}}</div><div class="hl">out of 100</div></div></div>
+    <div class="bars">
+      {{#each ch1.healthBars}}<div class="hbar"><div class="hn">{{this.n}}</div><div class="ht"><i style="width:{{this.pct}}%;background:{{this.color}}"></i></div><div class="hs">{{this.s}}/10</div></div>{{/each}}
+    </div>
+  </div>
+  <p class="keyline">Each area is scored out of 10 based on the checks in this report. The total gives a <b>starting score of {{report.healthScore.value}} / 100</b>. Once the Week 1 fixes are live, the score can realistically pass 50.</p>
+
+  <div class="sub-h"><span class="n">1.3</span> Top 5 Issues That Matter Most</div>
+  <table><thead><tr><th style="width:8%">#</th><th>Issue</th><th class="r" style="width:16%">Priority</th></tr></thead><tbody>
+    {{#each ch1.topIssues}}<tr><td>{{inc @index}}</td><td>{{this.issue}}</td><td class="r"><span class="badge b-{{lower this.priority}}">{{this.priority}}</span></td></tr>{{/each}}
+  </tbody></table>
+
+  <div class="sub-h"><span class="n">1.4</span> What Is Working vs What Needs Fixing</div>
+  <div class="cols">
+    <div class="col good"><h4>What is already working</h4><ul>{{#each ch1.working}}<li>{{this}}</li>{{/each}}</ul></div>
+    <div class="col bad"><h4>What needs fixing</h4><ul>{{#each ch1.fixing}}<li>{{this}}</li>{{/each}}</ul></div>
+  </div>
+
+  <div class="sub-h page-break-before"><span class="n">1.5</span> Quick Summary</div>
+  <table><thead><tr><th style="width:36%">Element</th><th class="c" style="width:14%">Status</th><th>Remarks</th></tr></thead><tbody>
+    {{#each ch1.summary}}<tr><td><b>{{this.el}}</b></td><td class="c"><span class="badge b-{{lower this.status}}">{{this.status}}</span></td><td>{{this.remark}}</td></tr>{{/each}}
+  </tbody></table>
+  <div class="callout crit"><div class="ct"><div class="cn">Key Takeaway</div><span class="badge b-crit">CRITICAL</span></div><p>{{ch1.keyTakeaway}}</p></div>
+  <div class="willdo"><div class="cn">About This Report</div><p>{{ch1.about}}</p></div>
+  <div class="sub-h"><span class="n">1.6</span> How to Read This Report</div>
+  <table><thead><tr><th style="width:20%">Label</th><th>Meaning</th></tr></thead><tbody>
+    <tr><td class="c"><span class="badge b-crit">CRITICAL</span></td><td>Stops the site from ranking at all. Fix before anything else.</td></tr>
+    <tr><td class="c"><span class="badge b-high">HIGH</span></td><td>Holds rankings or conversions back. Fix in the first month.</td></tr>
+    <tr><td class="c"><span class="badge b-med">MEDIUM</span></td><td>Worth fixing as part of ongoing optimisation.</td></tr>
+    <tr><td class="c"><span class="badge b-good">GOOD</span></td><td>Working correctly. No action needed.</td></tr>
+    <tr><td class="c"><span class="badge b-info">INFO</span></td><td>For reference or baseline, no direct action needed.</td></tr>
+  </tbody></table>
+</div>
+
+{{!-- ================= GENERIC CHAPTERS 2..14 ================= --}}
+{{#each chapters}}
+<div class="page page-break-before">
+  <div class="rhead"><div class="l">Pre-SEO Audit Report &nbsp;|&nbsp; {{../report.domain}}</div><div class="r">Qtonix<span class="dot">.</span></div></div>
+  <div class="band"><div class="no">{{this.no}}</div><div class="ch">CHAPTER</div><h2>{{this.title}}</h2><div class="sub">{{this.sub}}</div></div>
+
+  {{#if this.stats}}<div class="stats">{{#each this.stats}}<div class="stat"><b>{{this.v}}</b><span>{{this.l}}</span></div>{{/each}}</div>{{/if}}
+
+  {{#each this.sections}}
+  <div class="sub-h{{#if @first}} first{{/if}}"><span class="n">{{this.num}}</span> {{this.heading}}{{#if this.src}}<span class="src">| {{this.src}}</span>{{/if}}</div>
+
+  {{#if this.shot}}<div class="shot"><div class="t">[ PASTE SCREENSHOT HERE ]</div><div class="d">{{this.shot.label}}</div>{{#if this.shot.note}}<div class="n">{{this.shot.note}}</div>{{/if}}{{#if this.shot.img}}<img src="{{this.shot.img}}">{{/if}}</div>{{/if}}
+  {{#if this.image}}<div class="shotimg"><img src="{{this.image}}"></div>{{/if}}
+
+  {{#if this.table}}
+  <table><thead><tr>{{#each this.table.cols}}<th class="{{this.align}}" {{#if this.width}}style="width:{{this.width}}"{{/if}}>{{this.label}}</th>{{/each}}</tr></thead><tbody>
+    {{#each this.table.rows}}<tr>{{#each this}}<td class="{{this.align}}">{{#if this.badge}}<span class="badge b-{{lower this.badge}}">{{this.badge}}</span>{{else}}{{#if this.bold}}<b>{{this.text}}</b>{{else}}{{this.text}}{{/if}}{{/if}}</td>{{/each}}</tr>{{/each}}
+  </tbody></table>
+  {{/if}}
+
+  {{#each this.bullets}}
+  <div class="callout {{this.kind}}"><div class="ct"><div class="cn">{{this.title}}</div>{{#if this.badge}}<span class="badge b-{{lower this.badge}}">{{this.badge}}</span>{{/if}}</div>{{#if this.text}}<p>{{this.text}}</p>{{/if}}{{#if this.list}}<ul>{{#each this.list}}<li>{{this}}</li>{{/each}}</ul>{{/if}}</div>
+  {{/each}}
+
+  {{#if this.willdo}}<div class="willdo"><div class="cn">What Qtonix Will Do (on your approval)</div>{{#if this.willdo.text}}<p>{{this.willdo.text}}</p>{{/if}}{{#if this.willdo.list}}<ul>{{#each this.willdo.list}}<li>{{this}}</li>{{/each}}</ul>{{/if}}</div>{{/if}}
+
+  {{#if this.cols}}<div class="cols"><div class="col neu"><h4>{{this.cols.leftTitle}}</h4><ul>{{#each this.cols.left}}<li>{{this}}</li>{{/each}}</ul></div><div class="col neu"><h4>{{this.cols.rightTitle}}</h4><ul>{{#each this.cols.right}}<li>{{this}}</li>{{/each}}</ul></div></div>{{/if}}
+
+  {{#if this.weeks}}{{#each this.weeks}}<div class="weekrow"><div class="wl"><b>{{this.label}}</b><span>{{this.sub}}</span></div><div class="wb"><div class="who">{{this.who}}</div><ul>{{#each this.items}}<li>{{this}}</li>{{/each}}</ul></div></div>{{/each}}{{/if}}
+  {{/each}}
+</div>
+{{/each}}
+
+{{!-- ================= BACK COVER ================= --}}
+<div class="back">
+  <div class="orb"></div>
+  <div class="logo-text">Qtonix<span class="dot">.</span></div>
+  <div class="eyebrow"><span class="dash"></span>THANK YOU</div>
+  <h1>Let's get {{report.shortName}}<br>found on <span class="o">Google</span> and<br><span class="o">AI search.</span></h1>
+  <div class="sub">Thank you for the opportunity to review your website. We're happy to walk you through every finding on a call.</div>
+  <div class="ns">NEXT STEPS</div>
+  <div class="steps">
+    <div class="step"><div class="sn">01</div><div class="st">Review the report</div><div class="sd">See where the website stands today and note any questions.</div></div>
+    <div class="step"><div class="sn">02</div><div class="st">Approve the plan</div><div class="sd">Tick the items in the approval checklist (chapter 14).</div></div>
+    <div class="step"><div class="sn">03</div><div class="st">Access &amp; kick-off</div><div class="sd">Share access and our team takes care of all the fixes.</div></div>
+  </div>
+  <div class="contact">
+    <div><div class="cl">YOUR CONTACT</div><div class="cv">{{report.preparedBy}}<br><span class="lt">Project Manager, Qtonix Software Pvt. Ltd.</span></div></div>
+    <div><div class="cl">EMAIL</div><div class="cv">{{report.contactEmail}}</div></div>
+    <div><div class="cl">PHONE</div><div class="cv">{{report.contactPhone}}<br><span class="lt">www.qtonix.com</span></div></div>
+  </div>
+  <div class="back-bar"></div>
+</div>
+
+</body>
+</html>

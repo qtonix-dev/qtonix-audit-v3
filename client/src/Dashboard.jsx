@@ -584,9 +584,20 @@ function Leaderboard({ board, user, maxSales }) {
               </div>
             </div>
             <div className="flex-1">
-              <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
-                <div className="h-full rounded-full" style={{ width: `${Math.max(3, Math.round((b.salesUsd / maxSales) * 100))}%`, background: b.hitTarget ? '#16A34A' : 'linear-gradient(90deg,#FF6A00,#FF4500)' }} />
-              </div>
+              {/* Progress is each agent's own achievement vs their OWN target (capped
+                  at 100%), so hitting target always fills the bar — not relative to
+                  the top agent. Falls back to share-of-top only when no target set. */}
+              {(() => {
+                const hasTarget = b.salesTarget > 0 && b.pct != null;
+                const fillPct = hasTarget
+                  ? Math.min(100, Math.max(3, Math.round(b.pct)))
+                  : Math.max(3, Math.round((b.salesUsd / (maxSales || 1)) * 100));
+                return (
+                  <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${fillPct}%`, background: b.hitTarget ? '#16A34A' : 'linear-gradient(90deg,#FF6A00,#FF4500)' }} />
+                  </div>
+                );
+              })()}
             </div>
             <div className="w-24 text-right">
               <div className="font-extrabold text-xs text-[#050A1F]">{usd(b.salesUsd)}</div>

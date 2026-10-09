@@ -8,12 +8,20 @@
 
 FROM node:20-bookworm-slim
 
-# 1. System libraries WeasyPrint needs, plus Python, curl, fontconfig, MySQL client.
+# 1. System libraries WeasyPrint needs, plus Python, curl, fontconfig, MySQL
+#    client, and Chromium (used by the Pre-SEO report to screenshot the live
+#    site with red issue-highlights; the app degrades gracefully if it's absent).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 python3-pip python3-venv \
       libpango-1.0-0 libpangoft2-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 libffi-dev \
       fontconfig curl default-mysql-client \
+      chromium fonts-liberation libnss3 libatk-bridge2.0-0 libgtk-3-0 libasound2 libxdamage1 libgbm1 \
     && rm -rf /var/lib/apt/lists/*
+
+# Point the Pre-SEO capture service at the distro Chromium and skip Playwright's
+# own browser download (we use the system binary instead).
+ENV CHROMIUM_PATH=/usr/bin/chromium
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 # 2. WeasyPrint (the PDF engine the report renderer calls).
 RUN pip3 install --no-cache-dir --break-system-packages weasyprint

@@ -2500,6 +2500,36 @@ const ProjectPlan = sequelize.define('ProjectPlan', {
   active: { type: DataTypes.BOOLEAN, defaultValue: true },
 }, { tableName: 'project_plans' });
 
+// A generated analysis report run from a project (e.g. Pre-SEO Audit). Mirrors
+// the Report model's lifecycle (queued→running→complete) but is project-scoped
+// and typed, so more report kinds can be added later.
+const PreSeoReport = sequelize.define('PreSeoReport', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  projectId: { type: DataTypes.INTEGER, allowNull: true },           // run from inside a project (optional)
+  kind: { type: DataTypes.STRING(30), defaultValue: 'pre_seo' },     // report type selected in Run Report
+  website: { type: DataTypes.STRING(255), allowNull: false },
+  domain: { type: DataTypes.STRING(190), defaultValue: '' },
+  businessName: { type: DataTypes.STRING(190), defaultValue: '' },
+  createdById: { type: DataTypes.INTEGER, allowNull: true },
+  createdByName: { type: DataTypes.STRING(120), defaultValue: '' },
+  status: { type: DataTypes.ENUM('draft', 'capturing', 'analyzing', 'ready', 'rendering', 'complete', 'failed'), defaultValue: 'draft' },
+  progress: { type: DataTypes.INTEGER, defaultValue: 0 },
+  currentStep: { type: DataTypes.STRING(120), defaultValue: '' },
+  error: { type: DataTypes.TEXT, allowNull: true },
+  // crawl = raw machine-read data from the live site (crawler.js output).
+  crawl: { type: DataTypes.JSON, defaultValue: {} },
+  // shots = { slotKey: { source:'auto'|'upload', url, label, note, highlighted } } for each screenshot slot.
+  shots: { type: DataTypes.JSON, defaultValue: {} },
+  // data = the full render payload (the JSON the preSeoReport.hbs template consumes), editable before generate.
+  data: { type: DataTypes.JSON, defaultValue: {} },
+  pdfPath: { type: DataTypes.STRING(255), allowNull: true },
+  htmlPath: { type: DataTypes.STRING(255), allowNull: true },
+  completedAt: { type: DataTypes.DATE, allowNull: true },
+}, { tableName: 'pre_seo_reports', indexes: [
+  { name: 'idx_preseo_project', fields: ['projectId'] },
+  { name: 'idx_preseo_status', fields: ['status'] },
+] });
+
 
 // ===========================================================================
 // A configurable points economy layered on the existing recognition system.
@@ -3089,7 +3119,7 @@ module.exports = {
   runWithDemoScope, currentDemoScope, hasDemoContext,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog, MailFolderCache,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, AiOverviewReport, PushSubscription, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse, TicketBooking, TicketCustomer, StickyNote, GstReconciliation,
-  Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential, ProjectPlan, TaskFlow, TaskFlowRun,
+  Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential, ProjectPlan, PreSeoReport, TaskFlow, TaskFlowRun,
   RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption,
   ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember,
   TvPoll, TvCheer,

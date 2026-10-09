@@ -37,6 +37,7 @@ Handlebars.registerHelper('formatDate', (d) =>
 );
 
 Handlebars.registerHelper('upper', (s) => String(s || '').toUpperCase());
+Handlebars.registerHelper('lower', (s) => String(s || '').toLowerCase().replace(/[^a-z]/g, ''));
 Handlebars.registerHelper('inc', (i) => Number(i) + 1);
 Handlebars.registerHelper('seconds', (ms) => ((Number(ms) || 0) / 1000).toFixed(1));
 
@@ -492,4 +493,27 @@ async function renderReport(payload) {
   return { pdfPath, htmlPath };
 }
 
-module.exports = { renderReport, renderHtml, buildViewModel };
+// ---- Pre-SEO Audit report: separate template, same WeasyPrint pipeline ------
+async function renderPreSeoHtml(data, opts = {}) {
+  const tplSrc = await fs.readFile(path.join(__dirname, '../templates/preSeoReport.hbs'), 'utf8');
+  const tpl = Handlebars.compile(tplSrc);
+  return tpl({ ...data, forWeb: !!opts.forWeb, fontDir: 'file://' + FONT_DIR });
+}
+
+async function renderPreSeo(data, slugBase) {
+  await fs.mkdir(OUT_DIR, { recursive: true });
+  const slug = `preseo-${String(slugBase || (data.report && data.report.domain) || 'report').replace(/[^a-z0-9]/gi, '-')}`;
+  const htmlPath = path.join(OUT_DIR, `${slug}.html`);
+  const pdfPath = path.join(OUT_DIR, `${slug}.pdf`);
+  await fs.writeFile(htmlPath, await renderPreSeoHtml(data, { forWeb: true }), 'utf8');
+  const pdfHtmlPath = path.join(OUT_DIR, `${slug}.pdf.html`);
+  await fs.writeFile(pdfHtmlPath, await renderPreSeoHtml(data, { forWeb: false }), 'utf8');
+  await new Promise((resolve, reject) => {
+    const { execFile } = require('child_process');
+    execFile('python3', ['-m', 'weasyprint', '-e', 'utf-8', '-u', path.dirname(pdfHtmlPath), pdfHtmlPath, pdfPath], { timeout: 120000 },
+      (err, stdout, stderr) => err ? reject(new Error(`WeasyPrint failed: ${stderr || err.message}`)) : resolve());
+  });
+  return { pdfPath, htmlPath };
+}
+
+module.exports = { renderReport, renderHtml, buildViewModel, renderPreSeo, renderPreSeoHtml };
