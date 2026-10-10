@@ -178,6 +178,12 @@ function pruneSections(data) {
 async function generate(reportId) {
   const report = await PreSeoReport.findByPk(reportId);
   if (!report || !report.data || !report.data.report) throw new Error('Report not analysed yet.');
+  // Clean up the previous ImageKit PDF/HTML so regenerating doesn't orphan files.
+  try {
+    const ik = require('./imagekit');
+    if (report.pdfFileId) ik.deleteFile(report.pdfFileId).catch(() => {});
+    if (report.htmlFileId) ik.deleteFile(report.htmlFileId).catch(() => {});
+  } catch {}
   await setStatus(reportId, { status: 'rendering', currentStep: 'Reading uploaded screenshots' });
   // Work on a deep copy so pruning/refresh for the PDF never mutates the stored
   // data (the user may upload more screenshots and regenerate).
@@ -206,9 +212,9 @@ async function generate(reportId) {
   // re-attach shots as file:// for the PDF, then drop empty/un-uploaded sections
   attachShots(pdfData, report.shots || {});
   pruneSections(pdfData);
-  const { pdfPath, htmlPath } = await renderPreSeo(pdfData, `${report.domain}-${report.id}`);
-  await setStatus(reportId, { status: 'complete', pdfPath, htmlPath, completedAt: new Date(), currentStep: 'Complete', progress: 100 });
-  return { pdfPath, htmlPath };
+  const { pdfPath, htmlPath, pdfUrl, htmlUrl, pdfFileId, htmlFileId } = await renderPreSeo(pdfData, `${report.domain}-${report.id}`);
+  await setStatus(reportId, { status: 'complete', pdfPath, htmlPath, pdfUrl, htmlUrl, pdfFileId, htmlFileId, completedAt: new Date(), currentStep: 'Complete', progress: 100 });
+  return { pdfPath, htmlPath, pdfUrl, htmlUrl };
 }
 
 module.exports = { run, generate, setStatus };

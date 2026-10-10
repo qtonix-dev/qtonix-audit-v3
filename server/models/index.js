@@ -2522,8 +2522,13 @@ const PreSeoReport = sequelize.define('PreSeoReport', {
   shots: { type: DataTypes.JSON, defaultValue: {} },
   // data = the full render payload (the JSON the preSeoReport.hbs template consumes), editable before generate.
   data: { type: DataTypes.JSON, defaultValue: {} },
-  pdfPath: { type: DataTypes.STRING(255), allowNull: true },
-  htmlPath: { type: DataTypes.STRING(255), allowNull: true },
+  pdfPath: { type: DataTypes.STRING(255), allowNull: true },   // local disk path (ephemeral)
+  htmlPath: { type: DataTypes.STRING(255), allowNull: true },  // local disk path (ephemeral)
+  // Durable copies on ImageKit so View/Download/public links survive restarts.
+  pdfUrl: { type: DataTypes.STRING(500), allowNull: true },
+  htmlUrl: { type: DataTypes.STRING(500), allowNull: true },
+  pdfFileId: { type: DataTypes.STRING(120), allowNull: true },
+  htmlFileId: { type: DataTypes.STRING(120), allowNull: true },
   completedAt: { type: DataTypes.DATE, allowNull: true },
   // Public sharing — same trackable /r/ link + logging pattern as Report.
   publicSlug: { type: DataTypes.STRING(80), allowNull: true, unique: true },

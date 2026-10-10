@@ -516,7 +516,28 @@ async function renderPreSeo(data, slugBase) {
     execFile('python3', ['-m', 'weasyprint', '-e', 'utf-8', '-u', path.dirname(pdfHtmlPath), pdfHtmlPath, pdfPath], { timeout: 120000 },
       (err, stdout, stderr) => err ? reject(new Error(`WeasyPrint failed: ${stderr || err.message}`)) : resolve());
   });
-  return { pdfPath, htmlPath };
+
+  // Durable storage: push the PDF and the self-contained HTML to ImageKit so
+  // View/Download/public links keep working after Railway recycles local disk.
+  let pdfUrl = null, htmlUrl = null, pdfFileId = null, htmlFileId = null;
+  try {
+    const ik = require('./imagekit');
+    const { Settings } = require('../models');
+    const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+    if (ik.isConfigured(settings)) {
+      // The HTML we store for the web view must be self-contained (web fonts,
+      // no local file:// refs) so it renders anywhere, not just on this box.
+      const webHtml = await renderPreSeoHtml(data, { forWeb: true });
+      const [pr, hr] = await Promise.all([
+        fs.readFile(pdfPath).then((buf) => ik.uploadFile({ base64: buf.toString('base64'), fileName: `${slug}.pdf`, folder: '/qtonix/preseo/reports' })),
+        ik.uploadFile({ base64: Buffer.from(webHtml, 'utf8').toString('base64'), fileName: `${slug}.html`, folder: '/qtonix/preseo/reports' }),
+      ]);
+      pdfUrl = pr.url; pdfFileId = pr.fileId || null;
+      htmlUrl = hr.url; htmlFileId = hr.fileId || null;
+    }
+  } catch (e) { console.error('[renderPreSeo] ImageKit upload failed, keeping local only:', e.message); }
+
+  return { pdfPath, htmlPath, pdfUrl, htmlUrl, pdfFileId, htmlFileId };
 }
 
 module.exports = { renderReport, renderHtml, buildViewModel, renderPreSeo, renderPreSeoHtml };

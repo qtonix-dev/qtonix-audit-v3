@@ -440,11 +440,21 @@ router.get('/preseo', guard, requireHrAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// Delete a Pre-SEO report (admin).
+// Delete a Pre-SEO report (admin). Also removes its ImageKit files (PDF, HTML,
+// and every stored screenshot) so nothing is orphaned.
 router.delete('/preseo/:rid', guard, requireHrAdmin, async (req, res, next) => {
   try {
     const r = await PreSeoReport.findByPk(req.params.rid);
     if (!r) return res.status(404).json({ error: 'Report not found.' });
+    try {
+      const ik = require('../services/imagekit');
+      if (r.pdfFileId) ik.deleteFile(r.pdfFileId).catch(() => {});
+      if (r.htmlFileId) ik.deleteFile(r.htmlFileId).catch(() => {});
+      for (const s of Object.values(r.shots || {})) {
+        if (s && s.fileId) ik.deleteFile(s.fileId).catch(() => {});
+        else if (s && s.url && /imagekit/i.test(s.url)) { const fid = ik.fileIdFromUrl && ik.fileIdFromUrl(s.url); if (fid) ik.deleteFile(fid).catch(() => {}); }
+      }
+    } catch {}
     await r.destroy();
     res.json({ ok: true });
   } catch (e) { next(e); }
@@ -535,18 +545,25 @@ router.post('/preseo/:rid/generate', guard, requireHrAdmin, async (req, res, nex
 });
 
 // Download / view the generated PDF.
+const fsSync = require('fs');
 router.get('/preseo/:rid/download', guard, requireHrAdmin, async (req, res, next) => {
   try {
     const r = await PreSeoReport.findByPk(req.params.rid);
-    if (!r || !r.pdfPath) return res.status(404).json({ error: 'PDF not ready.' });
-    res.download(r.pdfPath, `${(r.businessName || r.domain || 'report').replace(/[^\w-]/g, '_')}-Pre-SEO-Audit.pdf`);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    // Prefer the durable ImageKit copy; fall back to local disk if still there.
+    if (r.pdfPath && fsSync.existsSync(r.pdfPath)) return res.download(r.pdfPath, `${(r.businessName || r.domain || 'report').replace(/[^\w-]/g, '_')}-Pre-SEO-Audit.pdf`);
+    if (r.pdfUrl) return res.redirect(302, r.pdfUrl);
+    return res.status(404).json({ error: 'PDF not ready.' });
   } catch (e) { next(e); }
 });
 router.get('/preseo/:rid/view', guard, requireHrAdmin, async (req, res, next) => {
   try {
     const r = await PreSeoReport.findByPk(req.params.rid);
-    if (!r || !r.htmlPath) return res.status(404).json({ error: 'Not ready.' });
-    res.set('Cache-Control', 'no-store'); res.sendFile(path.resolve(r.htmlPath));
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    res.set('Cache-Control', 'no-store');
+    if (r.htmlPath && fsSync.existsSync(r.htmlPath)) return res.sendFile(path.resolve(r.htmlPath));
+    if (r.htmlUrl) return res.redirect(302, r.htmlUrl);
+    return res.status(404).json({ error: 'Not ready.' });
   } catch (e) { next(e); }
 });
 

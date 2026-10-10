@@ -156,8 +156,8 @@ Output ONLY valid JSON, no markdown, matching the requested schema exactly.`;
   "fixing": ["6 short bullet points of what needs fixing"],
   "keyTakeaway": "1 short paragraph, the single most important issue",
   "about": "1 short paragraph: this report shows where the site stands; Qtonix will do the fixes after approval",
-  "searchVisibilityObs": "observation for the SEMrush/traffic section",
-  "indexCheckObs": "observation for the Google index (site:) check",
+  "searchVisibilityObs": ["2-4 short bullet points for the SEMrush/traffic section — each a plain fact, no screenshot talk"],
+  "indexCheckObs": ["2-4 short bullet points for the Google index (site:) check — state which page types are indexed; NEVER mention a screenshot or that a result count is not visible; if the exact indexed count is unknown say it will be confirmed from Google Search Console"],
   "contentMatch": "1 short sentence: does the homepage body content actually match its title and meta description (topic alignment)?",
   "contentQuality": "1 short sentence: spelling/grammar quality, and whether the copy reads like thin or auto-generated content or like genuine human-written content",
   "keywordTargets": [ {"page":"Home","keyword":"...","supporting":"...","difficulty":"GOOD|MODERATE|HARD|VERY HARD"} x6-8 ],
@@ -190,7 +190,7 @@ function parseJson(s) {
 // SHOT_CONTEXT maps a slot key to what the image shows + what to pull from it.
 const SHOT_CONTEXT = {
   '2.1': { tool: 'SEMrush Domain Overview', want: 'Authority Score, Organic Traffic (monthly visits), number of Organic Keywords, Referring Domains / Backlinks, and the traffic trend (growing, flat or declining).' },
-  '2.2': { tool: 'Google "site:" search results', want: 'how many pages Google has indexed (count of results), which pages appear, and whether any important pages are missing or any "No results" message shows.' },
+  '2.2': { tool: 'Google "site:" search results', want: 'which pages Google has indexed and whether the main sections appear. If the total result count is not shown, do NOT mention that or the screenshot — simply state which page types you can see are indexed and that the full indexed count will be confirmed from Google Search Console.' },
   '3.1': { tool: 'view-source of the homepage', want: 'the meta robots tag value (index/noindex), the <title>, and the canonical URL.' },
   '3.2': { tool: 'the robots.txt file', want: 'which paths are disallowed, whether a Sitemap: line is present, and whether any AI crawlers (GPTBot, PerplexityBot, ClaudeBot, Google-Extended) are blocked.' },
   '3.3': { tool: 'the XML sitemap', want: 'whether the sitemap loads, how many URLs/child sitemaps it lists, and whether the main pages are included.' },
@@ -206,27 +206,36 @@ const SHOT_CONTEXT = {
   '10.2': { tool: 'SEMrush Keyword Magic Tool', want: 'the main keywords shown with their search volume and KD% (difficulty), and which look like realistic targets.' },
 };
 
+// Returns an ARRAY of short bullet strings (2-4), so every observation reads as
+// scannable points rather than a wall of text. The report never says a
+// screenshot was used or that something "wasn't visible in the screenshot".
 async function analyzeShot(keys, slot, image, { domain, business }) {
-  const ctx = SHOT_CONTEXT[slot] || { tool: 'an SEO tool screenshot', want: 'the key figures and what they mean for this website.' };
-  const system = `You are a senior SEO auditor writing ONE short observation paragraph for a client-facing report, based on a screenshot the client uploaded. Rules:
-- The image is a screenshot of ${ctx.tool} for ${business} (${domain}). Read the actual numbers and text in the image.
-- Pull out ${ctx.want}
-- Write 2-4 plain, calm sentences a non-technical owner understands. State the real figures you can see. No hype, no jargon, no exclamation marks.
-- If a figure is low or a problem, say so plainly and note our team will address it on approval ("Our team will…"). If it is healthy, say that.
-- If the screenshot is unclear or does not show the expected data, say only what you can actually see; do NOT invent numbers.
-- Output ONLY the paragraph text — no heading, no JSON, no markdown.`;
+  const ctx = SHOT_CONTEXT[slot] || { tool: 'an SEO tool', want: 'the key figures and what they mean for this website.' };
+  const system = `You are a senior SEO auditor writing the "Current Observation" for ONE section of a client-facing audit report. You are given a ${ctx.tool} view for ${business} (${domain}). Read the real numbers and text in it.
+Pull out: ${ctx.want}
+STRICT RULES:
+- Write the finding as an AUDITOR stating facts about the website — NOT as someone describing a picture. NEVER mention "the screenshot", "this view", "the image", "shown here", or that a count/figure "is not visible/displayed". The client must never feel they are reading a caption of a pasted screenshot.
+- If an expected figure genuinely isn't present, don't flag its absence — instead state what you CAN confirm, and say the precise figure "will be confirmed from [the right tool, e.g. Google Search Console / SEMrush]".
+- Output 2 to 4 SHORT bullet points. Each bullet is one plain, calm fact a non-technical owner understands, with the real number where you have it. No hype, no exclamation marks, no invented numbers.
+- Where something is weak, end that bullet with the fix in plain words ("our team will …").
+- Output ONLY a JSON array of strings, e.g. ["...","..."]. No other text.`;
   const content = [
-    { type: 'text', text: `This is the ${ctx.tool} screenshot for ${domain}. Read it and write the observation paragraph.` },
+    { type: 'text', text: `Write the Current Observation bullets for the ${slot} section of ${domain}.` },
     { type: 'image', source: { type: 'base64', media_type: image.mime, data: image.base64 } },
   ];
-  // Vision requires Claude; fall back to OpenAI vision if Claude key is absent.
+  const toBullets = (raw) => {
+    if (!raw) return null;
+    try { const arr = JSON.parse((raw.match(/\[[\s\S]*\]/) || [raw])[0]); if (Array.isArray(arr) && arr.length) return arr.map((x) => String(x).trim()).filter(Boolean).slice(0, 5); } catch {}
+    // fallback: split a paragraph into sentence bullets
+    return String(raw).split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter((s) => s.length > 4).slice(0, 4);
+  };
   try {
-    if (keys.anthropicKey) return (await callClaude(keys.anthropicKey, { system, messages: [{ role: 'user', content }], maxTokens: 500 })).trim();
+    if (keys.anthropicKey) return toBullets((await callClaude(keys.anthropicKey, { system, messages: [{ role: 'user', content }], maxTokens: 600 })).trim());
   } catch (e) { console.error('[preSeoAnalyze] shot analysis (claude) failed for', slot, e.message); }
   try {
-    if (keys.openaiKey) return (await callOpenaiVision(keys.openaiKey, system, content)).trim();
+    if (keys.openaiKey) return toBullets((await callOpenaiVision(keys.openaiKey, system, content)).trim());
   } catch (e) { console.error('[preSeoAnalyze] shot analysis (openai) failed for', slot, e.message); }
-  return '';
+  return null;
 }
 
 // OpenAI vision: gpt-4o-mini accepts image_url content blocks (base64 data URI).
@@ -438,13 +447,30 @@ function buildChapters(f, n, meta, extra) {
   const shotObs = (extra && extra.shotObs) || {};
   const ai = (extra && extra.ai) || null;
   // A section's uploaded-screenshot observation, as a Current Observation bullet.
-  const obsBullet = (num, kind) => shotObs[num]
-    ? [{ kind: kind || 'info', title: 'Current Observation', badge: (kind === 'good' ? 'GOOD' : kind === 'crit' ? 'CRITICAL' : kind === 'high' ? 'HIGH' : 'INFO'), text: shotObs[num] }]
-    : null;
+  // shotObs[num] is an ARRAY of bullet strings from the vision read → render as
+  // a bulleted Current Observation (never a plain paragraph).
+  const badgeFor = (kind) => kind === 'good' ? 'GOOD' : kind === 'crit' ? 'CRITICAL' : kind === 'high' ? 'HIGH' : kind === 'med' ? 'MEDIUM' : 'INFO';
+  const obsBullet = (num, kind) => {
+    const v = shotObs[num];
+    if (!v) return null;
+    const b = { kind: kind || 'info', title: 'Current Observation', badge: badgeFor(kind) };
+    if (Array.isArray(v)) b.list = v; else b.text = v;
+    return [b];
+  };
+  // Build a Current Observation from a narrative value that may be an array of
+  // bullets (preferred) or a single string. Always prefers bullets.
+  const obs = (val, kind, fallback) => {
+    const b = { kind: kind || 'info', title: 'Current Observation', badge: badgeFor(kind) };
+    if (Array.isArray(val) && val.length) b.list = val;
+    else if (typeof val === 'string' && val.trim()) b.text = val;
+    else if (Array.isArray(fallback)) b.list = fallback;
+    else b.text = fallback;
+    return [b];
+  };
   return [
     { no: '02', title: 'Search Visibility Stats', sub: 'Current organic traffic, keywords and whether Google has the site in its index.', sections: [
-      { num: '2.1', heading: 'Overall Site Stats', src: 'SEMrush', manual: true, research: true, shot: { label: 'SEMrush > Domain Overview > ' + f.domain, note: 'Highlight Authority Score, Organic Traffic and Keywords.' }, bullets: obsBullet('2.1', 'info') || [{ kind: 'info', title: 'Current Observation', badge: 'INFO', text: n.searchVisibilityObs || 'Organic traffic and keywords are the baseline we will grow from.' }] },
-      { num: '2.2', heading: 'Google Index Check', src: 'site:' + f.domain, manual: true, research: true, shot: { label: 'Google search: site:' + f.domain, note: 'Red box on "No results" if the site is not indexed.' }, bullets: obsBullet('2.2', f.noindex ? 'crit' : 'info') || [{ kind: f.noindex ? 'crit' : 'info', title: 'Current Observation', badge: f.noindex ? 'CRITICAL' : 'INFO', text: n.indexCheckObs || (f.noindex ? 'The site is blocked from indexing, so no pages appear in Google or Bing.' : 'Index coverage will be confirmed from Search Console.') }] },
+      { num: '2.1', heading: 'Overall Site Stats', src: 'SEMrush', manual: true, research: true, shot: { label: 'SEMrush > Domain Overview > ' + f.domain, note: 'Highlight Authority Score, Organic Traffic and Keywords.' }, bullets: obsBullet('2.1', 'info') || obs(n.searchVisibilityObs, 'info', ['Organic traffic, keyword rankings and domain authority will be confirmed from SEMrush.', 'These figures form the baseline we will grow from.']) },
+      { num: '2.2', heading: 'Google Index Check', src: 'site:' + f.domain, manual: true, research: true, shot: { label: 'Google search: site:' + f.domain, note: 'Red box on "No results" if the site is not indexed.' }, bullets: obsBullet('2.2', f.noindex ? 'crit' : 'info') || obs(n.indexCheckObs, f.noindex ? 'crit' : 'info', f.noindex ? ['The site carries a noindex tag, so no pages appear in Google or Bing.', 'Our team will remove it and request indexing as the first task.'] : ['The main pages (home, contact, products, about) are set up to be indexed.', 'The exact number of indexed pages will be confirmed from Google Search Console.']) },
     ] },
     { no: '03', title: 'Technical SEO Stats', sub: 'Can search engines find, crawl and index the website?', sections: [
       { num: '3.1', heading: 'Meta Robots Tag', src: 'Page Source', research: true, shot: { label: 'view-source of the homepage' }, bullets: (obsBullet('3.1', f.noindex ? 'crit' : 'good') || [{ kind: f.noindex ? 'crit' : 'good', title: 'Current Observation', badge: f.noindex ? 'CRITICAL' : 'GOOD', text: f.noindex ? `The homepage meta robots tag is set to ${f.robotsMeta.includes('nofollow') ? 'noindex, nofollow' : 'noindex'}. This tells Google and Bing not to show the site in search results.` : 'No noindex block found on the homepage.' }]), willdo: f.noindex ? { text: 'Remove the blocking setting from all pages, submit the website to Google and Bing, and request indexing. This will be our first task after approval.' } : null },
@@ -484,7 +510,7 @@ function buildChapters(f, n, meta, extra) {
           `H1 tags: ${f.h1Count}${f.h1Count !== 1 ? (f.h1Count === 0 ? ' — no H1 found' : ' — more than one H1') : ''}`,
           `Images: ${f.imageCount} on the homepage, ${f.imagesNoAlt} missing alt text`,
           `Schema types: ${f.hasSchema ? f.schemaTypes.join(', ') : 'none found'}`,
-          `NAP (name / address / phone): ${f.nap.present ? [f.nap.phone && 'phone', f.nap.email && 'email', f.nap.address && 'address'].filter(Boolean).join(', ') + ' found' : 'not clearly found on the site — add it for local trust'}`,
+          `NAP (name / address / phone): ${f.nap.present ? [f.nap.phone && ('phone ' + f.nap.phone), f.nap.email && ('email ' + f.nap.email), f.nap.address && ('address ' + f.nap.address)].filter(Boolean).join(' · ') : 'not clearly found on the site — add a clear name, address and phone for local trust'}`,
         ] }, ...(f.brand && f.brand.variants && f.brand.variants.length ? [{ kind: 'high', title: 'Brand name consistency', badge: 'HIGH', text: `The brand name is written inconsistently across the site: ${f.brand.variants.map((v) => v.map((x) => '"' + x + '"').join(' vs ')).join('; ')}. Pick one exact spelling and use it everywhere (header, footer, titles, schema) so search engines and AI tools treat it as one consistent brand.` }] : [])] },
       { num: '5.2', heading: 'Schema Markup', src: 'Rich Results Test', research: true, shot: { label: 'Google Rich Results Test > ' + f.domain, note: 'Red box on "No items detected".' }, bullets: obsBullet('5.2', f.hasSchema ? 'good' : 'high') || [{ kind: f.hasSchema ? 'good' : 'high', title: 'Current Observation', badge: f.hasSchema ? 'GOOD' : 'HIGH', text: f.hasSchema ? `Schema found: ${f.schemaTypes.join(', ')}.` : 'No schema markup found. Our team will add Organization, WebSite and relevant schema so Google and AI tools understand the brand.' }], willdo: f.hasSchema ? null : { text: 'Add the required schema markup across the website.' } },
       { num: '5.3', heading: 'Social Tags', src: 'Open Graph', research: true, shot: { label: 'Open Graph preview of ' + f.domain }, bullets: obsBullet('5.3', f.hasOg ? 'good' : 'high') || [{ kind: f.hasOg ? 'good' : 'high', title: 'Current Observation', badge: f.hasOg ? 'GOOD' : 'MEDIUM', text: f.hasOg ? 'Open Graph tags are present.' : 'No Open Graph tags found. When the link is shared on WhatsApp, Facebook or Discord, it will not show a proper preview. Our team will add social tags and a branded share image.' }] },
@@ -572,14 +598,15 @@ async function refreshUploads(data, crawl, meta, keys, screenshots) {
   // 1) per-section observations from uploaded screenshots
   for (const s of (screenshots || [])) {
     if (!s || !s.base64 || !s.mime || !SHOT_CONTEXT[s.key]) continue;
-    let text = '';
-    try { text = await analyzeShot(keys, s.key, s, { domain: f.domain || (data.report && data.report.domain), business: meta.businessName || (data.report && data.report.businessName) }); }
+    let bullets = null;
+    try { bullets = await analyzeShot(keys, s.key, s, { domain: f.domain || (data.report && data.report.domain), business: meta.businessName || (data.report && data.report.businessName) }); }
     catch (e) { console.error('[preSeoAnalyze] refresh shot failed', s.key, e.message); }
-    if (!text) continue;
+    if (!bullets || !bullets.length) continue;
     const sec = findSection(data, s.key);
     if (sec) {
-      const kind = /not indexed|no pages|blocked|missing|slow|0\/100|fail/i.test(text) ? 'high' : 'info';
-      sec.bullets = [{ kind, title: 'Current Observation', badge: kind === 'high' ? 'HIGH' : 'INFO', text }];
+      const joined = bullets.join(' ').toLowerCase();
+      const kind = /not indexed|no pages|blocked|missing|slow|0\/100|fail|low|urgent|critical/.test(joined) ? 'high' : 'info';
+      sec.bullets = [{ kind, title: 'Current Observation', badge: kind === 'high' ? 'HIGH' : 'INFO', list: bullets }];
     }
   }
   // 2) refresh AI Answers (11.1)

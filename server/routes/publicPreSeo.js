@@ -49,18 +49,23 @@ router.get('/pr/:slug', async (req, res) => {
 router.get('/pr/:slug/view', async (req, res) => {
   const r = await findShared(req.params.slug);
   if (!r) return res.status(404).send('Report not available.');
-  if (!r.htmlPath || !fs.existsSync(r.htmlPath)) return res.status(404).send('Report not ready yet.');
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
-  res.sendFile(path.resolve(r.htmlPath), { etag: false, lastModified: false });
+  // Prefer the durable ImageKit copy; local disk only as a fast path if present.
+  if (r.htmlPath && fs.existsSync(r.htmlPath)) return res.sendFile(path.resolve(r.htmlPath), { etag: false, lastModified: false });
+  if (r.htmlUrl) return res.redirect(302, r.htmlUrl);
+  return res.status(404).send('Report not ready yet.');
 });
 
 router.get('/pr/:slug/download', async (req, res) => {
   const r = await findShared(req.params.slug);
   if (!r) return res.status(404).send('Report not available.');
   await track(r, 'download', req);
-  if (!r.pdfPath || !fs.existsSync(r.pdfPath)) return res.status(404).send('The PDF is not ready yet.');
-  const safe = `${String(r.businessName || r.domain || 'report').replace(/[^a-z0-9]/gi, '-')}-Pre-SEO-Audit.pdf`;
-  res.download(r.pdfPath, safe);
+  if (r.pdfPath && fs.existsSync(r.pdfPath)) {
+    const safe = `${String(r.businessName || r.domain || 'report').replace(/[^a-z0-9]/gi, '-')}-Pre-SEO-Audit.pdf`;
+    return res.download(r.pdfPath, safe);
+  }
+  if (r.pdfUrl) return res.redirect(302, r.pdfUrl);
+  return res.status(404).send('The PDF is not ready yet.');
 });
 
 function esc(s) { return String(s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
