@@ -424,19 +424,33 @@ router.get('/:id/preseo', guard, requireHrAdmin, async (req, res, next) => {
 router.get('/preseo', guard, requireHrAdmin, async (req, res, next) => {
   try {
     const q = String((req.query && req.query.q) || '').trim().toLowerCase();
-    const rows = await PreSeoReport.findAll({ order: [['createdAt', 'DESC']], limit: 500 });
+    // IMPORTANT: sort ONLY over small scalar columns. Selecting the big JSON
+    // columns (crawl/data/shots, often megabytes each) and then ORDER BY on them
+    // overflows MySQL's sort buffer ("Out of sort memory"). So the sorted query
+    // excludes those blobs; we load the two we need (data, shots) in a second,
+    // UN-sorted query keyed by id.
+    const SCALAR = ['id', 'projectId', 'domain', 'businessName', 'status', 'progress', 'createdByName', 'createdAt', 'completedAt', 'publicEnabled', 'publicSlug'];
+    const rows = await PreSeoReport.findAll({ attributes: SCALAR, order: [['id', 'DESC']], limit: 500 });
+    const ids = rows.map((r) => r.id);
+    // Second pass: just id + the two JSON columns we summarise, no ORDER BY.
+    const blobMap = {};
+    if (ids.length) {
+      const blobs = await PreSeoReport.findAll({ attributes: ['id', 'data', 'shots'], where: { id: ids } });
+      for (const b of blobs) blobMap[b.id] = b;
+    }
     const items = rows.map((r) => {
-      const hs = r.data && r.data.report && r.data.report.healthScore;
-      const svc = (r.data && r.data.report && r.data.report.services) || [];
+      const b = blobMap[r.id] || {};
+      const hs = b.data && b.data.report && b.data.report.healthScore;
+      const svc = (b.data && b.data.report && b.data.report.services) || [];
       return {
         id: r.id, projectId: r.projectId, domain: r.domain, businessName: r.businessName,
         status: r.status, progress: r.progress, score: hs && typeof hs.value === 'number' ? hs.value : null,
         services: Array.isArray(svc) ? svc : [], agentName: r.createdByName || '',
         createdAt: r.createdAt, completedAt: r.completedAt,
         shared: !!r.publicEnabled, publicSlug: r.publicSlug || null,
-        shotCount: Object.values(r.shots || {}).filter((s) => s && s.source === 'upload').length,
+        shotCount: Object.values((b.shots) || {}).filter((s) => s && s.source === 'upload').length,
       };
-    }).filter((it) => !q || it.businessName.toLowerCase().includes(q) || (it.domain || '').toLowerCase().includes(q));
+    }).filter((it) => !q || (it.businessName || '').toLowerCase().includes(q) || (it.domain || '').toLowerCase().includes(q));
     res.json({ items });
   } catch (e) { next(e); }
 });
