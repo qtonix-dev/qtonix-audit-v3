@@ -651,16 +651,31 @@ function FlowTab({ id, steps, perms, onReload }) {
 }
 
 function ReportsTab({ id, data, onReload }) {
+  // All hooks first — never after a conditional return (Rules of Hooks).
   const [dels, setDels] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [runReport, setRunReport] = useState(false);
+  const [preseo, setPreseo] = useState(null); // this project's Pre-SEO reports
+  const [editRep, setEditRep] = useState(null);
+  const [viewRep, setViewRep] = useState(null);
   const cycle = (data.cycles || [])[0];
   const load = () => hrApi(`/projects/${id}/deliverables`).then((r) => setDels(r.deliverables || [])).catch(() => setDels([]));
-  useEffect(() => { load(); }, [id]);
+  const loadPreseo = () => hrApi(`/projects/${id}/preseo`).then((r) => setPreseo(r.reports || [])).catch(() => setPreseo([]));
+  useEffect(() => { load(); loadPreseo(); }, [id]);
+  // Keep polling while any report is still being built, so the list updates live.
+  useEffect(() => {
+    if (!preseo || !preseo.some((r) => ['capturing', 'analyzing', 'rendering', 'draft'].includes(r.status))) return;
+    const t = setInterval(loadPreseo, 3000);
+    return () => clearInterval(t);
+  }, [preseo]);
   const canApprove = data.myPerms && (data.myPerms.admin || data.myPerms.approveDeliverables);
   const canUpload = data.myPerms && (data.myPerms.admin || data.myPerms.uploadDeliverables);
   const approve = async (d, ok) => { try { await hrApi(`/projects/${id}/deliverables/${d.id}/approve`, { method: 'POST', body: JSON.stringify({ approved: ok }) }); load(); } catch (e) { toast(e.message); } };
+  const downloadPre = (rid) => { const t = localStorage.getItem('qtx_hr_token') || ''; window.open(`${API_BASE}/api/hr/projects/preseo/${rid}/download?token=${encodeURIComponent(t)}`, '_blank'); };
+  const delPre = async (r) => { if (!confirm(`Delete the report for ${r.businessName || r.domain}?`)) return; try { await hrApi(`/projects/preseo/${r.id}`, { method: 'DELETE' }); loadPreseo(); } catch (e) { toast(e.message); } };
+
+  if (viewRep) return <PreSeoReportView id={viewRep} onBack={() => { setViewRep(null); loadPreseo(); }} onEdit={(rep) => { setViewRep(null); setEditRep(rep); }} />;
   if (!dels) return <div className="text-slate-400 text-sm py-6 text-center">Loading…</div>;
-  const [runReport, setRunReport] = useState(false);
   return (
     <div>
       {/* Run Report — analysis reports (Pre-SEO Audit, more later). */}
@@ -668,7 +683,38 @@ function ReportsTab({ id, data, onReload }) {
         <div><b className="text-[13px] text-[#050A1F]">Run a report</b><div className="text-[11.5px] text-slate-400">Generate a branded analysis report for this client.</div></div>
         <button onClick={() => setRunReport(true)} className="text-[12.5px] font-extrabold text-white rounded-lg px-4 py-2" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>▶ Run Report</button>
       </div>
-      {runReport && <PreSeoReportWizard projectId={id} project={data.project} onClose={() => setRunReport(false)} onDone={onReload} />}
+      {runReport && <PreSeoReportWizard projectId={id} project={data.project} onClose={() => { setRunReport(false); loadPreseo(); }} onDone={loadPreseo} />}
+      {editRep && <PreSeoReportWizard projectId={id} project={data.project} editReport={editRep} onClose={() => { setEditRep(null); loadPreseo(); }} onDone={loadPreseo} />}
+
+      {/* Pre-SEO reports run for this project */}
+      {preseo && preseo.length > 0 && (
+        <div className="mb-4 rounded-xl border border-slate-200 overflow-hidden">
+          <div className="px-3 py-2 bg-slate-50 text-[11px] font-extrabold text-slate-500 uppercase">Pre-SEO Reports</div>
+          <table className="w-full text-[12.5px]">
+            <tbody>
+              {preseo.map((r) => (
+                <tr key={r.id} className="border-t border-slate-100">
+                  <td className="px-3 py-2.5"><div className="font-bold text-[#050A1F]">{r.businessName || r.domain}</div><div className="text-[11px] text-slate-400">{r.domain} · {new Date(r.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div></td>
+                  <td className="px-3 py-2.5">{psPill(r.status)}</td>
+                  <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                    <div className="inline-flex gap-1.5 justify-end">
+                      {r.status === 'complete' && <>
+                        <button onClick={() => setViewRep(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>
+                        <button onClick={() => downloadPre(r.id)} className="rounded-lg px-2.5 py-1 text-[11px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>PDF</button>
+                        <button onClick={() => setEditRep(r)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">Edit</button>
+                      </>}
+                      {r.status === 'ready' && <button onClick={() => setEditRep(r)} className="rounded-lg border border-orange-300 px-2.5 py-1 text-[11px] font-bold text-orange-600">Review & upload</button>}
+                      {['capturing', 'analyzing', 'rendering'].includes(r.status) && <span className="text-[11px] text-slate-400">working…</span>}
+                      {r.status === 'draft' && <button onClick={() => setEditRep(r)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">Resume</button>}
+                      <button onClick={() => delPre(r)} className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] text-slate-400 hover:text-red-500">🗑</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       {cycle && (
         <div className="rounded-xl bg-slate-50 p-3 mb-4">
           <div className="flex items-center gap-2 mb-2"><b className="text-[13px] text-[#050A1F]">Cycle {cycle.cycleNumber}</b><span className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{ background: cycle.invoicePaid ? '#F0FDF4' : '#FEF2F2', color: cycle.invoicePaid ? '#16a34a' : '#dc2626' }}>{cycle.invoicePaid ? '☑ Invoice paid' : '☐ Invoice unpaid'}</span></div>
@@ -770,7 +816,11 @@ function PreSeoReportWizard({ projectId, project, onClose, onDone, editReport })
     } catch (e) { toast(e.message); }
   };
 
-  const saveEdits = async (data) => { try { await hrApi(`/projects/preseo/${rid}`, { method: 'PUT', body: JSON.stringify({ data }) }); } catch (e) { toast(e.message); } };
+  const saveEdits = async (data) => {
+    if (!rid) { toast('No report to save yet.'); return false; }
+    try { await hrApi(`/projects/preseo/${rid}`, { method: 'PUT', body: JSON.stringify({ data }) }); toast('Saved ✓'); return true; }
+    catch (e) { toast('Save failed: ' + (e.message || 'error')); return false; }
+  };
 
   const generate = async () => {
     setGen(true);
