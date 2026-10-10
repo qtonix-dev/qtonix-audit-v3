@@ -1359,6 +1359,36 @@ async function initDb({ sync = true } = {}) {
     try { await sequelize.query("ALTER TABLE `tasks` MODIFY COLUMN `stage` VARCHAR(30) NOT NULL DEFAULT 'not_started'"); }
     catch (e) { console.error('[schema] widen tasks.stage failed (non-fatal):', e.message); }
   }
+
+  // Guarantee the Pre-SEO reports table exists and has every column, even if the
+  // bulk alter-sync bailed (e.g. a MySQL index-limit failure elsewhere). Without
+  // this the Reports list/create/view all 500 on an upgraded database. Create
+  // the table on its own, then add any newer columns individually (ignore
+  // "duplicate column" errors so this is safe to run every boot).
+  try {
+    await PreSeoReport.sync({ alter: false });
+  } catch (e) { console.error('[schema] PreSeoReport.sync failed (non-fatal):', e.message); }
+  if (dialect !== 'sqlite') {
+    const addCol = async (col, ddl) => {
+      try { await sequelize.query(`ALTER TABLE \`pre_seo_reports\` ADD COLUMN ${ddl}`); console.log(`[schema] added pre_seo_reports.${col}`); }
+      catch (e) { if (!/duplicate column|exists/i.test(e.message)) console.error(`[schema] add pre_seo_reports.${col} failed (non-fatal):`, e.message); }
+    };
+    await addCol('crawl', '`crawl` JSON NULL');
+    await addCol('shots', '`shots` JSON NULL');
+    await addCol('data', '`data` JSON NULL');
+    await addCol('pdfPath', '`pdfPath` VARCHAR(255) NULL');
+    await addCol('htmlPath', '`htmlPath` VARCHAR(255) NULL');
+    await addCol('pdfUrl', '`pdfUrl` VARCHAR(500) NULL');
+    await addCol('htmlUrl', '`htmlUrl` VARCHAR(500) NULL');
+    await addCol('pdfFileId', '`pdfFileId` VARCHAR(120) NULL');
+    await addCol('htmlFileId', '`htmlFileId` VARCHAR(120) NULL');
+    await addCol('publicSlug', '`publicSlug` VARCHAR(80) NULL');
+    await addCol('publicEnabled', '`publicEnabled` TINYINT(1) NULL DEFAULT 0');
+    await addCol('publicViews', '`publicViews` JSON NULL');
+    await addCol('completedAt', '`completedAt` DATETIME NULL');
+    await addCol('currentStep', '`currentStep` VARCHAR(120) NULL');
+    await addCol('progress', '`progress` INT NULL DEFAULT 0');
+  }
   let s = await Settings.findOne({ where: { singleton: 'settings' } });
   if (!s) s = await Settings.create({ singleton: 'settings', pricing: defaultPricing() });
   if (!s.pricing) {
@@ -2531,7 +2561,11 @@ const PreSeoReport = sequelize.define('PreSeoReport', {
   htmlFileId: { type: DataTypes.STRING(120), allowNull: true },
   completedAt: { type: DataTypes.DATE, allowNull: true },
   // Public sharing — same trackable /r/ link + logging pattern as Report.
-  publicSlug: { type: DataTypes.STRING(80), allowNull: true, unique: true },
+  // NOTE: not a DB-level unique index — uniqueness is enforced in the share
+  // route (slug collision check). A unique index here makes alter-sync
+  // re-create the index every boot and eventually trips MySQL's 64-key limit,
+  // which breaks the whole table's sync.
+  publicSlug: { type: DataTypes.STRING(80), allowNull: true },
   publicEnabled: { type: DataTypes.BOOLEAN, defaultValue: false },
   publicViews: { type: DataTypes.JSON, defaultValue: [] }, // [{at, ip, ua, type:'view'|'download'}]
 }, { tableName: 'pre_seo_reports', indexes: [

@@ -178,7 +178,8 @@ function PreSeoReports({ onBackTab }) {
   const [view, setView] = useState(null); // a report id being viewed
   const [edit, setEdit] = useState(null); // a report object being edited
   const [run, setRun] = useState(false);
-  const load = () => hrApi('/projects/preseo').then((r) => setItems(r.items || [])).catch(() => setItems([]));
+  const [err, setErr] = useState('');
+  const load = () => hrApi('/projects/preseo').then((r) => { setItems(r.items || []); setErr(''); }).catch((e) => { setItems([]); setErr(e.message || 'Could not load reports'); });
   useEffect(() => { load(); }, []);
 
   if (view) return <PreSeoReportView id={view} onBack={() => { setView(null); load(); }} onEdit={(rep) => { setView(null); setEdit(rep); }} />;
@@ -200,6 +201,7 @@ function PreSeoReports({ onBackTab }) {
         <button onClick={() => setRun(true)} className="text-white font-bold px-4 py-2.5 rounded-xl text-sm" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>▶ Run Report</button>
       </div>
 
+      {err && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 text-red-700 text-[12.5px] px-4 py-2.5">Couldn't load reports: {err}. If this persists, open <span className="font-mono">/api/hr/projects/preseo-diag</span> while logged in and share the result.</div>}
       <div className="bg-white border border-slate-200 rounded-2xl p-3 flex items-center gap-2.5 mb-4">
         <span className="text-[13px] font-bold text-[#050A1F]">Search</span>
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Business or domain…" className="border border-slate-200 rounded-lg px-3 py-1.5 text-[12.5px] text-slate-600 flex-1" />
@@ -224,6 +226,7 @@ function PreSeoReports({ onBackTab }) {
                       <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                         <span className="text-[11.5px] text-slate-400">{r.domain}</span>
                         {(r.services || []).slice(0, 3).map((s) => <span key={s} className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#FFF7ED', color: '#FF4500' }}>{s}</span>)}
+                        {r.shotCount > 0 && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#eff6ff', color: '#2563eb' }}>{r.shotCount} screenshot{r.shotCount > 1 ? 's' : ''}</span>}
                         {!r.shared && r.status === 'complete' && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#fffbeb', color: '#b45309' }}>⚠ Not shared</span>}
                       </div>
                     </div>

@@ -113,8 +113,9 @@ async function crawlHomepage(website) {
   $body.find('script, style, noscript, nav, header, footer, svg').remove();
   const bodyText = $body.text().replace(/\s+/g, ' ').trim();
 
-  // JSON-LD schema types
+  // JSON-LD schema types + collect every object node (used for NAP extraction).
   const schemaTypes = [];
+  const schemaNodes = [];
   $('script[type="application/ld+json"]').each((_, el) => {
     try {
       const parsed = JSON.parse($(el).contents().text());
@@ -122,11 +123,14 @@ async function crawlHomepage(website) {
         if (!node) return;
         if (Array.isArray(node)) return node.forEach(walk);
         if (typeof node === 'object') {
+          schemaNodes.push(node);
           if (node['@type']) {
             const t = node['@type'];
             Array.isArray(t) ? schemaTypes.push(...t) : schemaTypes.push(t);
           }
           if (node['@graph']) walk(node['@graph']);
+          // also walk nested objects (address, contactPoint, etc.)
+          for (const k of Object.keys(node)) { const v = node[k]; if (v && typeof v === 'object') walk(v); }
         }
       };
       walk(parsed);
@@ -215,17 +219,59 @@ async function crawlHomepage(website) {
   };
 
   // ---- NAP (name, address, phone) extraction -------------------------------
+  // Priority: (1) structured data (JSON-LD PostalAddress / telephone / email),
+  // (2) tel:/mailto: links in the page, (3) clean footer-only patterns. Returns
+  // ARRAYS so a site with multiple offices/numbers shows them all.
   const footerText = $('footer').text().replace(/\s+/g, ' ').trim();
-  const allText = bodyText + ' ' + footerText;
-  const phoneM = allText.match(/(\+?\d[\d\s().-]{7,}\d)/);
-  const emailM = html.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
-  const addressM = allText.match(/\d{1,5}\s+[\w\s,.'-]{6,60}?(street|st\.?|road|rd\.?|avenue|ave\.?|lane|ln\.?|drive|dr\.?|suite|ste\.?|floor|blvd|boulevard|way|court|ct\.?)\b[\w\s,.'-]{0,40}/i);
-  const nap = {
-    phone: phoneM ? phoneM[1].trim().replace(/\s{2,}/g, ' ') : null,
-    email: emailM && !/example\.|sentry|wixpress/i.test(emailM[0]) ? emailM[0] : null,
-    address: addressM ? addressM[0].trim().slice(0, 90) : null,
+  const uniq = (arr) => [...new Set(arr.filter(Boolean).map((s) => String(s).replace(/\s{2,}/g, ' ').trim()))];
+  const normPhone = (p) => { const d = String(p).replace(/[^\d+]/g, ''); return d.length >= 7 && d.length <= 16 ? String(p).replace(/\s{2,}/g, ' ').trim() : null; };
+
+  // Format a schema PostalAddress object into a single readable line.
+  const fmtAddr = (a) => {
+    if (!a) return null;
+    if (typeof a === 'string') return a.replace(/\s{2,}/g, ' ').trim();
+    if (typeof a !== 'object') return null;
+    const parts = [a.streetAddress, a.addressLocality, a.addressRegion, a.postalCode, a.addressCountry && (typeof a.addressCountry === 'object' ? a.addressCountry.name : a.addressCountry)];
+    const line = parts.filter(Boolean).join(', ').replace(/\s{2,}/g, ' ').trim();
+    return line || null;
   };
-  nap.present = !!(nap.phone || nap.email || nap.address);
+
+  const napName = [];
+  const napPhones = [];
+  const napEmails = [];
+  const napAddresses = [];
+
+  // (1) Structured data
+  for (const node of schemaNodes) {
+    const types = [].concat(node['@type'] || []);
+    const isOrg = types.some((t) => /organization|localbusiness|store|restaurant|corporation/i.test(String(t)));
+    if (isOrg && node.name && typeof node.name === 'string') napName.push(node.name.trim());
+    for (const key of ['telephone', 'phone']) if (node[key]) [].concat(node[key]).forEach((p) => { const v = normPhone(p); if (v) napPhones.push(v); });
+    if (node.email) [].concat(node.email).forEach((e) => napEmails.push(String(e).replace(/^mailto:/i, '').trim()));
+    if (node.address) [].concat(node.address).forEach((a) => { const v = fmtAddr(a); if (v) napAddresses.push(v); });
+    if (node.contactPoint) [].concat(node.contactPoint).forEach((cp) => { if (cp && cp.telephone) { const v = normPhone(cp.telephone); if (v) napPhones.push(v); } if (cp && cp.email) napEmails.push(String(cp.email).replace(/^mailto:/i, '').trim()); });
+  }
+
+  // (2) tel: / mailto: links (reliable, author-intended contact points)
+  $('a[href^="tel:"]').each((_, el) => { const v = normPhone(decodeURIComponent(($(el).attr('href') || '').replace(/^tel:/i, ''))); if (v) napPhones.push(v); });
+  $('a[href^="mailto:"]').each((_, el) => { const e = ($(el).attr('href') || '').replace(/^mailto:/i, '').split('?')[0].trim(); if (e) napEmails.push(e); });
+
+  // (3) Footer-only fallbacks (footer is where NAP usually lives; avoids pulling
+  // review text / marketing copy from the body).
+  if (!napPhones.length) { const m = footerText.match(/(\+?\d[\d\s().-]{7,}\d)/g) || []; m.forEach((p) => { const v = normPhone(p); if (v) napPhones.push(v); }); }
+  if (!napEmails.length) { const m = (footerText + ' ' + html).match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi) || []; m.forEach((e) => { if (!/example\.|sentry|wixpress|\.png|\.jpg/i.test(e)) napEmails.push(e); }); }
+  if (!napAddresses.length) {
+    const m = footerText.match(/\d{1,5}\s+[A-Za-z][\w .,'\-]{5,55}?(street|st\b|road|rd\b|avenue|ave\b|lane|ln\b|drive|dr\b|suite|ste\b|floor|blvd|boulevard|way|court|ct\b|unit)\b[\w .,'\-]{0,40}/i);
+    if (m) napAddresses.push(m[0].replace(/\s{2,}/g, ' ').trim());
+  }
+
+  const nap = {
+    name: uniq(napName)[0] || (title ? (title.split(/[|\-–—]/).pop() || '').trim() : null) || null,
+    phones: uniq(napPhones).slice(0, 5),
+    emails: uniq(napEmails).slice(0, 5),
+    addresses: uniq(napAddresses).slice(0, 5),
+  };
+  nap.present = !!(nap.name || nap.phones.length || nap.emails.length || nap.addresses.length);
 
   // ---- Brand-name consistency: compare the brand as written in different
   // places (title, logo alt, footer, og:site_name) and flag case/spelling

@@ -180,9 +180,10 @@ router.post('/', guard, requireHrAdmin, async (req, res, next) => {
 
 // ---- Project detail (admin only for now) -------------------------------------
 router.get('/:id', guard, requireHrAdmin, async (req, res, next) => {
-  // "preseo" is a reserved sub-path (the Pre-SEO report routes), not a project
-  // id — let those routes handle it instead of treating it as a project id.
-  if (req.params.id === 'preseo') return next();
+  // "preseo" and "preseo-diag" are reserved sub-paths (the Pre-SEO report
+  // routes), not project ids — let those routes handle them. A real project id
+  // is always numeric, so anything non-numeric falls through safely.
+  if (/^preseo/i.test(String(req.params.id))) return next();
   try {
     const act = await actor(req);
     const p = await Project.findByPk(req.params.id); if (!p) return res.status(404).json({ error: 'Project not found.' });
@@ -438,6 +439,20 @@ router.get('/preseo', guard, requireHrAdmin, async (req, res, next) => {
     }).filter((it) => !q || it.businessName.toLowerCase().includes(q) || (it.domain || '').toLowerCase().includes(q));
     res.json({ items });
   } catch (e) { next(e); }
+});
+
+// Diagnostics: confirm the table is reachable and show what's stored. Visit
+// /api/hr/projects/preseo-diag?token=... when the list looks empty.
+router.get('/preseo-diag', guard, requireHrAdmin, async (req, res) => {
+  const out = { ok: true, version: global.__APP_VERSION__ || null };
+  try {
+    out.count = await PreSeoReport.count();
+    const rows = await PreSeoReport.findAll({ order: [['createdAt', 'DESC']], limit: 5, attributes: ['id', 'domain', 'businessName', 'status', 'createdAt', 'pdfUrl', 'htmlUrl'] });
+    out.recent = rows.map((r) => ({ id: r.id, domain: r.domain, business: r.businessName, status: r.status, createdAt: r.createdAt, hasPdfUrl: !!r.pdfUrl, hasHtmlUrl: !!r.htmlUrl }));
+    // which columns does the live table actually have?
+    try { const qi = PreSeoReport.sequelize.getQueryInterface(); const desc = await qi.describeTable('pre_seo_reports'); out.columns = Object.keys(desc); } catch (e) { out.columnsError = e.message; }
+  } catch (e) { out.ok = false; out.error = e.message; }
+  res.json(out);
 });
 
 // Delete a Pre-SEO report (admin). Also removes its ImageKit files (PDF, HTML,

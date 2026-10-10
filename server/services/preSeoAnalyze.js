@@ -440,6 +440,41 @@ function aiAnswersSection(ai, f, meta) {
   };
 }
 
+// NAP (Name, Address, Phone) shown as a clean key/value table, with multiple
+// addresses / phones listed when the site has them.
+function napSection(f, meta) {
+  const nap = f.nap || {};
+  const addresses = Array.isArray(nap.addresses) ? nap.addresses : (nap.address ? [nap.address] : []);
+  const phones = Array.isArray(nap.phones) ? nap.phones : (nap.phone ? [nap.phone] : []);
+  const emails = Array.isArray(nap.emails) ? nap.emails : (nap.email ? [nap.email] : []);
+  const rows = [];
+  rows.push([{ text: 'Name', bold: true }, { text: nap.name || '—' }]);
+  if (addresses.length <= 1) {
+    rows.push([{ text: 'Address', bold: true }, { text: addresses[0] || '—' }]);
+  } else {
+    addresses.forEach((a, i) => rows.push([{ text: `Address ${i + 1}`, bold: true }, { text: a }]));
+  }
+  if (phones.length <= 1) {
+    rows.push([{ text: 'Phone number', bold: true }, { text: phones[0] || '—' }]);
+  } else {
+    phones.forEach((p, i) => rows.push([{ text: `Phone ${i + 1}`, bold: true }, { text: p }]));
+  }
+  if (emails.length) rows.push([{ text: emails.length > 1 ? 'Emails' : 'Email', bold: true }, { text: emails.join(', ') }]);
+
+  const missing = [!nap.name && 'business name', !addresses.length && 'address', !phones.length && 'phone number'].filter(Boolean);
+  const bullets = missing.length
+    ? [{ kind: 'high', title: 'Current Observation', badge: 'HIGH', list: [
+        `The following contact details are not clearly published on the site: ${missing.join(', ')}.`,
+        'Consistent name, address and phone (NAP) across the site and listings is an important local-SEO and trust signal — our team will add and standardise it.',
+      ] }]
+    : [{ kind: 'good', title: 'Current Observation', badge: 'GOOD', list: [
+        'Name, address and phone are published on the site.',
+        'We will make sure they match exactly across the site, Google Business Profile and all directory listings.',
+      ] }];
+
+  return { num: '5.2', heading: 'Business Contact (NAP)', src: 'Name · Address · Phone', table: { cols: [{ label: 'Field', width: '26%' }, { label: 'Found on site' }], rows }, bullets };
+}
+
 function buildChapters(f, n, meta, extra) {
   const yn = (ok) => (ok ? 'PASS' : 'FAIL');
   const perfM = f.perfMobile != null ? String(f.perfMobile) : '__';
@@ -510,11 +545,11 @@ function buildChapters(f, n, meta, extra) {
           `H1 tags: ${f.h1Count}${f.h1Count !== 1 ? (f.h1Count === 0 ? ' — no H1 found' : ' — more than one H1') : ''}`,
           `Images: ${f.imageCount} on the homepage, ${f.imagesNoAlt} missing alt text`,
           `Schema types: ${f.hasSchema ? f.schemaTypes.join(', ') : 'none found'}`,
-          `NAP (name / address / phone): ${f.nap.present ? [f.nap.phone && ('phone ' + f.nap.phone), f.nap.email && ('email ' + f.nap.email), f.nap.address && ('address ' + f.nap.address)].filter(Boolean).join(' · ') : 'not clearly found on the site — add a clear name, address and phone for local trust'}`,
         ] }, ...(f.brand && f.brand.variants && f.brand.variants.length ? [{ kind: 'high', title: 'Brand name consistency', badge: 'HIGH', text: `The brand name is written inconsistently across the site: ${f.brand.variants.map((v) => v.map((x) => '"' + x + '"').join(' vs ')).join('; ')}. Pick one exact spelling and use it everywhere (header, footer, titles, schema) so search engines and AI tools treat it as one consistent brand.` }] : [])] },
-      { num: '5.2', heading: 'Schema Markup', src: 'Rich Results Test', research: true, shot: { label: 'Google Rich Results Test > ' + f.domain, note: 'Red box on "No items detected".' }, bullets: obsBullet('5.2', f.hasSchema ? 'good' : 'high') || [{ kind: f.hasSchema ? 'good' : 'high', title: 'Current Observation', badge: f.hasSchema ? 'GOOD' : 'HIGH', text: f.hasSchema ? `Schema found: ${f.schemaTypes.join(', ')}.` : 'No schema markup found. Our team will add Organization, WebSite and relevant schema so Google and AI tools understand the brand.' }], willdo: f.hasSchema ? null : { text: 'Add the required schema markup across the website.' } },
-      { num: '5.3', heading: 'Social Tags', src: 'Open Graph', research: true, shot: { label: 'Open Graph preview of ' + f.domain }, bullets: obsBullet('5.3', f.hasOg ? 'good' : 'high') || [{ kind: f.hasOg ? 'good' : 'high', title: 'Current Observation', badge: f.hasOg ? 'GOOD' : 'MEDIUM', text: f.hasOg ? 'Open Graph tags are present.' : 'No Open Graph tags found. When the link is shared on WhatsApp, Facebook or Discord, it will not show a proper preview. Our team will add social tags and a branded share image.' }] },
-      { num: '5.4', heading: 'Images', src: 'Crawl', bullets: [{ kind: 'high', title: 'Current Observation', badge: 'HIGH', list: [`Images on homepage: ${f.imageCount}`, `Images missing alt text: ${f.imagesNoAlt}`] }], willdo: { text: 'Add descriptive alt text to all images and compress large files.' } },
+      napSection(f, meta),
+      { num: '5.3', heading: 'Schema Markup', src: 'Rich Results Test', research: true, shot: { label: 'Google Rich Results Test > ' + f.domain, note: 'Red box on "No items detected".' }, bullets: obsBullet('5.2', f.hasSchema ? 'good' : 'high') || [{ kind: f.hasSchema ? 'good' : 'high', title: 'Current Observation', badge: f.hasSchema ? 'GOOD' : 'HIGH', text: f.hasSchema ? `Schema found: ${f.schemaTypes.join(', ')}.` : 'No schema markup found. Our team will add Organization, WebSite and relevant schema so Google and AI tools understand the brand.' }], willdo: f.hasSchema ? null : { text: 'Add the required schema markup across the website.' } },
+      { num: '5.4', heading: 'Social Tags', src: 'Open Graph', research: true, shot: { label: 'Open Graph preview of ' + f.domain }, bullets: obsBullet('5.3', f.hasOg ? 'good' : 'high') || [{ kind: f.hasOg ? 'good' : 'high', title: 'Current Observation', badge: f.hasOg ? 'GOOD' : 'MEDIUM', text: f.hasOg ? 'Open Graph tags are present.' : 'No Open Graph tags found. When the link is shared on WhatsApp, Facebook or Discord, it will not show a proper preview. Our team will add social tags and a branded share image.' }] },
+      { num: '5.5', heading: 'Images', src: 'Crawl', bullets: [{ kind: 'high', title: 'Current Observation', badge: 'HIGH', list: [`Images on homepage: ${f.imageCount}`, `Images missing alt text: ${f.imagesNoAlt}`] }], willdo: { text: 'Add descriptive alt text to all images and compress large files.' } },
     ] },
     { no: '06', title: 'Content Quality & Trust', sub: 'Google rewards Experience, Expertise, Authority and Trust (E-E-A-T).', sections: [
       { num: '6.1', heading: 'Content Review', bullets: [{ kind: f.wordCount < 300 ? 'high' : 'good', title: 'Current Observation', badge: f.wordCount < 300 ? 'HIGH' : 'GOOD', list: [
