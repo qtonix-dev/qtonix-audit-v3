@@ -497,7 +497,10 @@ async function renderReport(payload) {
 async function renderPreSeoHtml(data, opts = {}) {
   const tplSrc = await fs.readFile(path.join(__dirname, '../templates/preSeoReport.hbs'), 'utf8');
   const tpl = Handlebars.compile(tplSrc);
-  return tpl({ ...data, forWeb: !!opts.forWeb, fontDir: 'file://' + FONT_DIR });
+  // forWeb → use web fonts (browser preview). showPlaceholders → render the
+  // orange "[ PASTE SCREENSHOT HERE ]" prompt (only in the pre-generate review
+  // preview; the FINAL report preview and the PDF never show it).
+  return tpl({ ...data, forWeb: !!opts.forWeb, showPlaceholders: !!opts.showPlaceholders, fontDir: 'file://' + FONT_DIR });
 }
 
 async function renderPreSeo(data, slugBase) {

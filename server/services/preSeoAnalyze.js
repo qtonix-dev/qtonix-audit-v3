@@ -44,9 +44,25 @@ function facts(crawl) {
     social: c.social || {}, socialNetworks: c.socialNetworks || [],
     perfMobile: psM.performance, perfDesktop: psD.performance,
     lcp: (psM.field && psM.field.lcp) || (psM.lab && psM.lab.lcp) || null,
-    cls: (psM.field && psM.field.cls) || (psM.lab && psM.lab.cls) || null,
+    cls: (psM.field && psM.field.cls) != null ? (psM.field && psM.field.cls) : ((psM.lab && psM.lab.cls) != null ? psM.lab.cls : null),
     inp: (psM.field && psM.field.inp) || null,
+    tbt: (psM.lab && psM.lab.tbt) || null,
+    fcp: (psM.lab && psM.lab.fcp) || null,
+    speedIndex: (psM.lab && psM.lab.speedIndex) || null,
+    cruxOverall: (psM.field && psM.field.overall) || null,
     sizeMb: sizeMb != null ? Number(sizeMb.toFixed(2)) : null,
+    // new crawl-derived fields
+    tracking: c.tracking || {},
+    nap: c.nap || { present: false },
+    brand: c.brand || { candidates: [], variants: [], primary: '' },
+    ogImage: c.ogImage || '',
+    htmlTextRatio: c.htmlTextRatio != null ? c.htmlTextRatio : null,
+    totalPages: (c.sitemap && c.sitemap.urlCount) || null,
+    internalLinks: c.internalLinks != null ? c.internalLinks : null,
+    bodyTextSample: c.bodyTextSample || '',
+    sitemapIsIndex: !!(c.sitemap && c.sitemap.isIndex),
+    childSitemaps: (c.sitemap && c.sitemap.childSitemaps) || 0,
+    sitemapUserNone: !!(c.sitemap && c.sitemap.userConfirmedNone),
   };
 }
 
@@ -57,18 +73,21 @@ function skeleton(f, meta) {
     report: {
       businessName: meta.businessName, shortName: meta.shortName || (meta.businessName || '').split(' ')[0],
       domain: f.domain, website: f.website, monthYear: meta.monthYear, auditDate: meta.auditDate,
-      pagesReviewed: meta.pagesReviewed || 1, preparedBy: meta.preparedBy, contactEmail: meta.contactEmail,
+      pagesReviewed: meta.totalPages || meta.pagesReviewed || 1,
+      pagesLabel: meta.totalPages ? 'pages found in the sitemap' : 'homepage reviewed in depth',
+      preparedBy: meta.preparedBy, preparedByRole: meta.preparedByRole || 'Project Manager', contactEmail: meta.contactEmail,
       contactPhone: meta.contactPhone, clientLogo: meta.clientLogo || '',
+      logoInitials: String(meta.businessName || f.domain || '?').replace(/[^A-Za-z0-9 ]/g, '').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase() || '?',
       services: Array.isArray(meta.services) ? meta.services : [],
       healthScore: { value: 0, deg: 0 }, // filled after Claude scores the bars
     },
     toc: TOC,
     ch1: {
       stats: [
-        { v: f.noindex ? 'blocked' : 'OK', l: f.noindex ? 'pages blocked from Google (noindex)' : 'indexing allowed' },
-        { v: '—', l: 'pages indexed in Google & Bing (manual check)' },
-        { v: f.hasMetaDesc ? 'yes' : 'no', l: 'homepage has a meta description' },
-        { v: '—', l: 'backlinks (from SEMrush upload)' },
+        { v: String(f.healthStatValue != null ? f.healthStatValue : '—'), l: 'overall health score (out of 100)' },
+        { v: f.totalPages ? String(f.totalPages) : (f.sitemapUserNone ? 'none' : '—'), l: f.totalPages ? 'pages found in the XML sitemap' : (f.sitemapUserNone ? 'no XML sitemap on the site' : 'pages in sitemap (not detected)') },
+        { v: f.perfMobile != null ? String(f.perfMobile) : '—', l: 'mobile page-speed score (PageSpeed)' },
+        { v: `${f.imagesNoAlt}/${f.imageCount}`, l: 'homepage images missing alt text' },
       ],
       summary: [
         { el: 'Website visible on Google / Bing', status: pf(!f.noindex), remark: f.noindex ? 'noindex tag found on homepage' : 'No noindex block' },
@@ -101,9 +120,8 @@ const TOC = [
   { n: '09', t: 'Competitor Overview', d: 'How the market looks in search' },
   { n: '10', t: 'Keyword Opportunity Map', d: 'The searches each page should target' },
   { n: '11', t: 'AI Search Visibility', d: 'ChatGPT, Perplexity, Gemini and Google AI Overviews' },
-  { n: '12', t: 'Tracking & Social Profiles', d: 'Analytics setup and social media presence' },
-  { n: '13', t: 'Baseline KPIs', d: 'The starting numbers we will report progress against' },
-  { n: '14', t: 'Action Plan & Approval', d: 'What we will do after approval, plus approval checklist' },
+  { n: '12', t: 'Tracking & Social Profiles', d: 'Analytics, tag manager, pixels and social media presence' },
+  { n: '13', t: 'Action Plan & Approval', d: 'What we need from you to get started' },
 ];
 
 // ---- Claude: write the narrative JSON -------------------------------------
@@ -125,6 +143,9 @@ Output ONLY valid JSON, no markdown, matching the requested schema exactly.`;
     homepageSizeMb: f.sizeMb, perfMobile: f.perfMobile, perfDesktop: f.perfDesktop,
     coreWebVitals: { lcp: f.lcp, inp: f.inp, cls: f.cls },
     socialProfilesFound: f.socialNetworks, blocksAiCrawlers: f.blocksAiCrawlers,
+    metaDescription: f.metaDesc, totalPages: f.totalPages, htmlTextRatio: f.htmlTextRatio,
+    tracking: f.tracking, brandVariants: (f.brand && f.brand.variants) || [],
+    homepageTextSample: (f.bodyTextSample || '').slice(0, 1500),
   };
 
   const schema = `{
@@ -137,6 +158,8 @@ Output ONLY valid JSON, no markdown, matching the requested schema exactly.`;
   "about": "1 short paragraph: this report shows where the site stands; Qtonix will do the fixes after approval",
   "searchVisibilityObs": "observation for the SEMrush/traffic section",
   "indexCheckObs": "observation for the Google index (site:) check",
+  "contentMatch": "1 short sentence: does the homepage body content actually match its title and meta description (topic alignment)?",
+  "contentQuality": "1 short sentence: spelling/grammar quality, and whether the copy reads like thin or auto-generated content or like genuine human-written content",
   "keywordTargets": [ {"page":"Home","keyword":"...","supporting":"...","difficulty":"GOOD|MODERATE|HARD|VERY HARD"} x6-8 ],
   "competitorOpenings": [ {"strength":"competitor strength","opening":"where this site can win"} x3-4 ],
   "weeks": [ {"label":"Week 1","sub":"Foundations","items":["..."]}, {"label":"Week 2","sub":"Research","items":["..."]}, {"label":"Week 3","sub":"Content","items":["..."]}, {"label":"Week 4","sub":"Grow & report","items":["..."]} ]
@@ -233,9 +256,9 @@ async function aiAnswers(keys, { facts: f, meta }) {
   let query = '';
   try {
     const q = await callAI({
-      anthropicKey: keys.anthropicKey, openaiKey: keys.openaiKey, maxTokens: 300,
-      system: 'You write one realistic buyer search query. Output ONLY valid JSON, no markdown.',
-      messages: [{ role: 'user', content: `Business: ${business}\nWebsite: ${f.domain}\nHomepage title: ${f.title}\nWhat they do (from schema/meta): ${(f.schemaTypes || []).join(', ')}\n\nWrite the single most important "best X" question a prospective customer would ask ChatGPT when ready to buy in this category. Do NOT mention "${business}" in it. Return JSON: {"query":"...","category":"short category label"}` }],
+      anthropicKey: keys.anthropicKey, openaiKey: keys.openaiKey, maxTokens: 400,
+      system: 'You are a market researcher. First understand exactly what product or service the business sells and who buys it, from the evidence given. Then write the single most natural "best X" question a real prospective CUSTOMER would type into ChatGPT when close to buying in that specific category. Output ONLY valid JSON, no markdown.',
+      messages: [{ role: 'user', content: `Business: ${business}\nWebsite: ${f.domain}\nHomepage title: ${f.title}\nMeta description: ${f.metaDesc || ''}\nSchema types: ${(f.schemaTypes || []).join(', ')}\nServices detected on site: ${(meta.services || []).join(', ') || 'infer from the text'}\nHomepage text (excerpt): ${(f.bodyTextSample || '').slice(0, 1200)}\n\nRules:\n- The question must match what this business ACTUALLY sells (e.g. if they sell a cooking-oil longevity device to restaurants, ask what a restaurant operator would ask, not a generic consumer question).\n- Do NOT mention "${business}" or the domain in the question.\n- Make it specific to the category and the buyer, the way a real person phrases it.\nReturn JSON: {"query":"...","category":"short category label","audience":"who asks this"}` }],
     });
     const parsed = parseJson(q);
     query = parsed.query || '';
@@ -314,6 +337,8 @@ async function buildReportData(crawl, meta, keys, screenshots) {
   const bars = (n.healthBars && n.healthBars.length === 10 ? n.healthBars : defaultBars(f)).map((x) => ({ n: x.n, s: clamp(x.s), pct: Math.max(3, clamp(x.s) * 10), color: barColor(clamp(x.s)) }));
   const total = bars.reduce((a, c) => a + c.s, 0); // out of 100
   base.report.healthScore = { value: total, deg: Math.round(total / 100 * 360) };
+  // Now that the score exists, put it into the first overview stat tile.
+  if (base.ch1.stats && base.ch1.stats[0]) base.ch1.stats[0].v = String(total);
 
   base.ch1.homepageNotes = n.homepageNotes || ['The homepage was reviewed as part of this audit.'];
   base.ch1.healthBars = bars;
@@ -326,6 +351,32 @@ async function buildReportData(crawl, meta, keys, screenshots) {
   base.chapters = buildChapters(f, n, meta, { shotObs, ai });
   delete base._facts;
   return base;
+}
+
+// "What We Need From You" adapts to how the client handles access. Some share
+// credentials directly; some prefer we coordinate with their existing developer.
+function accessCols(mode) {
+  const approval = ['Approval of the items in this report', 'Approval of new page content before it goes live'];
+  if (mode === 'coordinate') {
+    return { leftTitle: 'Approval', left: approval, rightTitle: 'Access (via your developer)', right: [
+      'An introduction to your website developer or agency so we can coordinate the changes',
+      'Read access to Google Analytics / Search Console (or a report export)',
+      'A point of contact for scheduling the technical fixes',
+    ] };
+  }
+  if (mode === 'share') {
+    return { leftTitle: 'Approval', left: approval, rightTitle: 'Access', right: [
+      'Website admin / CMS login',
+      'Hosting / DNS access (for technical fixes)',
+      'Any existing Google Analytics, Search Console or Tag Manager accounts',
+    ] };
+  }
+  // unsure → offer both paths so it fits any client.
+  return { leftTitle: 'Approval', left: approval, rightTitle: 'Access (whichever suits you)', right: [
+    'Either share website admin / hosting access directly,',
+    'or introduce us to your developer and we will coordinate the changes with them.',
+    'Plus access to any existing Analytics / Search Console accounts, or a report export.',
+  ] };
 }
 
 function clamp(s) { s = Math.round(Number(s)); return Number.isFinite(s) ? Math.max(0, Math.min(10, s)) : 0; }
@@ -398,7 +449,7 @@ function buildChapters(f, n, meta, extra) {
     { no: '03', title: 'Technical SEO Stats', sub: 'Can search engines find, crawl and index the website?', sections: [
       { num: '3.1', heading: 'Meta Robots Tag', src: 'Page Source', research: true, shot: { label: 'view-source of the homepage' }, bullets: (obsBullet('3.1', f.noindex ? 'crit' : 'good') || [{ kind: f.noindex ? 'crit' : 'good', title: 'Current Observation', badge: f.noindex ? 'CRITICAL' : 'GOOD', text: f.noindex ? `The homepage meta robots tag is set to ${f.robotsMeta.includes('nofollow') ? 'noindex, nofollow' : 'noindex'}. This tells Google and Bing not to show the site in search results.` : 'No noindex block found on the homepage.' }]), willdo: f.noindex ? { text: 'Remove the blocking setting from all pages, submit the website to Google and Bing, and request indexing. This will be our first task after approval.' } : null },
       { num: '3.2', heading: 'Robots.txt', src: f.domain + '/robots.txt', research: true, shot: { label: f.domain + '/robots.txt' }, bullets: obsBullet('3.2', 'info') || [{ kind: 'info', title: 'Current Observation', badge: 'MEDIUM', text: `${f.hasRobots ? 'A robots.txt file is present.' : 'No robots.txt found.'} ${f.blocksAiCrawlers ? 'It blocks some AI crawlers.' : 'AI crawlers (GPTBot, PerplexityBot, ClaudeBot, Google-Extended) are not blocked, which is good.'} ${f.hasSitemap ? '' : 'The Sitemap line is missing and will be added by our team.'}` }] },
-      { num: '3.3', heading: 'XML Sitemap', src: 'Browser', research: true, shot: { label: f.domain + '/sitemap_index.xml and /sitemap.xml' }, bullets: obsBullet('3.3', f.hasSitemap ? 'good' : 'crit') || [{ kind: f.hasSitemap ? 'good' : 'crit', title: 'Current Observation', badge: f.hasSitemap ? 'GOOD' : 'CRITICAL', text: f.hasSitemap ? 'An XML sitemap is present.' : 'The website does not have an XML sitemap. Our team will create it and submit it to Google and Bing.' }] },
+      { num: '3.3', heading: 'XML Sitemap', src: 'Browser', research: true, shot: { label: f.domain + '/sitemap_index.xml' }, bullets: obsBullet('3.3', f.hasSitemap ? 'good' : 'crit') || [{ kind: f.hasSitemap ? 'good' : 'crit', title: 'Current Observation', badge: f.hasSitemap ? 'GOOD' : 'CRITICAL', text: f.hasSitemap ? `An XML sitemap is present and lists ${f.totalPages || 'several'} page${f.totalPages === 1 ? '' : 's'}${f.sitemapIsIndex ? `, organised as a sitemap index across ${f.childSitemaps} child sitemaps (each child groups a set of pages — they are not pages themselves).` : '.'} This gives search engines a clear map of the site.` : (f.sitemapUserNone ? 'You confirmed the site has no XML sitemap. Our team will create one and submit it to Google and Bing.' : 'No XML sitemap was found at the usual locations. Our team will create one and submit it to Google and Bing.') }] },
       { num: '3.4', heading: 'Response Codes & Links', src: 'Screaming Frog', manual: true, shot: { label: 'Screaming Frog > Response Codes > All', note: 'Red box on 4xx and 3xx rows.' }, bullets: obsBullet('3.4', 'info') },
       { num: '3.5', heading: 'Technical Checklist', table: { cols: [{ label: 'Check', width: '34%' }, { label: 'Status', align: 'c', width: '14%' }, { label: 'Finding' }], rows: [
         [{ text: 'Meta robots tag', bold: true }, { badge: yn(!f.noindex), align: 'c' }, { text: f.noindex ? 'noindex found' : 'Indexable' }],
@@ -414,31 +465,50 @@ function buildChapters(f, n, meta, extra) {
       sections: [
         { num: '4.1', heading: 'Page Performance: Mobile', src: 'Lighthouse', manual: true, research: f.perfMobile != null, shot: { label: 'PageSpeed Insights > ' + f.domain + ' > Mobile', note: 'Red box on Performance score, LCP and Speed Index.' }, bullets: obsBullet('4.1', f.perfMobile != null && f.perfMobile < 50 ? 'crit' : 'high') || (f.perfMobile != null ? [{ kind: f.perfMobile < 50 ? 'crit' : f.perfMobile < 90 ? 'high' : 'good', title: 'Current Observation', badge: f.perfMobile < 50 ? 'CRITICAL' : f.perfMobile < 90 ? 'HIGH' : 'GOOD', text: `The mobile performance score is ${f.perfMobile}/100${f.cls != null ? ` and the layout shift (CLS) score is ${f.cls}` : ''}. ${f.perfMobile < 90 ? 'Google uses these as ranking signals, so improving them is a priority. Our team will work on image sizes, render-blocking files and server response time.' : 'This is in good shape.'}` }] : null) },
         { num: '4.2', heading: 'Page Performance: Desktop', src: 'Lighthouse', manual: true, research: f.perfDesktop != null, shot: { label: 'PageSpeed Insights > ' + f.domain + ' > Desktop' }, bullets: obsBullet('4.2', f.perfDesktop != null && f.perfDesktop < 50 ? 'crit' : 'high') || (f.perfDesktop != null ? [{ kind: f.perfDesktop < 50 ? 'crit' : f.perfDesktop < 90 ? 'high' : 'good', title: 'Current Observation', badge: f.perfDesktop < 50 ? 'CRITICAL' : f.perfDesktop < 90 ? 'HIGH' : 'GOOD', text: `The desktop performance score is ${f.perfDesktop}/100. ${f.perfDesktop < 90 ? 'Desktop is usually faster than mobile; the same speed fixes will lift both.' : 'This is in good shape.'}` }] : null) },
-        { num: '4.3', heading: 'Core Web Vitals', src: "Google's speed signals", table: { cols: [{ label: 'Metric' }, { label: 'What it measures' }, { label: 'Good target' }, { label: 'This site' }], rows: [
-          [{ text: 'LCP', bold: true }, { text: 'How quickly the main content appears' }, { text: '2.5 s or less' }, { text: f.lcp ? (f.lcp / 1000).toFixed(1) + ' s' : '__ s' }],
-          [{ text: 'INP', bold: true }, { text: 'How quickly the page reacts to a tap' }, { text: '200 ms or less' }, { text: f.inp ? f.inp + ' ms' : '__ ms' }],
-          [{ text: 'CLS', bold: true }, { text: 'Whether the layout jumps while loading' }, { text: '0.1 or less' }, { text: f.cls != null ? String(f.cls) : '__' }],
-          [{ text: 'Performance Score', bold: true }, { text: 'Lighthouse lab test, 0 to 100' }, { text: '90+' }, { text: `M: ${perfM} / D: ${perfD}` }],
+        { num: '4.3', heading: 'Core Web Vitals', src: "Google PageSpeed Insights", table: { cols: [{ label: 'Metric' }, { label: 'What it measures' }, { label: 'Good target' }, { label: 'This site' }], rows: [
+          [{ text: 'LCP', bold: true }, { text: 'How quickly the main content appears' }, { text: '2.5 s or less' }, { text: f.lcp ? (f.lcp / 1000).toFixed(1) + ' s' : 'No data' }],
+          [{ text: 'INP', bold: true }, { text: 'How quickly the page reacts to a tap' }, { text: '200 ms or less' }, { text: f.inp ? f.inp + ' ms' : (f.tbt ? `~${Math.round(f.tbt)} ms TBT` : 'Low traffic — no field data') }],
+          [{ text: 'CLS', bold: true }, { text: 'Whether the layout jumps while loading' }, { text: '0.1 or less' }, { text: f.cls != null ? Number(f.cls).toFixed(3) : 'No data' }],
+          [{ text: 'TBT', bold: true }, { text: 'Total time the page is blocked from input' }, { text: '200 ms or less' }, { text: f.tbt != null ? `${Math.round(f.tbt)} ms` : 'No data' }],
+          [{ text: 'Speed Index', bold: true }, { text: 'How fast content is visually populated' }, { text: '3.4 s or less' }, { text: f.speedIndex != null ? (f.speedIndex / 1000).toFixed(1) + ' s' : 'No data' }],
+          [{ text: 'Performance Score', bold: true }, { text: 'Lighthouse lab test, 0 to 100' }, { text: '90+' }, { text: `Mobile ${perfM} / Desktop ${perfD}` }],
         ] } },
-        { num: '4.4', heading: 'Mobile Usability', src: 'Responsiveness', shot: { label: 'Homepage on mobile, tablet and desktop' }, bullets: [{ kind: f.mobile ? 'good' : 'high', title: 'Current Observation', badge: f.mobile ? 'GOOD' : 'HIGH', text: f.mobile ? 'The website is mobile friendly and the layout adjusts well. We will re-test on real devices after the speed work.' : 'No mobile viewport meta found — the site may not display correctly on phones.' }] },
+        { num: '4.4', heading: 'Mobile Usability', src: 'Responsiveness', shot: { label: 'Homepage on mobile, tablet and desktop', device: true }, bullets: [{ kind: f.mobile ? 'good' : 'high', title: 'Current Observation', badge: f.mobile ? 'GOOD' : 'HIGH', text: f.mobile ? 'The website is mobile friendly and the layout adjusts well. We will re-test on real devices after the speed work.' : 'No mobile viewport meta found — the site may not display correctly on phones.' }] },
       ] },
     { no: '05', title: 'On Page SEO Stats', sub: 'Titles, descriptions, headings, images, schema and social tags.', sections: [
-      { num: '5.1', heading: 'Meta Title & Meta Description', src: 'Homepage', bullets: [{ kind: 'high', title: 'Current Observation', badge: 'HIGH', list: [`Title: ${f.title ? '"' + f.title + '" (' + f.titleLength + ' chars)' : 'missing'}`, `Meta description: ${f.hasMetaDesc ? 'present' : 'missing'}`, `H1 tags: ${f.h1Count}`, `Homepage word count: ${f.wordCount}`] }] },
+      { num: '5.1', heading: 'Meta Title & Meta Description', src: 'Homepage',
+        serp: { url: f.domain, title: f.title || `${meta.businessName}`, desc: f.metaDesc || 'No meta description set — Google will auto-generate a snippet from page text, which is usually weaker.' },
+        bullets: [{ kind: 'high', title: 'Current Observation', badge: 'HIGH', list: [
+          `Title: ${f.title ? '"' + f.title + '" (' + f.titleLength + ' chars)' : 'missing'}${f.titleLength > 60 ? ' — a little long, may be truncated in Google' : f.titleLength && f.titleLength < 30 ? ' — short, room to add keywords' : ''}`,
+          `Meta description: ${f.hasMetaDesc ? 'present (' + (f.metaDesc ? f.metaDesc.length : 0) + ' chars)' : 'missing'}`,
+          `H1 tags: ${f.h1Count}${f.h1Count !== 1 ? (f.h1Count === 0 ? ' — no H1 found' : ' — more than one H1') : ''}`,
+          `Images: ${f.imageCount} on the homepage, ${f.imagesNoAlt} missing alt text`,
+          `Schema types: ${f.hasSchema ? f.schemaTypes.join(', ') : 'none found'}`,
+          `NAP (name / address / phone): ${f.nap.present ? [f.nap.phone && 'phone', f.nap.email && 'email', f.nap.address && 'address'].filter(Boolean).join(', ') + ' found' : 'not clearly found on the site — add it for local trust'}`,
+        ] }, ...(f.brand && f.brand.variants && f.brand.variants.length ? [{ kind: 'high', title: 'Brand name consistency', badge: 'HIGH', text: `The brand name is written inconsistently across the site: ${f.brand.variants.map((v) => v.map((x) => '"' + x + '"').join(' vs ')).join('; ')}. Pick one exact spelling and use it everywhere (header, footer, titles, schema) so search engines and AI tools treat it as one consistent brand.` }] : [])] },
       { num: '5.2', heading: 'Schema Markup', src: 'Rich Results Test', research: true, shot: { label: 'Google Rich Results Test > ' + f.domain, note: 'Red box on "No items detected".' }, bullets: obsBullet('5.2', f.hasSchema ? 'good' : 'high') || [{ kind: f.hasSchema ? 'good' : 'high', title: 'Current Observation', badge: f.hasSchema ? 'GOOD' : 'HIGH', text: f.hasSchema ? `Schema found: ${f.schemaTypes.join(', ')}.` : 'No schema markup found. Our team will add Organization, WebSite and relevant schema so Google and AI tools understand the brand.' }], willdo: f.hasSchema ? null : { text: 'Add the required schema markup across the website.' } },
       { num: '5.3', heading: 'Social Tags', src: 'Open Graph', research: true, shot: { label: 'Open Graph preview of ' + f.domain }, bullets: obsBullet('5.3', f.hasOg ? 'good' : 'high') || [{ kind: f.hasOg ? 'good' : 'high', title: 'Current Observation', badge: f.hasOg ? 'GOOD' : 'MEDIUM', text: f.hasOg ? 'Open Graph tags are present.' : 'No Open Graph tags found. When the link is shared on WhatsApp, Facebook or Discord, it will not show a proper preview. Our team will add social tags and a branded share image.' }] },
       { num: '5.4', heading: 'Images', src: 'Crawl', bullets: [{ kind: 'high', title: 'Current Observation', badge: 'HIGH', list: [`Images on homepage: ${f.imageCount}`, `Images missing alt text: ${f.imagesNoAlt}`] }], willdo: { text: 'Add descriptive alt text to all images and compress large files.' } },
     ] },
     { no: '06', title: 'Content Quality & Trust', sub: 'Google rewards Experience, Expertise, Authority and Trust (E-E-A-T).', sections: [
-      { num: '6.1', heading: 'Content Review', bullets: [{ kind: f.wordCount < 300 ? 'high' : 'good', title: 'Current Observation', badge: f.wordCount < 300 ? 'HIGH' : 'GOOD', text: `The homepage has about ${f.wordCount} words. ${f.wordCount < 300 ? 'This is thin for a page meant to rank; more original, keyword-focused content is needed.' : 'This is a reasonable amount of content.'}` }], willdo: { text: 'Our content team will write SEO-friendly content for every main page (300+ words each) and remove any placeholder or dummy text.' } },
+      { num: '6.1', heading: 'Content Review', bullets: [{ kind: f.wordCount < 300 ? 'high' : 'good', title: 'Current Observation', badge: f.wordCount < 300 ? 'HIGH' : 'GOOD', list: [
+        `Homepage word count: ${f.wordCount}${f.wordCount < 300 ? ' — thin for a page meant to rank' : f.wordCount < 600 ? ' — a reasonable start, more depth would help' : ' — a healthy amount of content'}`,
+        `HTML-to-text ratio: ${f.htmlTextRatio != null ? (f.htmlTextRatio * 100).toFixed(1) + '%' : 'n/a'}${f.htmlTextRatio != null && f.htmlTextRatio < 0.08 ? ' — low, the page is heavy on code vs. readable text' : ''}`,
+        `Content vs. title/description: ${n.contentMatch || 'checked against the homepage title and meta description'}`,
+        `Writing quality: ${n.contentQuality || 'reviewed for spelling, clarity and signs of thin or auto-generated copy'}`,
+      ] }, ...(f.brand && f.brand.variants && f.brand.variants.length ? [{ kind: 'high', title: 'Brand consistency (E-E-A-T)', badge: 'HIGH', text: `The brand name appears in more than one form (${f.brand.variants.map((v) => v.join(' / ')).join('; ')}). Inconsistent naming weakens trust signals; we will standardise it across every page.` }] : [])], willdo: { text: 'Our content team will write SEO-friendly content for every main page (300+ words each), fix any spelling or clarity issues, align copy with the target keywords, and remove placeholder or thin text.' } },
     ] },
     { no: '07', title: 'Site Architecture', sub: 'Menu, URL structure and how pages link to each other.', sections: [
-      { num: '7.1', heading: 'Architecture Analysis', table: { cols: [{ label: 'Element' }, { label: f.domain, align: 'c', width: '24%' }], rows: [
-        [{ text: 'HTTPS enabled' }, { badge: yn(f.https), align: 'c' }],
-        [{ text: 'XML sitemap + optimized robots.txt' }, { badge: yn(f.hasSitemap && f.hasRobots), align: 'c' }],
-        [{ text: 'Schema markup present' }, { badge: yn(f.hasSchema), align: 'c' }],
-        [{ text: 'Social sharing (Open Graph) tags' }, { badge: yn(f.hasOg), align: 'c' }],
-        [{ text: 'Mobile viewport set' }, { badge: yn(f.mobile), align: 'c' }],
+      // Architecture-specific findings only — the PASS/FAIL technical items
+      // already live in 1.5 Quick Summary and 3.5 Technical Checklist, so they
+      // are not repeated here.
+      { num: '7.1', heading: 'Architecture Analysis', table: { cols: [{ label: 'Element' }, { label: 'Finding' }], rows: [
+        [{ text: 'Pages in the sitemap', bold: true }, { text: f.totalPages ? `${f.totalPages} URLs${f.sitemapIsIndex ? ` across ${f.childSitemaps} child sitemaps` : ''}` : (f.sitemapUserNone ? 'No sitemap — recommend creating one' : 'Not detected') }],
+        [{ text: 'Internal links on homepage', bold: true }, { text: `${f.internalLinks != null ? f.internalLinks : '—'}${f.internalLinks != null && f.internalLinks < 10 ? ' (thin internal linking)' : ''}` }],
+        [{ text: 'Canonical tags', bold: true }, { text: f.canonical ? 'Present — helps avoid duplicate content' : 'Missing — duplicate-content risk' }],
+        [{ text: 'URL style', bold: true }, { text: n.urlStyle || 'Readable, keyword-friendly URLs are recommended across all pages' }],
       ] } },
+      { num: '7.2', heading: 'Structure Notes', bullets: [{ kind: 'info', title: 'Current Observation', badge: 'INFO', text: n.architectureObs || `The site's main sections are reachable from the top navigation. As new content pages are added, our team will plan a clear category structure and internal-linking plan so both visitors and search engines can find every page easily.` }] },
     ] },
     { no: '08', title: 'Off Page Stats', sub: 'Who links to the website today, and how strong those links are.', sections: [
       { num: '8.1', heading: 'Backlink Status', src: 'SEMrush', manual: true, shot: { label: 'SEMrush backlink table for ' + f.domain }, bullets: obsBullet('8.1', 'high') },
@@ -462,21 +532,18 @@ function buildChapters(f, n, meta, extra) {
       ] }, willdo: { text: 'Get the website indexed, add answer-friendly FAQ content and schema, and work on listings and article mentions so AI tools start recommending the brand.' } },
     ] },
     { no: '12', title: 'Tracking & Social Profiles', sub: 'Analytics setup and social media presence.', sections: [
-      { num: '12.1', heading: 'Social Profiles', table: { cols: [{ label: 'Profile' }, { label: 'Status', align: 'c', width: '14%' }, { label: 'Link' }], rows: ['facebook', 'instagram', 'twitter', 'youtube', 'tiktok', 'linkedin'].map((k) => [{ text: k.charAt(0).toUpperCase() + k.slice(1), bold: true }, { badge: yn(!!f.social[k]), align: 'c' }, { text: f.social[k] || '—' }]) }, bullets: [{ kind: 'high', title: 'Current Observation', badge: 'HIGH', text: 'Analytics setup (GA4, Search Console, Bing, Tag Manager) needs to be confirmed and installed. Social profiles are shown above.' }], willdo: { text: 'Set up GA4, Search Console, Bing Webmaster Tools and Tag Manager with conversion tracking.' } },
+      { num: '12.1', heading: 'Tracking & Analytics', src: 'Page source', table: { cols: [{ label: 'Tool' }, { label: 'Status', align: 'c', width: '16%' }, { label: 'What it does' }], rows: [
+        [{ text: 'Google Analytics 4', bold: true }, { badge: yn(!!f.tracking.ga4), align: 'c' }, { text: 'Measures visitors, traffic sources and conversions' }],
+        [{ text: 'Google Tag Manager', bold: true }, { badge: yn(!!f.tracking.gtm), align: 'c' }, { text: 'Manages all tracking tags in one place' }],
+        [{ text: 'Google Search Console', bold: true }, { badge: f.tracking.gsc ? 'PASS' : 'UNKNOWN', align: 'c' }, { text: 'Shows how the site performs in Google search (verify from the account)' }],
+        [{ text: 'Bing Webmaster Tools', bold: true }, { badge: f.tracking.bing ? 'PASS' : 'UNKNOWN', align: 'c' }, { text: 'The Bing equivalent of Search Console' }],
+        [{ text: 'Meta (Facebook) Pixel', bold: true }, { badge: yn(!!f.tracking.metaPixel), align: 'c' }, { text: 'Tracks visitors for Facebook/Instagram ads' }],
+        [{ text: 'Other tools', bold: true }, { badge: (f.tracking.hotjar || f.tracking.clarity || f.tracking.linkedinInsight || f.tracking.tiktokPixel || f.tracking.ua) ? 'PASS' : 'NONE', align: 'c' }, { text: [f.tracking.ua && 'Universal Analytics (old)', f.tracking.hotjar && 'Hotjar', f.tracking.clarity && 'Clarity', f.tracking.linkedinInsight && 'LinkedIn Insight', f.tracking.tiktokPixel && 'TikTok Pixel'].filter(Boolean).join(', ') || 'None detected' }],
+      ] }, bullets: [{ kind: (f.tracking.ga4 || f.tracking.gtm) ? 'info' : 'high', title: 'Current Observation', badge: (f.tracking.ga4 || f.tracking.gtm) ? 'INFO' : 'HIGH', text: (f.tracking.ga4 || f.tracking.gtm) ? `Some tracking is already installed${f.tracking.ga4 ? ' (GA4)' : ''}${f.tracking.gtm ? ', via Google Tag Manager' : ''}. Our team will confirm it is recording correctly and fill any gaps. Search Console access can only be confirmed from the account itself.` : 'No analytics or tag-manager code was detected in the page source. Without tracking there is no way to measure what is working, so this is a priority to set up.' }], willdo: { text: 'Confirm or set up Google Analytics 4, Google Tag Manager, Search Console and Bing Webmaster Tools, with conversion tracking for the actions that matter to the business.' } },
+      { num: '12.2', heading: 'Social Profiles', table: { cols: [{ label: 'Profile' }, { label: 'Status', align: 'c', width: '14%' }, { label: 'Link' }], rows: ['facebook', 'instagram', 'twitter', 'youtube', 'tiktok', 'linkedin'].map((k) => [{ text: k.charAt(0).toUpperCase() + k.slice(1), bold: true }, { badge: yn(!!f.social[k]), align: 'c' }, { text: f.social[k] || '—' }]) } },
     ] },
-    { no: '13', title: 'Baseline KPIs', sub: `The starting numbers on ${meta.auditDate}. Every monthly report will update this table.`, sections: [
-      { num: '13.1', heading: 'KPI Tracker', table: { cols: [{ label: 'KPI' }, { label: 'Baseline' }, { label: 'Month 1' }, { label: 'Month 3' }, { label: 'Month 6' }], rows: [
-        [{ text: 'Pages indexed in Google', bold: true }, { text: f.noindex ? '0' : '—' }, { text: '' }, { text: '' }, { text: '' }],
-        [{ text: 'Homepage has meta description', bold: true }, { text: f.hasMetaDesc ? 'yes' : 'no' }, { text: '' }, { text: '' }, { text: '' }],
-        [{ text: 'Schema markup', bold: true }, { text: f.hasSchema ? 'yes' : 'no' }, { text: '' }, { text: '' }, { text: '' }],
-        [{ text: 'Homepage size', bold: true }, { text: f.sizeMb != null ? f.sizeMb + ' MB' : '—' }, { text: '' }, { text: '' }, { text: '' }],
-        [{ text: 'PageSpeed (mobile)', bold: true }, { text: perfM }, { text: '' }, { text: '' }, { text: '' }],
-        [{ text: 'Social profiles linked', bold: true }, { text: String((f.socialNetworks || []).length) }, { text: '' }, { text: '' }, { text: '' }],
-      ] } },
-    ] },
-    { no: '14', title: 'Action Plan & Approval', sub: 'What our team will do after your approval, and when.', sections: [
-      { num: '14.1', heading: 'Week by Week Plan', weeks: [{ label: 'Day 0', sub: 'Approval', who: meta.shortName || 'Client', items: ['Review this report and approve the plan', 'Share website admin and Google account access'] }, ...(n.weeks || []).map((w) => ({ label: w.label, sub: w.sub, who: 'Qtonix', items: w.items }))] },
-      { num: '14.2', heading: 'What We Need From You', cols: { leftTitle: 'Approval', left: ['Approval of the items in this report', 'Approval of new page content before it goes live'], rightTitle: 'Access', right: ['Website admin login', 'Hosting / DNS access', 'Any existing Analytics or Search Console accounts'] } },
+    { no: '13', title: 'Action Plan & Approval', sub: 'What we will do after your approval, and what we need from you.', sections: [
+      { num: '13.1', heading: 'What We Need From You', cols: accessCols(meta.accessMode) },
     ] },
     { no: 'A', title: 'Method & Glossary', sub: 'How this audit was done and what the SEO terms mean.', sections: [
       { num: 'A.1', heading: 'How This Audit Was Done', table: { cols: [{ label: 'Area' }, { label: 'Source and date' }], rows: [

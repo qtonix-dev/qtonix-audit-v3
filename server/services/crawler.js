@@ -200,6 +200,51 @@ async function crawlHomepage(website) {
   $('h2, h3').each((_, el) => pushSignal($(el).text()));
   const h2s = $('h2').map((_, el) => $(el).text().trim()).get().filter(Boolean).slice(0, 30);
 
+  // ---- Analytics / tracking code detection (from raw HTML + scripts) --------
+  const tracking = {
+    ga4: /gtag\/js\?id=G-|gtag\(['"]config['"],\s*['"]G-|googletagmanager\.com\/gtag\/js\?id=G-/i.test(html),
+    ua: /UA-\d{4,}-\d|google-analytics\.com\/analytics\.js|ga\(['"]create['"]/i.test(html),
+    gtm: /googletagmanager\.com\/gtm\.js|GTM-[A-Z0-9]{4,}/i.test(html),
+    gsc: /google-site-verification/i.test(html),
+    bing: /msvalidate\.01/i.test(html),
+    metaPixel: /connect\.facebook\.net\/[^"']*fbevents\.js|fbq\(['"]init['"]/i.test(html),
+    hotjar: /static\.hotjar\.com|hjid/i.test(html),
+    clarity: /clarity\.ms\/tag/i.test(html),
+    linkedinInsight: /snap\.licdn\.com\/li\.lms-analytics/i.test(html),
+    tiktokPixel: /analytics\.tiktok\.com/i.test(html),
+  };
+
+  // ---- NAP (name, address, phone) extraction -------------------------------
+  const footerText = $('footer').text().replace(/\s+/g, ' ').trim();
+  const allText = bodyText + ' ' + footerText;
+  const phoneM = allText.match(/(\+?\d[\d\s().-]{7,}\d)/);
+  const emailM = html.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
+  const addressM = allText.match(/\d{1,5}\s+[\w\s,.'-]{6,60}?(street|st\.?|road|rd\.?|avenue|ave\.?|lane|ln\.?|drive|dr\.?|suite|ste\.?|floor|blvd|boulevard|way|court|ct\.?)\b[\w\s,.'-]{0,40}/i);
+  const nap = {
+    phone: phoneM ? phoneM[1].trim().replace(/\s{2,}/g, ' ') : null,
+    email: emailM && !/example\.|sentry|wixpress/i.test(emailM[0]) ? emailM[0] : null,
+    address: addressM ? addressM[0].trim().slice(0, 90) : null,
+  };
+  nap.present = !!(nap.phone || nap.email || nap.address);
+
+  // ---- Brand-name consistency: compare the brand as written in different
+  // places (title, logo alt, footer, og:site_name) and flag case/spelling
+  // variants of the same name (e.g. "Oil Chef" vs footer "OiL Chef"). --------
+  const ogSiteName = $('meta[property="og:site_name"]').attr('content') || '';
+  const logoAlt = $('header img[alt], .logo img[alt], a[href="/"] img[alt]').first().attr('alt') || '';
+  const titleBrand = (title.split(/[|\-–—]/).pop() || '').trim();
+  const footerBrandM = footerText.match(/(?:©|copyright)\s*\d{0,4}\s*([A-Za-z][A-Za-z .&'’]{2,40})/i);
+  const footerBrand = footerBrandM ? footerBrandM[1].trim().replace(/\s+(all rights.*|inc\.?|ltd\.?|llc).*/i, '').trim() : '';
+  const brandCandidates = [titleBrand, ogSiteName, logoAlt, footerBrand].map((s) => String(s || '').trim()).filter((s) => s && s.length >= 2 && s.length <= 40);
+  // Group by lowercased form; a case/spacing variant across sources is the flag.
+  const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const byNorm = {};
+  for (const b of brandCandidates) { const k = norm(b); (byNorm[k] = byNorm[k] || []).push(b); }
+  const brandVariants = Object.values(byNorm).map((arr) => [...new Set(arr)]).filter((arr) => arr.length > 1);
+  const brand = { candidates: [...new Set(brandCandidates)], variants: brandVariants, primary: titleBrand || ogSiteName || footerBrand || '' };
+
+  const ogImage = $('meta[property="og:image"]').attr('content') || '';
+
   return {
     finalUrl: res.url,
     statusCode: res.status,
@@ -235,6 +280,11 @@ async function crawlHomepage(website) {
     socialNetworks,
     externalLinks: external,
     bodyTextSample: bodyText.slice(0, 3000),
+    tracking,
+    nap,
+    brand,
+    ogImage: ogImage ? (() => { try { return new URL(ogImage, url.origin).href; } catch { return ogImage; } })() : '',
+    htmlTextRatio: html.length ? Number((bodyText.length / html.length).toFixed(3)) : null,
   };
 }
 
@@ -273,24 +323,45 @@ async function checkLlmsTxt(website) {
   }
 }
 
-async function checkSitemap(website, robots) {
+async function checkSitemap(website, robots, providedUrl) {
   const url = normaliseUrl(website);
-  const candidates = robots.sitemapUrls.length
-    ? robots.sitemapUrls
-    : [`${url.origin}/sitemap.xml`, `${url.origin}/sitemap_index.xml`];
-  for (const c of candidates) {
+  const locs = (xml) => (xml.match(/<loc>\s*([^<]+?)\s*<\/loc>/gi) || []).map((m) => m.replace(/<\/?loc>/gi, '').trim());
+  const isIndex = (xml) => /<sitemapindex[\s>]/i.test(xml);
+
+  const candidates = [];
+  if (providedUrl) candidates.push(providedUrl);
+  if (robots.sitemapUrls && robots.sitemapUrls.length) candidates.push(...robots.sitemapUrls);
+  candidates.push(`${url.origin}/sitemap_index.xml`, `${url.origin}/sitemap.xml`);
+
+  for (const c of [...new Set(candidates)]) {
     try {
-      const res = await fetchWithTimeout(c, 10000);
-      if (res.ok) {
-        const xml = await res.text();
-        const count = (xml.match(/<loc>/g) || []).length;
-        return { exists: true, url: c, urlCount: count };
+      const res = await fetchWithTimeout(c, 12000);
+      if (!res.ok) continue;
+      const xml = await res.text();
+      // A sitemap INDEX lists child sitemaps, not pages — fetch each child and
+      // count the real <url><loc> entries across all of them (capped for safety).
+      if (isIndex(xml)) {
+        const children = locs(xml).slice(0, 25);
+        let total = 0;
+        const pageUrls = [];
+        for (const child of children) {
+          try {
+            const cr = await fetchWithTimeout(child, 12000);
+            if (!cr.ok) continue;
+            const cxml = await cr.text();
+            const u = locs(cxml);
+            total += u.length;
+            for (const p of u) if (pageUrls.length < 2000) pageUrls.push(p);
+          } catch { /* skip a bad child sitemap */ }
+        }
+        return { exists: true, url: c, isIndex: true, childSitemaps: children.length, urlCount: total, pageUrls };
       }
-    } catch {
-      /* try next candidate */
-    }
+      // A plain urlset: its <loc> entries are the pages.
+      const pageUrls = locs(xml);
+      return { exists: true, url: c, isIndex: false, childSitemaps: 0, urlCount: pageUrls.length, pageUrls: pageUrls.slice(0, 2000) };
+    } catch { /* try next candidate */ }
   }
-  return { exists: false, url: null, urlCount: 0 };
+  return { exists: false, url: null, isIndex: false, childSitemaps: 0, urlCount: 0, pageUrls: [] };
 }
 
 /**
@@ -354,7 +425,7 @@ async function getPageSpeed(website, apiKey, strategy = 'mobile') {
 }
 
 /** Full technical pass, resilient: one failed check must not kill the report. */
-async function runTechnicalAudit(website, pageSpeedKey) {
+async function runTechnicalAudit(website, pageSpeedKey, opts = {}) {
   const settle = async (fn, fallback) => {
     try {
       return await fn();
@@ -369,7 +440,11 @@ async function runTechnicalAudit(website, pageSpeedKey) {
     settle(() => checkLlmsTxt(website), false),
   ]);
 
-  const sitemap = await settle(() => checkSitemap(website, robots), { exists: false, urlCount: 0 });
+  // `opts.sitemapUrl` = a sitemap the user supplied; `opts.noSitemap` = user
+  // confirmed there is none, so skip the lookup entirely.
+  const sitemap = opts.noSitemap
+    ? { exists: false, url: null, isIndex: false, childSitemaps: 0, urlCount: 0, pageUrls: [], userConfirmedNone: true }
+    : await settle(() => checkSitemap(website, robots, opts.sitemapUrl), { exists: false, urlCount: 0, pageUrls: [] });
 
   const [mobile, desktop] = await Promise.all([
     settle(() => getPageSpeed(website, pageSpeedKey, 'mobile'), { performance: null }),

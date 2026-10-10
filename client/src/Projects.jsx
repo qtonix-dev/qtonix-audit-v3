@@ -290,7 +290,7 @@ function PreSeoReportView({ id, onBack, onEdit }) {
       </div>
 
       <div className="grid gap-4" style={{ gridTemplateColumns: 'minmax(0,1fr) 300px' }}>
-        <div className="rounded-2xl border border-slate-200 overflow-hidden bg-white" style={{ height: '78vh' }}>
+        <div className="rounded-2xl border border-slate-200 overflow-hidden bg-white" style={{ height: '80vh' }}>
           <iframe title="report" src={`${API_BASE}/api/hr/projects/preseo/${id}/view?token=${encodeURIComponent(token)}&v=${rep.completedAt || ''}`} className="w-full h-full border-0" />
         </div>
         <div>
@@ -710,6 +710,9 @@ function PreSeoReportWizard({ projectId, project, onClose, onDone, editReport })
   const [reportType, setReportType] = useState('pre_seo');
   const [bizName, setBizName] = useState((project && project.customerName) || '');
   const [website, setWebsite] = useState((editReport && editReport.website) || (project && project.website) || '');
+  const [sitemapUrl, setSitemapUrl] = useState('');
+  const [noSitemap, setNoSitemap] = useState(false);
+  const [accessMode, setAccessMode] = useState('unsure'); // share | coordinate | unsure
   const [rid, setRid] = useState(editReport ? editReport.id : null);
   const [rep, setRep] = useState(null); // latest polled report
   const [busy, setBusy] = useState(false);
@@ -730,7 +733,7 @@ function PreSeoReportWizard({ projectId, project, onClose, onDone, editReport })
       // regardless. If the report is run inside a project, carry its services
       // through only so the list can show matching chips.
       const services = (project && project.servicesTaken) || [];
-      const r = await hrApi(`/projects/${projectId || 'none'}/preseo`, { method: 'POST', body: JSON.stringify({ website: website.trim(), businessName: bizName || (project && project.customerName), services, reportType }) });
+      const r = await hrApi(`/projects/${projectId || 'none'}/preseo`, { method: 'POST', body: JSON.stringify({ website: website.trim(), businessName: bizName || (project && project.customerName), services, reportType, sitemapUrl: sitemapUrl.trim(), noSitemap, accessMode }) });
       setRid(r.id); setStep('running');
     } catch (e) { toast(e.message); }
     setBusy(false);
@@ -802,6 +805,23 @@ function PreSeoReportWizard({ projectId, project, onClose, onDone, editReport })
                 <input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://example.com" className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-[13.5px] focus:outline-none focus:ring-2 focus:ring-orange-200" /></div>
               <div className="mb-3"><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Business name <span className="font-medium text-slate-300">· shown on the cover</span></label>
                 <input value={bizName} onChange={(e) => setBizName(e.target.value)} placeholder="Client / business name" className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-[13.5px] focus:outline-none focus:ring-2 focus:ring-orange-200" /></div>
+
+              <div className="mb-3">
+                <label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">XML sitemap URL <span className="font-medium text-slate-300">· optional — we try to find it automatically</span></label>
+                <input value={sitemapUrl} disabled={noSitemap} onChange={(e) => setSitemapUrl(e.target.value)} placeholder="https://example.com/sitemap_index.xml" className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-[13px] focus:outline-none focus:ring-2 focus:ring-orange-200 disabled:bg-slate-50 disabled:text-slate-300" />
+                <label className="flex items-center gap-2 mt-1.5 text-[11.5px] text-slate-500 cursor-pointer"><input type="checkbox" checked={noSitemap} onChange={(e) => setNoSitemap(e.target.checked)} className="accent-orange-500" /> This website has no XML sitemap</label>
+              </div>
+
+              <div className="mb-3">
+                <label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">How will the client give access?</label>
+                <div className="flex flex-wrap gap-2">
+                  {[['share', 'Shares access'], ['coordinate', 'Via their developer'], ['unsure', 'Not sure yet']].map(([v, lbl]) => (
+                    <button key={v} type="button" onClick={() => setAccessMode(v)} className="px-3 py-1.5 rounded-lg text-[12px] font-bold border" style={accessMode === v ? { borderColor: '#FF6A00', background: '#FFF7ED', color: '#FF4500' } : { borderColor: '#e2e8f0', color: '#64748b' }}>{lbl}</button>
+                  ))}
+                </div>
+                <div className="text-[10.5px] text-slate-400 mt-1">Shapes the “What We Need From You” page. Pick “Not sure” and the report offers both options.</div>
+              </div>
+
               <div className="rounded-xl bg-slate-50 border border-slate-200 text-[11.5px] text-slate-500 px-3 py-2.5 leading-snug">
                 Claude will <b className="text-slate-700">crawl the site &amp; auto-capture</b> the homepage, robots.txt, sitemap, schema and mobile views (issues highlighted in red), then write the analysis. On the next step you can upload tool screenshots — Claude reads each one to write that section. <b className="text-slate-700">Sections you don't upload are excluded.</b> The ChatGPT / Perplexity section is generated automatically via the OpenAI + Claude APIs.
               </div>

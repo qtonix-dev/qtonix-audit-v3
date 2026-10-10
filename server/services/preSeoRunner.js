@@ -31,9 +31,14 @@ async function run(reportId) {
     const openaiKey = s && s.getKey ? s.getKey('openai') : null;
     const psKey = s && s.getKey ? s.getKey('pagespeed') : null;
 
+    const seed = report.data || {};
+    const sitemapUrl = seed._sitemapUrl || '';
+    const noSitemap = !!seed._noSitemap;
+    const accessMode = seed._accessMode || 'unsure';
+
     await setStatus(reportId, { status: 'capturing', progress: 10, currentStep: 'Fetching the website' });
     let crawl = {};
-    try { crawl = await crawler.runTechnicalAudit(report.website, psKey); } catch (e) { console.error('[preSeo] crawl failed:', e.message); }
+    try { crawl = await crawler.runTechnicalAudit(report.website, psKey, { sitemapUrl, noSitemap }); } catch (e) { console.error('[preSeo] crawl failed:', e.message); }
     crawl.website = report.website;
     crawl.domain = report.domain;
     await setStatus(reportId, { crawl, progress: 35, currentStep: 'Capturing screenshots' });
@@ -49,13 +54,19 @@ async function run(reportId) {
     // Gather uploaded screenshots as base64 for Claude vision.
     const screenshots = await loadUploadedImages(merged);
 
-    const seededServices = (report.data && Array.isArray(report.data._services)) ? report.data._services : [];
+    const seededServices = Array.isArray(seed._services) ? seed._services : [];
+    const sm = crawl.sitemap || {};
+    const totalPages = sm.urlCount && sm.urlCount > 0 ? sm.urlCount : null;
     const meta = {
       businessName: report.businessName || report.domain, shortName: (report.businessName || report.domain || '').split(' ')[0],
-      monthYear: monthYear(), auditDate: auditDate(), pagesReviewed: (crawl.sitemap && crawl.sitemap.urlCount) || 1,
+      monthYear: monthYear(), auditDate: auditDate(),
+      pagesReviewed: totalPages || 1, totalPages,
+      sitemapState: noSitemap ? 'none' : (sm.exists ? 'found' : 'missing'),
       preparedBy: report.createdByName || 'Adam G, Project Manager',
-      contactEmail: 'adam@qtonix.com', contactPhone: '+91-8249016547', clientLogo: '',
-      services: seededServices,
+      preparedByRole: 'Project Manager',
+      contactEmail: report.createdByEmail || 'adam@qtonix.com', contactPhone: '+91-8249016547',
+      clientLogo: logoFor(crawl, report.domain),
+      services: seededServices, accessMode,
     };
     const data = await buildReportData(crawl, meta, { anthropicKey, openaiKey }, screenshots);
     // attach shot urls into the data so the template can show them
@@ -66,6 +77,31 @@ async function run(reportId) {
     console.error('[preSeo] run failed:', e.message);
     await setStatus(reportId, { status: 'failed', error: String(e.message || e).slice(0, 1000) });
   }
+}
+
+// Best-effort brand logo for the cover: prefer an apple-touch-icon or a
+// <link rel="icon"> (usually the real logo mark), then og:image, and finally a
+// high-res Google favicon — which works for any domain. Returns an absolute URL.
+function logoFor(crawl, domain) {
+  const html = (crawl && crawl.html) || '';
+  const base = (crawl && crawl.finalUrl) || (domain ? `https://${domain}` : '');
+  const abs = (u) => { try { return new URL(u, base).href; } catch { return ''; } };
+  const attr = (tag, name, val) => {
+    const re = new RegExp(`<${tag}[^>]*${name}=["']${val}["'][^>]*>`, 'i');
+    const m = html.match(re); if (!m) return '';
+    const h = m[0].match(/(?:href|content)=["']([^"']+)["']/i);
+    return h ? abs(h[1]) : '';
+  };
+  // apple-touch-icon and shortcut/icon links are usually the brand mark.
+  const touch = attr('link', 'rel', 'apple-touch-icon') || attr('link', 'rel', 'apple-touch-icon-precomposed');
+  if (touch) return touch;
+  const iconM = html.match(/<link[^>]*rel=["'][^"']*icon[^"']*["'][^>]*>/i);
+  if (iconM) { const h = iconM[0].match(/href=["']([^"']+)["']/i); if (h) { const u = abs(h[1]); if (u && !/\.ico(\?|$)/i.test(u)) return u; } }
+  const og = attr('meta', 'property', 'og:image') || attr('meta', 'name', 'og:image');
+  if (og) return og;
+  // Fallback: Google's favicon service at a usable size.
+  const d = (domain || base || '').replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+  return d ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(d)}&sz=128` : '';
 }
 
 async function loadUploadedImages(shots) {

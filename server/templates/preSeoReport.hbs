@@ -27,7 +27,11 @@
 body{ font-family:'Plus Jakarta Sans', sans-serif; color:var(--ink); font-size:9.5pt; line-height:1.5; }
 
 @page{ size: Letter; margin: 0; }
-@page interior{ size: Letter; margin: 0.62in 0.62in 0.7in 0.62in; }
+@page interior{
+  size: Letter; margin: 0.62in 0.62in 0.72in 0.62in;
+  @bottom-left{ content: "Pre-SEO Audit Report  ·  {{report.domain}}"; font-family:'Plus Jakarta Sans',sans-serif; font-size:7pt; color:#94a3b8; }
+  @bottom-right{ content: "Page " counter(page); font-family:'Plus Jakarta Sans',sans-serif; font-size:7pt; color:#94a3b8; font-weight:700; }
+}
 
 /* ---------------- COVER ---------------- */
 .cover{ width:8.5in; height:11in; padding:0.9in 0.75in; background:linear-gradient(145deg,#0B1020 0%,#161B33 60%,#0B1020 100%); color:#fff; position:relative; page-break-after:always; overflow:hidden; }
@@ -43,8 +47,9 @@ body{ font-family:'Plus Jakarta Sans', sans-serif; color:var(--ink); font-size:9
 .cover h1 .o{ color:var(--orange); }
 .cover-sub{ margin-top:18px; font-size:11pt; line-height:1.55; color:rgba(255,255,255,.75); max-width:5.2in; }
 .prepared{ margin-top:34px; display:inline-flex; align-items:center; gap:14px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); border-radius:12px; padding:14px 18px; }
-.prepared .lg{ width:48px; height:48px; border-radius:10px; background:rgba(255,255,255,.08); display:flex; align-items:center; justify-content:center; font-size:7pt; font-weight:800; color:var(--muted2); text-align:center; overflow:hidden; }
-.prepared .lg img{ max-width:100%; max-height:100%; }
+.prepared .lg{ width:48px; height:48px; border-radius:10px; background:rgba(255,255,255,.12); display:flex; align-items:center; justify-content:center; overflow:hidden; position:relative; }
+.prepared .lg .lgfallback{ font-size:14pt; font-weight:800; color:#fff; }
+.prepared .lg img{ position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:#fff; padding:4px; border-radius:10px; }
 .prepared .pl{ font-size:7.5pt; letter-spacing:2px; font-weight:700; color:var(--muted2); }
 .prepared .pn{ font-size:14pt; font-weight:800; margin-top:2px; }
 .prepared .pu{ font-size:9pt; color:var(--orange); font-weight:600; margin-top:1px; }
@@ -91,10 +96,22 @@ body{ font-family:'Plus Jakarta Sans', sans-serif; color:var(--ink); font-size:9
 .band::after{ content:''; position:absolute; left:0; right:0; bottom:0; height:4px; background:linear-gradient(90deg,var(--orange),var(--orange-deep)); }
 
 /* orange sub-section heading */
-.sub-h{ font-size:11.5pt; font-weight:800; margin:16px 0 10px; }
+.sub-h{ font-size:11.5pt; font-weight:800; margin:16px 0 10px; break-after:avoid; page-break-after:avoid; }
 .sub-h .n{ color:var(--orange); margin-right:7px; }
 .sub-h .src{ font-size:8.5pt; font-weight:600; color:var(--muted); margin-left:7px; }
 .sub-h.first{ margin-top:4px; }
+
+/* ---- page-break control: keep headings with their content, don't split
+   screenshots, callouts, tables rows, week rows or cols across pages ---- */
+.band{ break-after:avoid; page-break-after:avoid; }
+.shot, .shotimg, .callout, .willdo, .cols, .weekrow, .health, .serp{ break-inside:avoid; page-break-inside:avoid; }
+tr, thead, .toc-row{ break-inside:avoid; page-break-inside:avoid; }
+table{ break-inside:auto; }
+img{ break-inside:avoid; }
+/* a section groups its heading + body so a lone heading never ends a page */
+.section{ break-inside:avoid-page; }
+p.lead{ margin-bottom:8px; }
+p.lead:last-child{ margin-bottom:0; }
 
 /* stat tiles */
 .stats{ display:flex; gap:10px; margin:10px 0 4px; }
@@ -109,8 +126,11 @@ body{ font-family:'Plus Jakarta Sans', sans-serif; color:var(--ink); font-size:9
 .shot .n{ font-size:8pt; font-style:italic; color:var(--muted); margin-top:4px; }
 .shot img{ max-width:100%; border-radius:6px; }
 .shotimg{ border:1px solid var(--line); border-radius:8px; padding:6px; margin:10px 0; text-align:center; }
-.shotimg img{ max-width:100%; border-radius:4px; }
+.shotimg img{ max-width:100%; max-height:3.4in; width:auto; border-radius:4px; object-fit:contain; }
 .shotimg .cap{ font-size:7.5pt; color:var(--muted); margin-top:5px; }
+/* tall device/mobile screenshots: keep them small and centred, not full-page */
+.shotimg.device img{ max-height:3.6in; }
+.shotimg.wide img{ max-height:3.0in; }
 
 /* callouts */
 .callout{ border-left:4px solid var(--violet); background:#f5f3ff; border-radius:0 8px 8px 0; padding:12px 15px; margin:10px 0; }
@@ -135,6 +155,7 @@ body{ font-family:'Plus Jakarta Sans', sans-serif; color:var(--ink); font-size:9
 .b-fail{ color:var(--red); } .b-pending{ color:var(--blue); } .b-missing{ color:var(--red); }
 .b-optional{ color:var(--muted); } .b-opt{ color:var(--muted); }
 .b-yes{ color:var(--green); } .b-no{ color:var(--red); }
+.b-unknown{ color:var(--muted); } .b-none{ color:var(--red); }
 
 /* tables */
 table{ width:100%; border-collapse:collapse; margin:8px 0; font-size:8.5pt; }
@@ -172,6 +193,13 @@ td b{ font-weight:800; }
 
 .keyline{ font-size:9pt; color:#374151; margin:8px 0; }
 .keyline b{ color:var(--orange); }
+
+/* Google SERP preview (section 5.1) */
+.serp{ border:1px solid var(--line); border-radius:10px; padding:12px 16px; margin:10px 0; background:#fff; max-width:5.6in; }
+.serp .serp-lbl{ font-size:7pt; letter-spacing:1px; font-weight:700; color:var(--muted2); text-transform:uppercase; margin-bottom:6px; }
+.serp .serp-url{ font-size:8pt; color:#202124; }
+.serp .serp-title{ font-size:12pt; color:#1a0dab; font-weight:500; margin:2px 0 2px; line-height:1.25; }
+.serp .serp-desc{ font-size:8.5pt; color:#4d5156; line-height:1.4; }
 
 /* back cover */
 .back{ width:8.5in; height:11in; padding:0.9in 0.75in; background:linear-gradient(145deg,#0B1020,#161B33 70%,#0B1020); color:#fff; position:relative; page-break-before:always; overflow:hidden; }
@@ -214,7 +242,7 @@ td b{ font-weight:800; }
   <h1>Website Health &amp;<br>Search Visibility <span class="o">Audit</span></h1>
   <div class="cover-sub">An in-depth review of technical SEO, on-page content, backlinks, competitors and AI search visibility, with a clear 30-day action plan.</div>
   <div class="prepared">
-    <div class="lg">{{#if report.clientLogo}}<img src="{{report.clientLogo}}">{{else}}LOGO{{/if}}</div>
+    <div class="lg"><span class="lgfallback">{{report.logoInitials}}</span>{{#if report.clientLogo}}<img src="{{report.clientLogo}}" onerror="this.style.display='none'">{{/if}}</div>
     <div>
       <div class="pl">PREPARED FOR</div>
       <div class="pn">{{report.businessName}}</div>
@@ -222,9 +250,9 @@ td b{ font-weight:800; }
     </div>
   </div>
   <div class="cover-stats">
-    <div class="cover-stat"><b>14</b><span>chapters covering technical, on-page, off-page &amp; AI search</span></div>
-    <div class="cover-stat"><b>{{report.pagesReviewed}}</b><span>website pages reviewed one by one</span></div>
-    <div class="cover-stat"><b>30</b><span>day action plan with clear owners</span></div>
+    <div class="cover-stat"><b>13</b><span>chapters covering technical, on-page, off-page &amp; AI search</span></div>
+    <div class="cover-stat"><b>{{report.pagesReviewed}}</b><span>{{report.pagesLabel}}</span></div>
+    <div class="cover-stat"><b>10</b><span>health areas scored from 0 to 100</span></div>
   </div>
   <div class="cover-foot">
     <div><div class="cf">PREPARED BY</div><div class="cfv">{{report.preparedBy}}<span class="lt"> · Qtonix Software Pvt. Ltd.</span></div></div>
@@ -259,7 +287,7 @@ td b{ font-weight:800; }
     {{#each ch1.stats}}<div class="stat"><b>{{this.v}}</b><span>{{this.l}}</span></div>{{/each}}
   </div>
   <div class="sub-h"><span class="n">1.1</span> Homepage <span class="src">| {{report.domain}}</span></div>
-  {{#if ch1.homepageShot}}<div class="shotimg"><img src="{{ch1.homepageShot}}"></div>{{else}}<div class="shot"><div class="t">[ HOMEPAGE SCREENSHOT ]</div><div class="n">Homepage of {{report.domain}}</div></div>{{/if}}
+  {{#if ch1.homepageShot}}<div class="shotimg wide"><img src="{{ch1.homepageShot}}"><div class="cap">Homepage of {{report.domain}}</div></div>{{else}}{{#if forWeb}}<div class="shot"><div class="t">[ HOMEPAGE SCREENSHOT ]</div><div class="n">Homepage of {{report.domain}}</div></div>{{/if}}{{/if}}
   {{#each ch1.homepageNotes}}<p class="lead">{{this}}</p>{{/each}}
 
   <div class="sub-h"><span class="n">1.2</span> SEO Health Score <span class="src">| Qtonix audit checklist</span></div>
@@ -309,7 +337,16 @@ td b{ font-weight:800; }
   {{#each this.sections}}
   <div class="sub-h{{#if @first}} first{{/if}}"><span class="n">{{this.num}}</span> {{this.heading}}{{#if this.src}}<span class="src">| {{this.src}}</span>{{/if}}</div>
 
-  {{#if this.shot.img}}<div class="shotimg"><img src="{{this.shot.img}}">{{#if this.shot.label}}<div class="cap">{{this.shot.label}}</div>{{/if}}</div>{{else}}{{#if this.shot}}{{#if @root.forWeb}}<div class="shot"><div class="t">[ PASTE SCREENSHOT HERE ]</div><div class="d">{{this.shot.label}}</div>{{#if this.shot.note}}<div class="n">{{this.shot.note}}</div>{{/if}}</div>{{/if}}{{/if}}{{/if}}
+  {{#if this.serp}}
+  <div class="serp">
+    <div class="serp-lbl">How this page looks in Google</div>
+    <div class="serp-url">{{this.serp.url}}</div>
+    <div class="serp-title">{{this.serp.title}}</div>
+    <div class="serp-desc">{{this.serp.desc}}</div>
+  </div>
+  {{/if}}
+
+  {{#if this.shot.img}}<div class="shotimg {{#if this.shot.device}}device{{else}}wide{{/if}}"><img src="{{this.shot.img}}">{{#if this.shot.label}}<div class="cap">{{this.shot.label}}</div>{{/if}}</div>{{else}}{{#if this.shot}}{{#if @root.showPlaceholders}}<div class="shot"><div class="t">[ PASTE SCREENSHOT HERE ]</div><div class="d">{{this.shot.label}}</div>{{#if this.shot.note}}<div class="n">{{this.shot.note}}</div>{{/if}}</div>{{/if}}{{/if}}{{/if}}
   {{#if this.image}}<div class="shotimg"><img src="{{this.image}}">{{#if this.imageCap}}<div class="cap">{{this.imageCap}}</div>{{/if}}</div>{{/if}}
 
   {{#if this.table}}
@@ -341,13 +378,13 @@ td b{ font-weight:800; }
   <div class="ns">NEXT STEPS</div>
   <div class="steps">
     <div class="step"><div class="sn">01</div><div class="st">Review the report</div><div class="sd">See where the website stands today and note any questions.</div></div>
-    <div class="step"><div class="sn">02</div><div class="st">Approve the plan</div><div class="sd">Tick the items in the approval checklist (chapter 14).</div></div>
-    <div class="step"><div class="sn">03</div><div class="st">Access &amp; kick-off</div><div class="sd">Share access and our team takes care of all the fixes.</div></div>
+    <div class="step"><div class="sn">02</div><div class="st">Approve the plan</div><div class="sd">Confirm the items in “What We Need From You” (chapter 13).</div></div>
+    <div class="step"><div class="sn">03</div><div class="st">Access &amp; kick-off</div><div class="sd">Share access or connect us with your developer, and our team takes care of the fixes.</div></div>
   </div>
   <div class="contact">
-    <div><div class="cl">YOUR CONTACT</div><div class="cv">{{report.preparedBy}}<br><span class="lt">Project Manager, Qtonix Software Pvt. Ltd.</span></div></div>
+    <div><div class="cl">{{report.preparedBy}}</div><div class="cv">{{report.preparedByRole}}<br><span class="lt">Qtonix Software Pvt. Ltd.</span></div></div>
     <div><div class="cl">EMAIL</div><div class="cv">{{report.contactEmail}}</div></div>
-    <div><div class="cl">PHONE</div><div class="cv">{{report.contactPhone}}<br><span class="lt">www.qtonix.com</span></div></div>
+    <div><div class="cl">WEBSITE</div><div class="cv">www.qtonix.com</div></div>
   </div>
   <div class="back-bar"></div>
 </div>

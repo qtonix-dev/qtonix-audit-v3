@@ -180,6 +180,9 @@ router.post('/', guard, requireHrAdmin, async (req, res, next) => {
 
 // ---- Project detail (admin only for now) -------------------------------------
 router.get('/:id', guard, requireHrAdmin, async (req, res, next) => {
+  // "preseo" is a reserved sub-path (the Pre-SEO report routes), not a project
+  // id — let those routes handle it instead of treating it as a project id.
+  if (req.params.id === 'preseo') return next();
   try {
     const act = await actor(req);
     const p = await Project.findByPk(req.params.id); if (!p) return res.status(404).json({ error: 'Project not found.' });
@@ -384,7 +387,13 @@ router.post('/:id/preseo', guard, requireHrAdmin, async (req, res, next) => {
       projectId: project ? project.id : null, kind: String(b.reportType || 'pre_seo'), website: website.startsWith('http') ? website : 'https://' + website,
       domain, businessName: b.businessName || (project && project.customerName) || domain,
       createdById: act.id, createdByName: act.name || 'Qtonix', status: 'capturing', progress: 5,
-      data: { _services: services }, // seed; runner carries it into data.report.services
+      // seed carries run options the runner reads before overwriting data.
+      data: {
+        _services: services,
+        _sitemapUrl: (b.sitemapUrl && String(b.sitemapUrl).trim()) || '',
+        _noSitemap: !!b.noSitemap,
+        _accessMode: ['share', 'coordinate', 'unsure'].includes(b.accessMode) ? b.accessMode : 'unsure',
+      },
     });
     // fire-and-forget
     preSeoRunner.run(report.id).catch((e) => console.error('[preseo] run error:', e.message));
