@@ -91,6 +91,7 @@ export default function ProjectsView({ user }) {
   const [openId, setOpenId] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showRun, setShowRun] = useState(false);
+  const [tab, setTab] = useState('projects'); // projects | reports
   const [filterStatus, setFilterStatus] = useState('');
   const [filterType, setFilterType] = useState('');
   const [q, setQ] = useState('');
@@ -98,6 +99,7 @@ export default function ProjectsView({ user }) {
   useEffect(() => { load(); }, []);
 
   if (openId) return <ProjectDetail id={openId} onBack={() => { setOpenId(null); load(); }} />;
+  if (tab === 'reports') return <PreSeoReports onBackTab={() => setTab('projects')} />;
   if (!projects) return <div className="p-10 text-center text-slate-400 text-sm">Loading projects…</div>;
 
   const shown = projects.filter((p) => (!filterStatus || p.status === filterStatus) && (!filterType || p.projectType === filterType) && (!q || (p.customerName || '').toLowerCase().includes(q.toLowerCase()) || (p.website || '').toLowerCase().includes(q.toLowerCase())));
@@ -105,14 +107,20 @@ export default function ProjectsView({ user }) {
 
   return (
     <div className="pb-8">
-      <div className="flex items-center justify-between mb-4">
-        <div><h1 className="text-2xl font-extrabold text-[#050A1F]">Projects</h1><div className="text-[13px] text-slate-400">{activeCount} active · {projects.length} total</div></div>
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          <div><h1 className="text-2xl font-extrabold text-[#050A1F]">Projects</h1><div className="text-[13px] text-slate-400">{activeCount} active · {projects.length} total</div></div>
+          <div className="flex gap-1 bg-slate-100 rounded-xl p-1 ml-2">
+            <button onClick={() => setTab('projects')} className="px-3.5 py-1.5 rounded-lg text-[12.5px] font-bold" style={tab === 'projects' ? { background: '#fff', color: '#050A1F', boxShadow: '0 1px 2px rgba(0,0,0,.08)' } : { color: '#64748b' }}>Projects</button>
+            <button onClick={() => setTab('reports')} className="px-3.5 py-1.5 rounded-lg text-[12.5px] font-bold" style={{ color: '#64748b' }}>Reports</button>
+          </div>
+        </div>
         <div className="flex gap-2">
           <button onClick={() => setShowRun(true)} className="font-bold px-4 py-2.5 rounded-xl text-sm border-2 border-orange-500 text-orange-600 bg-orange-50">▶ Run Report</button>
           <button onClick={() => setShowCreate(true)} className="text-white font-bold px-4 py-2.5 rounded-xl text-sm" style={{ background: ORANGE }}>+ Create Project</button>
         </div>
       </div>
-      {showRun && <PreSeoReportWizard projectId={'none'} project={null} onClose={() => setShowRun(false)} />}
+      {showRun && <PreSeoReportWizard projectId={'none'} project={null} onClose={() => setShowRun(false)} onDone={() => {}} />}
       <div className="bg-white border border-slate-200 rounded-2xl p-3 flex items-center gap-2.5 mb-4 flex-wrap">
         <span className="text-[13px] font-bold text-[#050A1F]">Filter</span>
         <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-[12.5px] text-slate-600 bg-white"><option value="">Status: All</option>{Object.keys(STATUS_PILL).map((s) => <option key={s} value={s}>{STATUS_PILL[s].label}</option>)}</select>
@@ -144,6 +152,189 @@ export default function ProjectsView({ user }) {
         </table>
       </div>
       {showCreate && <CreateProjectModal onClose={() => setShowCreate(false)} onCreated={(id) => { setShowCreate(false); load(); setOpenId(id); }} />}
+    </div>
+  );
+}
+
+// ===================== PRE-SEO REPORTS (list + view) =====================
+const PRESEO_TOKEN = 'qtx_hr_token';
+function scoreColor(v) { return v == null ? '#cbd5e1' : v >= 70 ? '#16a34a' : v >= 45 ? '#E58A24' : '#E5484D'; }
+function favColor(s) { const c = ['#FF6A00', '#2563eb', '#7c3aed', '#0ea5e9', '#16a34a', '#db2777']; let h = 0; for (const ch of String(s || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return c[h % c.length]; }
+function reportInitials(n) { return String(n || '?').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase(); }
+const PS_PILL = {
+  complete: { label: 'Complete', bg: '#ecfdf3', color: '#067647', bd: '#abefc6' },
+  ready: { label: 'Ready — review', bg: '#fff7ed', color: '#c2410c', bd: '#fed7aa' },
+  capturing: { label: 'Capturing…', bg: '#eff6ff', color: '#1d4ed8', bd: '#bfdbfe' },
+  analyzing: { label: 'Analysing…', bg: '#eff6ff', color: '#1d4ed8', bd: '#bfdbfe' },
+  rendering: { label: 'Generating…', bg: '#eff6ff', color: '#1d4ed8', bd: '#bfdbfe' },
+  draft: { label: 'Draft', bg: '#f1f5f9', color: '#475569', bd: '#e2e8f0' },
+  failed: { label: 'Failed', bg: '#fef2f2', color: '#b42318', bd: '#fecdca' },
+};
+function psPill(s) { const p = PS_PILL[s] || PS_PILL.draft; return <span className="inline-flex items-center gap-1.5 text-[10.5px] font-extrabold rounded-full px-2.5 py-1" style={{ background: p.bg, color: p.color, border: `1px solid ${p.bd}` }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: p.color }} />{p.label}</span>; }
+
+function PreSeoReports({ onBackTab }) {
+  const [items, setItems] = useState(null);
+  const [q, setQ] = useState('');
+  const [view, setView] = useState(null); // a report id being viewed
+  const [edit, setEdit] = useState(null); // a report object being edited
+  const [run, setRun] = useState(false);
+  const load = () => hrApi('/projects/preseo').then((r) => setItems(r.items || [])).catch(() => setItems([]));
+  useEffect(() => { load(); }, []);
+
+  if (view) return <PreSeoReportView id={view} onBack={() => { setView(null); load(); }} onEdit={(rep) => { setView(null); setEdit(rep); }} />;
+
+  const shown = (items || []).filter((r) => !q || r.businessName.toLowerCase().includes(q.toLowerCase()) || (r.domain || '').toLowerCase().includes(q.toLowerCase()));
+  const download = (id, name) => { const t = localStorage.getItem(PRESEO_TOKEN) || ''; window.open(`${API_BASE}/api/hr/projects/preseo/${id}/download?token=${encodeURIComponent(t)}`, '_blank'); };
+  const del = async (r) => { if (!confirm(`Permanently delete the report for ${r.businessName}? This cannot be undone.`)) return; try { await hrApi(`/projects/preseo/${r.id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); } };
+
+  return (
+    <div className="pb-8">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          <div><h1 className="text-2xl font-extrabold text-[#050A1F]">Pre-SEO Reports</h1><div className="text-[13px] text-slate-400">{items ? items.length : '…'} total</div></div>
+          <div className="flex gap-1 bg-slate-100 rounded-xl p-1 ml-2">
+            <button onClick={onBackTab} className="px-3.5 py-1.5 rounded-lg text-[12.5px] font-bold text-slate-500">Projects</button>
+            <button className="px-3.5 py-1.5 rounded-lg text-[12.5px] font-bold bg-white text-[#050A1F]" style={{ boxShadow: '0 1px 2px rgba(0,0,0,.08)' }}>Reports</button>
+          </div>
+        </div>
+        <button onClick={() => setRun(true)} className="text-white font-bold px-4 py-2.5 rounded-xl text-sm" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>▶ Run Report</button>
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-2xl p-3 flex items-center gap-2.5 mb-4">
+        <span className="text-[13px] font-bold text-[#050A1F]">Search</span>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Business or domain…" className="border border-slate-200 rounded-lg px-3 py-1.5 text-[12.5px] text-slate-600 flex-1" />
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+        <div className="overflow-x-auto"><table className="w-full border-collapse">
+          <thead className="bg-slate-50/70"><tr className="text-left text-[11px] font-extrabold text-slate-400 uppercase">
+            <th className="px-4 py-2.5 w-16 text-center">Score</th><th className="px-4 py-2.5">Business</th><th className="px-3 py-2.5">Agent</th><th className="px-3 py-2.5">Status</th><th className="px-3 py-2.5">Run</th><th className="px-3 py-2.5 text-right">Actions</th>
+          </tr></thead>
+          <tbody>
+            {items && shown.length === 0 && <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-400 text-sm">No reports yet. Hit “Run Report” to generate one.</td></tr>}
+            {!items && <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-400 text-sm">Loading…</td></tr>}
+            {shown.map((r) => (
+              <tr key={r.id} className="border-t border-slate-100 hover:bg-slate-50/60">
+                <td className="px-4 py-3 text-center">{r.score != null ? <div className="text-xl font-extrabold leading-none" style={{ color: scoreColor(r.score) }}>{r.score}</div> : <div className="text-xl font-extrabold text-slate-300">—</div>}<div className="text-[8px] text-slate-400 font-bold tracking-wider mt-0.5">SCORE</div></td>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-9 h-9 rounded-lg flex items-center justify-center text-white font-extrabold text-[13px] flex-none" style={{ background: favColor(r.businessName) }}>{reportInitials(r.businessName)}</div>
+                    <div className="min-w-0">
+                      <div className="font-bold text-[#050A1F] text-[13.5px] truncate">{r.businessName}</div>
+                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                        <span className="text-[11.5px] text-slate-400">{r.domain}</span>
+                        {(r.services || []).slice(0, 3).map((s) => <span key={s} className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#FFF7ED', color: '#FF4500' }}>{s}</span>)}
+                        {!r.shared && r.status === 'complete' && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#fffbeb', color: '#b45309' }}>⚠ Not shared</span>}
+                      </div>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-3 py-3 text-[12.5px] text-slate-600 whitespace-nowrap">{r.agentName || '—'}</td>
+                <td className="px-3 py-3">{psPill(r.status)}</td>
+                <td className="px-3 py-3 text-[12px] text-slate-500 whitespace-nowrap">{r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-GB') : '—'}</td>
+                <td className="px-3 py-3 text-right whitespace-nowrap">
+                  <div className="inline-flex items-center gap-1.5 justify-end">
+                    {r.status === 'complete' && <>
+                      <button onClick={() => setView(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>
+                      <button onClick={() => download(r.id, r.businessName)} className="rounded-lg px-2.5 py-1.5 text-[11.5px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>PDF</button>
+                      <button onClick={() => setEdit(r)} title="Edit / upload screenshots" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:text-[#050A1F]">✎</button>
+                    </>}
+                    {(r.status === 'ready') && <button onClick={() => setEdit(r)} className="rounded-lg border border-orange-300 px-2.5 py-1.5 text-[11.5px] font-bold text-orange-600 hover:bg-orange-50">Review</button>}
+                    {['capturing', 'analyzing', 'rendering'].includes(r.status) && <span className="text-[11.5px] text-slate-400">working…</span>}
+                    {r.status === 'draft' && <button onClick={() => setEdit(r)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600">Resume</button>}
+                    <button onClick={() => del(r)} title="Delete" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-400 hover:text-red-500 hover:border-red-200">🗑</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table></div>
+      </div>
+
+      {run && <PreSeoReportWizard projectId={'none'} project={null} onClose={() => setRun(false)} onDone={load} />}
+      {edit && <PreSeoReportWizard projectId={edit.projectId || 'none'} project={null} editReport={edit} onClose={() => { setEdit(null); load(); }} onDone={load} />}
+    </div>
+  );
+}
+
+// Full-page report view — live preview + trackable-link rail (matches CRM).
+function PreSeoReportView({ id, onBack, onEdit }) {
+  const [rep, setRep] = useState(null);
+  const [share, setShare] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const token = localStorage.getItem(PRESEO_TOKEN) || '';
+  const loadShare = () => hrApi(`/projects/preseo/${id}/share`).then(setShare).catch(() => {});
+  useEffect(() => { hrApi(`/projects/preseo/${id}`).then(setRep).catch(() => {}); loadShare(); }, [id]);
+  const enable = async () => { try { await hrApi(`/projects/preseo/${id}/share`, { method: 'POST' }); loadShare(); } catch (e) { toast(e.message); } };
+  const disable = async () => { try { await hrApi(`/projects/preseo/${id}/share/disable`, { method: 'POST' }); loadShare(); } catch (e) { toast(e.message); } };
+  const copy = () => { if (share && share.url) { try { navigator.clipboard.writeText(share.url); } catch {} setCopied(true); setTimeout(() => setCopied(false), 1500); } };
+  const download = () => window.open(`${API_BASE}/api/hr/projects/preseo/${id}/download?token=${encodeURIComponent(token)}`, '_blank');
+  if (!rep) return <div className="p-10 text-center text-slate-400 text-sm">Loading report…</div>;
+  const hs = rep.data && rep.data.report && rep.data.report.healthScore;
+
+  return (
+    <div className="pb-8">
+      <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center text-white font-extrabold text-[13px]" style={{ background: favColor(rep.businessName) }}>{reportInitials(rep.businessName)}</div>
+          <div>
+            <h1 className="text-[18px] font-extrabold text-[#050A1F]">{rep.businessName} — Pre-SEO Audit</h1>
+            <div className="text-[12px] text-slate-400">{hs ? `Score ${hs.value}/100 · ` : ''}{rep.domain}{rep.completedAt ? ` · ${new Date(rep.completedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}` : ''}</div>
+          </div>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={onBack} className="rounded-lg border border-slate-300 px-4 py-2 text-[13px] font-bold text-slate-600 hover:border-slate-400">← Back</button>
+          <button onClick={() => onEdit(rep)} className="rounded-lg border border-slate-300 px-4 py-2 text-[13px] font-bold text-slate-600 hover:border-slate-400">✎ Edit</button>
+          <button onClick={download} className="rounded-lg px-5 py-2 text-[13px] font-extrabold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>↓ Download PDF</button>
+        </div>
+      </div>
+
+      <div className="grid gap-4" style={{ gridTemplateColumns: 'minmax(0,1fr) 300px' }}>
+        <div className="rounded-2xl border border-slate-200 overflow-hidden bg-white" style={{ height: '78vh' }}>
+          <iframe title="report" src={`${API_BASE}/api/hr/projects/preseo/${id}/view?token=${encodeURIComponent(token)}&v=${rep.completedAt || ''}`} className="w-full h-full border-0" />
+        </div>
+        <div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 mb-3">
+            <h4 className="text-[12.5px] font-extrabold text-[#050A1F] mb-1.5">🔗 Trackable link</h4>
+            {!share || !share.enabled ? (
+              <>
+                <div className="text-[11.5px] text-slate-500 mb-2">Share this report with the client. Every open and download is logged with time and IP.</div>
+                <button onClick={enable} className="rounded-lg px-4 py-2 text-[12.5px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Create public link</button>
+              </>
+            ) : (
+              <>
+                <div className="flex gap-2 items-center">
+                  <input readOnly value={share.url} className="flex-1 min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-mono text-slate-600" />
+                  <button onClick={copy} className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-white" style={{ background: '#2563eb' }}>{copied ? 'Copied!' : 'Copy'}</button>
+                </div>
+                <div className="flex gap-4 mt-3">
+                  <div><div className="text-[18px] font-extrabold text-[#050A1F]" style={{ fontVariantNumeric: 'tabular-nums' }}>{share.viewCount || 0}</div><div className="text-[10px] text-slate-400">views</div></div>
+                  <div><div className="text-[18px] font-extrabold text-[#050A1F]" style={{ fontVariantNumeric: 'tabular-nums' }}>{share.downloadCount || 0}</div><div className="text-[10px] text-slate-400">downloads</div></div>
+                  <div><div className="text-[18px] font-extrabold" style={{ color: share.lastViewedAt ? '#16a34a' : '#cbd5e1' }}>●</div><div className="text-[10px] text-slate-400">{share.lastViewedAt ? 'seen' : 'unseen'}</div></div>
+                </div>
+                <button onClick={disable} className="mt-2 text-[11px] font-bold text-slate-400">Disable link</button>
+              </>
+            )}
+          </div>
+          {share && share.enabled && (share.views || []).length > 0 && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 mb-3">
+              <h4 className="text-[12.5px] font-extrabold text-[#050A1F] mb-1.5">Activity</h4>
+              {(share.views || []).slice(-6).reverse().map((v, i) => (
+                <div key={i} className="flex justify-between gap-2 text-[11.5px] py-1.5 border-b border-dashed border-slate-100 last:border-0">
+                  <span className="text-slate-600">{v.type === 'download' ? '📎 Downloaded' : '📖 Opened'}{v.ip ? ` · ${v.ip}` : ''}</span>
+                  <span className="text-slate-400 whitespace-nowrap">{new Date(v.at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <h4 className="text-[12.5px] font-extrabold text-[#050A1F] mb-1.5">Details</h4>
+            <div className="flex justify-between text-[12px] py-1.5 border-b border-dashed border-slate-100"><span className="text-slate-400">Website</span><span className="text-slate-700">{rep.domain}</span></div>
+            {rep.data && rep.data.report && (rep.data.report.services || []).length > 0 && <div className="flex justify-between text-[12px] py-1.5 border-b border-dashed border-slate-100"><span className="text-slate-400">Services</span><span className="text-slate-700">{rep.data.report.services.join(' · ')}</span></div>}
+            <div className="flex justify-between text-[12px] py-1.5"><span className="text-slate-400">Agent</span><span className="text-slate-700">{rep.createdByName || '—'}</span></div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -474,7 +665,7 @@ function ReportsTab({ id, data, onReload }) {
         <div><b className="text-[13px] text-[#050A1F]">Run a report</b><div className="text-[11.5px] text-slate-400">Generate a branded analysis report for this client.</div></div>
         <button onClick={() => setRunReport(true)} className="text-[12.5px] font-extrabold text-white rounded-lg px-4 py-2" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>▶ Run Report</button>
       </div>
-      {runReport && <PreSeoReportWizard projectId={id} project={data.project} onClose={() => setRunReport(false)} />}
+      {runReport && <PreSeoReportWizard projectId={id} project={data.project} onClose={() => setRunReport(false)} onDone={onReload} />}
       {cycle && (
         <div className="rounded-xl bg-slate-50 p-3 mb-4">
           <div className="flex items-center gap-2 mb-2"><b className="text-[13px] text-[#050A1F]">Cycle {cycle.cycleNumber}</b><span className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{ background: cycle.invoicePaid ? '#F0FDF4' : '#FEF2F2', color: cycle.invoicePaid ? '#16a34a' : '#dc2626' }}>{cycle.invoicePaid ? '☑ Invoice paid' : '☐ Invoice unpaid'}</span></div>
@@ -504,29 +695,39 @@ const MANUAL_SLOTS = [
   { slot: '4.1', label: 'PageSpeed Insights — Mobile', hint: 'pagespeed.web.dev, Performance score' },
   { slot: '4.2', label: 'PageSpeed Insights — Desktop', hint: 'Performance score' },
   { slot: '3.4', label: 'Screaming Frog — Response Codes', hint: '4xx / 3xx rows' },
-  { slot: '5.4', label: 'Screaming Frog — Images', hint: 'Missing alt / oversized' },
   { slot: '8.1', label: 'SEMrush — Backlinks', hint: 'Source URL, Anchor, Authority, Follow' },
   { slot: '8.2', label: 'Moz / Authority checker', hint: 'DA, PA, Spam Score' },
   { slot: '9.1', label: 'Competitor traffic chart', hint: 'SEMrush estimated monthly traffic' },
   { slot: '10.2', label: 'SEMrush — Keyword Magic', hint: 'Volume and KD% for main keywords' },
-  { slot: '11.1', label: 'ChatGPT / Perplexity answer', hint: 'The "best X" answer with tools mentioned' },
+  // Note: the ChatGPT / Perplexity "best X" section (11.1) is now generated
+  // automatically by querying the OpenAI + Claude APIs — no screenshot needed.
+  // Sections with no uploaded screenshot are excluded from the final PDF.
 ];
 
-function PreSeoReportWizard({ projectId, project, onClose }) {
-  const [step, setStep] = useState('pick'); // pick | url | running | review | done
+function PreSeoReportWizard({ projectId, project, onClose, onDone, editReport }) {
+  // Edit mode: reopen an existing complete report straight at the review/upload step.
+  const [step, setStep] = useState(editReport ? 'review' : 'pick'); // pick | url | running | review | done
   const [reportType, setReportType] = useState('pre_seo');
-  const [website, setWebsite] = useState((project && project.website) || '');
-  const [rid, setRid] = useState(null);
+  const [services, setServices] = useState((project && project.servicesTaken) || ['SEO']);
+  const [bizName, setBizName] = useState((project && project.customerName) || '');
+  const [website, setWebsite] = useState((editReport && editReport.website) || (project && project.website) || '');
+  const [rid, setRid] = useState(editReport ? editReport.id : null);
   const [rep, setRep] = useState(null); // latest polled report
   const [busy, setBusy] = useState(false);
   const [gen, setGen] = useState(false);
+
+  // In edit mode, load the existing report into state immediately.
+  useEffect(() => {
+    if (!editReport) return;
+    hrApi(`/projects/preseo/${editReport.id}`).then((r) => { setRep(r); setStep('review'); }).catch((e) => toast(e.message));
+  }, [editReport && editReport.id]);
 
   // start the run
   const start = async () => {
     if (!website.trim()) { toast('Enter the website URL'); return; }
     setBusy(true);
     try {
-      const r = await hrApi(`/projects/${projectId || 'none'}/preseo`, { method: 'POST', body: JSON.stringify({ website: website.trim(), businessName: project && project.customerName }) });
+      const r = await hrApi(`/projects/${projectId || 'none'}/preseo`, { method: 'POST', body: JSON.stringify({ website: website.trim(), businessName: bizName || (project && project.customerName), services, reportType }) });
       setRid(r.id); setStep('running');
     } catch (e) { toast(e.message); }
     setBusy(false);
@@ -564,43 +765,52 @@ function PreSeoReportWizard({ projectId, project, onClose }) {
 
   const generate = async () => {
     setGen(true);
-    try { await hrApi(`/projects/preseo/${rid}/generate`, { method: 'POST' }); const r = await hrApi(`/projects/preseo/${rid}`); setRep(r); setStep('done'); }
+    try { await hrApi(`/projects/preseo/${rid}/generate`, { method: 'POST' }); const r = await hrApi(`/projects/preseo/${rid}`); setRep(r); setStep('done'); if (onDone) onDone(); }
     catch (e) { toast(e.message); }
     setGen(false);
   };
 
+  const SERVICE_OPTS = ['SEO', 'AI SEO', 'Social', 'Web'];
+  const toggleSvc = (s) => setServices((cur) => cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]);
+  const title = editReport ? `Edit — ${editReport.businessName || editReport.domain}` : (step === 'done' ? 'Report ready' : 'Run a Pre-SEO Report');
+  const subtitle = editReport ? 'Upload a missing screenshot or replace one, then regenerate.'
+    : step === 'review' ? 'Review the analysis, upload tool screenshots, then generate.'
+    : 'Fill everything once — details, auto-capture and any tool screenshots.';
+
+  // Right-side slide-over pocket.
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[220] p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[88vh] overflow-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 sticky top-0 bg-white z-10">
-          <div className="text-[15px] font-extrabold text-[#050A1F]">Run Report{rep && rep.domain ? ` · ${rep.domain}` : ''}</div>
-          <button onClick={onClose} className="text-slate-300 hover:text-slate-600 text-[18px]">✕</button>
+    <div className="fixed inset-0 z-[220]">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <aside className="absolute top-0 right-0 h-full w-full max-w-[560px] bg-white shadow-2xl flex flex-col animate-[slideIn_.28s_ease]" style={{ animationName: 'none' }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between px-5 py-4 border-b border-slate-100">
+          <div><div className="text-[16px] font-extrabold text-[#050A1F]">{title}</div><div className="text-[11.5px] text-slate-400 mt-0.5">{subtitle}</div></div>
+          <button onClick={onClose} className="text-slate-300 hover:text-slate-600 text-[20px] leading-none">×</button>
         </div>
-        <div className="p-5">
-          {step === 'pick' && (
+
+        <div className="flex-1 overflow-auto px-5 py-4">
+          {(step === 'pick' || step === 'url') && (
             <div>
-              <div className="text-[12px] font-bold text-slate-500 mb-2">SELECT REPORT TYPE</div>
-              <button onClick={() => { setReportType('pre_seo'); setStep('url'); }} className="w-full text-left border-2 rounded-xl p-4 transition" style={{ borderColor: '#FF6A00', background: '#FFF7ED' }}>
-                <div className="font-extrabold text-[#050A1F] text-[14px]">🔍 Pre-SEO Analysis Report</div>
-                <div className="text-[12px] text-slate-500 mt-1">Full website health &amp; search-visibility audit (14 chapters) — auto-analysed, branded PDF.</div>
-              </button>
-              <div className="w-full text-left border border-slate-200 rounded-xl p-4 mt-2 opacity-50">
-                <div className="font-extrabold text-slate-400 text-[14px]">More report types coming soon</div>
+              <div className="mb-3">
+                <label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Report type</label>
+                <div className="flex flex-wrap gap-2">
+                  <div className="px-3 py-2 rounded-xl text-[12px] font-bold border-2 cursor-pointer" style={{ borderColor: '#FF6A00', background: '#FFF7ED', color: '#FF4500' }}>Pre-SEO Audit</div>
+                  <div className="px-3 py-2 rounded-xl text-[12px] font-bold border border-slate-200 text-slate-400 cursor-not-allowed">Full SEO Audit (soon)</div>
+                </div>
+              </div>
+              <div className="mb-3"><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Website URL</label>
+                <input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://example.com" className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-[13.5px] focus:outline-none focus:ring-2 focus:ring-orange-200" /></div>
+              <div className="mb-3"><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Business name <span className="font-medium text-slate-300">· shown on the cover</span></label>
+                <input value={bizName} onChange={(e) => setBizName(e.target.value)} placeholder="Client / business name" className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-[13.5px] focus:outline-none focus:ring-2 focus:ring-orange-200" /></div>
+              <div className="mb-3"><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Services</label>
+                <div className="flex flex-wrap gap-2">{SERVICE_OPTS.map((s) => <button key={s} onClick={() => toggleSvc(s)} className="px-3 py-1.5 rounded-lg text-[12px] font-bold border" style={services.includes(s) ? { borderColor: '#FF6A00', background: '#FFF7ED', color: '#FF4500' } : { borderColor: '#e2e8f0', color: '#64748b' }}>{s}</button>)}</div></div>
+              <div className="rounded-xl bg-slate-50 border border-slate-200 text-[11.5px] text-slate-500 px-3 py-2.5 leading-snug">
+                Claude will <b className="text-slate-700">crawl the site &amp; auto-capture</b> the homepage, robots.txt, sitemap, schema and mobile views (issues highlighted in red), then write the analysis. On the next step you can upload tool screenshots — Claude reads each one to write that section. <b className="text-slate-700">Sections you don't upload are excluded.</b> The ChatGPT / Perplexity section is generated automatically via the OpenAI + Claude APIs.
               </div>
             </div>
           )}
 
-          {step === 'url' && (
-            <div>
-              <div className="text-[12px] font-bold text-slate-500 mb-2">WEBSITE URL</div>
-              <input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://example.com" className="w-full border border-slate-200 rounded-xl px-4 py-3 text-[14px] mb-2 focus:outline-none focus:ring-2 focus:ring-orange-200" />
-              <p className="text-[11.5px] text-slate-400 mb-4">We'll crawl the live site, capture what we can automatically (homepage, robots.txt, sitemap, schema, speed), and then ask you for the few tool screenshots we can't get on our own.</p>
-              <div className="flex justify-between"><button onClick={() => setStep('pick')} className="text-[12px] font-bold text-slate-500">← Back</button><button onClick={start} disabled={busy} className="px-6 py-2.5 rounded-xl text-[13px] font-extrabold text-white" style={{ background: '#FF6A00', opacity: busy ? 0.6 : 1 }}>{busy ? 'Starting…' : 'Analyse website →'}</button></div>
-            </div>
-          )}
-
           {step === 'running' && (
-            <div className="py-8 text-center">
+            <div className="py-12 text-center">
               <div className="inline-block w-10 h-10 rounded-full border-4 border-orange-200 border-t-orange-500 animate-spin mb-4" />
               <div className="text-[14px] font-bold text-[#050A1F]">{rep ? rep.currentStep || 'Working…' : 'Starting…'}</div>
               <div className="text-[12px] text-slate-400 mt-1">{rep ? `${rep.progress || 0}%` : ''} — this usually takes under a minute.</div>
@@ -608,11 +818,14 @@ function PreSeoReportWizard({ projectId, project, onClose }) {
           )}
 
           {(step === 'review') && rep && rep.data && (
-            <ReviewStep rep={rep} onUpload={uploadShot} onSave={saveEdits} onGenerate={generate} gen={gen} />
+            <ReviewStep rep={rep} rid={rid} onUpload={uploadShot} onSave={saveEdits} onGenerate={generate} gen={gen} editMode={!!editReport} />
+          )}
+          {(step === 'review') && (!rep || !rep.data) && (
+            <div className="py-12 text-center text-slate-400 text-sm">Loading report…</div>
           )}
 
           {step === 'done' && (
-            <div className="py-8 text-center">
+            <div className="py-10 text-center">
               <div className="text-4xl mb-2">✅</div>
               <div className="text-[15px] font-extrabold text-[#050A1F]">Report generated</div>
               <div className="text-[12px] text-slate-400 mt-1 mb-4">Your branded Pre-SEO Audit PDF is ready.</div>
@@ -620,17 +833,27 @@ function PreSeoReportWizard({ projectId, project, onClose }) {
                 <a href={`${API_BASE}/api/hr/projects/preseo/${rid}/view?token=${encodeURIComponent(localStorage.getItem(TOKEN_KEY) || '')}`} target="_blank" rel="noreferrer" className="px-4 py-2.5 rounded-xl text-[13px] font-bold text-slate-600 bg-slate-100">Preview</a>
                 <a href={`${API_BASE}/api/hr/projects/preseo/${rid}/download?token=${encodeURIComponent(localStorage.getItem(TOKEN_KEY) || '')}`} className="px-6 py-2.5 rounded-xl text-[13px] font-extrabold text-white" style={{ background: '#FF6A00' }}>Download PDF</a>
               </div>
+              <button onClick={onClose} className="mt-4 text-[12px] font-bold text-slate-400">Close</button>
             </div>
           )}
         </div>
-      </div>
+
+        {(step === 'pick' || step === 'url') && (
+          <div className="px-5 py-3 border-t border-slate-100 flex justify-between items-center">
+            <button onClick={onClose} className="text-[12.5px] font-bold text-slate-500">Cancel</button>
+            <button onClick={start} disabled={busy} className="px-6 py-2.5 rounded-xl text-[13px] font-extrabold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)', opacity: busy ? 0.6 : 1 }}>{busy ? 'Starting…' : 'Generate report →'}</button>
+          </div>
+        )}
+      </aside>
     </div>
   );
 }
 
-function ReviewStep({ rep, onUpload, onSave, onGenerate, gen }) {
+function ReviewStep({ rep, rid, onUpload, onSave, onGenerate, gen, editMode }) {
   const [d, setD] = useState(rep.data);
+  useEffect(() => { setD(rep.data); }, [rep]);
   const shots = rep.shots || {};
+  const uploadedCount = MANUAL_SLOTS.filter((m) => shots[m.slot] && shots[m.slot].source === 'upload').length;
   const imgUrl = (u) => (!u ? '' : /^https?:\/\//i.test(u) ? u : `${API_BASE}${u}`);
   const upd = (path, v) => { setD((s) => { const c = JSON.parse(JSON.stringify(s)); let o = c; for (let i = 0; i < path.length - 1; i++) o = o[path[i]]; o[path[path.length - 1]] = v; return c; }); };
   const autoShots = Object.entries(shots).filter(([k, v]) => v && v.source === 'auto');
@@ -658,20 +881,31 @@ function ReviewStep({ rep, onUpload, onSave, onGenerate, gen }) {
       )}
 
       {/* Manual upload slots */}
-      <div className="text-[11px] font-extrabold text-slate-400 uppercase mb-1.5">Upload tool screenshots <span className="normal-case font-medium text-slate-300">· optional, but they complete the report</span></div>
-      <div className="space-y-1.5 mb-4">
+      <div className="text-[11px] font-extrabold text-slate-400 uppercase mb-1">Upload tool screenshots</div>
+      <div className="text-[10.5px] text-slate-400 mb-2 leading-snug">Claude reads each screenshot you upload and writes that section from what it shows. <b>Sections you don't upload are left out of the final PDF</b> — no empty boxes.</div>
+      <div className="space-y-1.5 mb-3">
         {MANUAL_SLOTS.map((m) => { const has = shots[m.slot] && shots[m.slot].source === 'upload'; return (
-          <div key={m.slot} className="flex items-center gap-2 border border-slate-100 rounded-lg px-2.5 py-1.5">
+          <div key={m.slot} className="flex items-center gap-2.5 border border-slate-100 rounded-xl px-2.5 py-2">
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center text-[13px] flex-none" style={has ? { background: '#ecfdf3', color: '#16a34a' } : { background: '#fff7ed', color: '#FF4500' }}>{has ? '✓' : '＋'}</div>
             <div className="flex-1 min-w-0"><div className="text-[12px] font-bold text-[#050A1F] truncate">{m.label}</div><div className="text-[10.5px] text-slate-400 truncate">{m.hint}</div></div>
-            {has && <img src={imgUrl(shots[m.slot].url)} className="w-10 h-7 object-cover rounded border border-slate-200" />}
-            <label className="text-[11px] font-bold text-orange-600 cursor-pointer whitespace-nowrap">{has ? 'Replace' : 'Upload'}<input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files[0] && onUpload(m.slot, e.target.files[0], m.label)} /></label>
+            {has && <img src={imgUrl(shots[m.slot].url)} className="w-11 h-7 object-cover rounded border border-slate-200" />}
+            <label className="text-[11px] font-extrabold cursor-pointer whitespace-nowrap" style={{ color: has ? '#2563eb' : '#FF4500' }}>{has ? 'Replace' : 'Upload'}<input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files[0] && onUpload(m.slot, e.target.files[0], m.label)} /></label>
           </div>
         ); })}
+        {/* AI-automatic section */}
+        <div className="flex items-center gap-2.5 rounded-xl px-2.5 py-2" style={{ background: '#FFF7ED', border: '1px solid #fde3c7' }}>
+          <div className="w-7 h-7 rounded-lg bg-white flex items-center justify-center text-[13px] flex-none">🤖</div>
+          <div className="flex-1 min-w-0"><div className="text-[12px] font-bold text-[#050A1F]">ChatGPT / Perplexity — AI answers</div><div className="text-[10.5px] text-slate-400">Generated automatically via OpenAI + Claude APIs</div></div>
+          <span className="text-[10px] font-extrabold text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">Automatic</span>
+        </div>
       </div>
 
-      <div className="flex justify-between items-center sticky bottom-0 bg-white pt-2">
-        <button onClick={() => onSave(d)} className="text-[12px] font-bold text-slate-500">💾 Save edits</button>
-        <button onClick={async () => { await onSave(d); onGenerate(); }} disabled={gen} className="px-6 py-2.5 rounded-xl text-[13px] font-extrabold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)', opacity: gen ? 0.6 : 1 }}>{gen ? 'Generating…' : 'Generate PDF →'}</button>
+      <div className="flex justify-between items-center sticky bottom-0 bg-white pt-2 pb-1 -mx-1 px-1">
+        <div className="text-[11px] text-slate-400">{uploadedCount} of {MANUAL_SLOTS.length} uploaded · rest auto-handled</div>
+        <div className="flex gap-2">
+          <button onClick={() => onSave(d)} className="text-[12px] font-bold text-slate-500 px-2">Save</button>
+          <button onClick={async () => { await onSave(d); onGenerate(); }} disabled={gen} className="px-5 py-2.5 rounded-xl text-[13px] font-extrabold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)', opacity: gen ? 0.6 : 1 }}>{gen ? 'Generating…' : editMode ? 'Save & regenerate →' : 'Generate PDF →'}</button>
+        </div>
       </div>
     </div>
   );

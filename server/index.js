@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v638';
+const APP_VERSION = 'v640';
 global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
@@ -72,7 +72,7 @@ app.use(express.json({ limit: '20mb' }));
 const PATH_SURFACE = [
   { surface: 'careers', prefixes: ['/careers', '/jobs', '/task', '/onboarding', '/schedule'] },
   { surface: 'hrms', prefixes: ['/hr'] },
-  { surface: 'reports', prefixes: ['/r/'] },
+  { surface: 'reports', prefixes: ['/r/', '/pr/'] },
   // 'crm' owns everything else (the CRM SPA: /, /dashboard, /leads, /admin, …)
 ];
 function surfaceOfPath(p) {
@@ -94,7 +94,7 @@ app.use(async (req, res, next) => {
     // Candidate + report paths always belong to their own surfaces, on ANY host.
     const careersPrefixes = ['/careers', '/jobs', '/task', '/onboarding', '/schedule'];
     const isCareersPath = careersPrefixes.some((pre) => p === pre || p.startsWith(pre + '/'));
-    const isReportPath = p.startsWith('/r/');
+    const isReportPath = p.startsWith('/r/') || p.startsWith('/pr/');
 
     // Careers domain: its root serves the listing directly; a careers path stays;
     // anything else (an HRMS/CRM path) is redirected to where it belongs.
@@ -467,6 +467,8 @@ app.get('/careers/:token', (req, res) => servePublicCareersOrJob(req, res, '/car
 // Public shareable Site Analysis report links (/r/:slug), no auth. Served before
 // the SPA catch-all so the customer sees the branded report + download button.
 app.use('/', require('./routes/publicReports'));
+// Public shareable Pre-SEO report links (/pr/:slug), same trackable pattern.
+app.use('/', require('./routes/publicPreSeo'));
 
 // Lightweight liveness probe — never touches the DB, so the platform can tell
 // the process is up even during a database blip and won't kill the container.

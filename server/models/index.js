@@ -2525,6 +2525,10 @@ const PreSeoReport = sequelize.define('PreSeoReport', {
   pdfPath: { type: DataTypes.STRING(255), allowNull: true },
   htmlPath: { type: DataTypes.STRING(255), allowNull: true },
   completedAt: { type: DataTypes.DATE, allowNull: true },
+  // Public sharing — same trackable /r/ link + logging pattern as Report.
+  publicSlug: { type: DataTypes.STRING(80), allowNull: true, unique: true },
+  publicEnabled: { type: DataTypes.BOOLEAN, defaultValue: false },
+  publicViews: { type: DataTypes.JSON, defaultValue: [] }, // [{at, ip, ua, type:'view'|'download'}]
 }, { tableName: 'pre_seo_reports', indexes: [
   { name: 'idx_preseo_project', fields: ['projectId'] },
   { name: 'idx_preseo_status', fields: ['status'] },

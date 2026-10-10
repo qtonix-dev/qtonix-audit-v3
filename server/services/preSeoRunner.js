@@ -9,7 +9,7 @@ const fs = require('fs/promises');
 const { PreSeoReport, Settings } = require('../models');
 const crawler = require('./crawler');
 const { captureAuto } = require('./preSeoCapture');
-const { buildReportData } = require('./preSeoAnalyze');
+const { buildReportData, refreshUploads } = require('./preSeoAnalyze');
 const { renderPreSeo } = require('./renderer');
 const { toRenderUrl, UPLOAD_DIR } = require('./preSeoStore');
 
@@ -49,11 +49,13 @@ async function run(reportId) {
     // Gather uploaded screenshots as base64 for Claude vision.
     const screenshots = await loadUploadedImages(merged);
 
+    const seededServices = (report.data && Array.isArray(report.data._services)) ? report.data._services : [];
     const meta = {
       businessName: report.businessName || report.domain, shortName: (report.businessName || report.domain || '').split(' ')[0],
       monthYear: monthYear(), auditDate: auditDate(), pagesReviewed: (crawl.sitemap && crawl.sitemap.urlCount) || 1,
       preparedBy: report.createdByName || 'Adam G, Project Manager',
       contactEmail: 'adam@qtonix.com', contactPhone: '+91-8249016547', clientLogo: '',
+      services: seededServices,
     };
     const data = await buildReportData(crawl, meta, { anthropicKey, openaiKey }, screenshots);
     // attach shot urls into the data so the template can show them
@@ -106,14 +108,69 @@ function toPublic(u) {
   return toRenderUrl(u);
 }
 
+// Drop or trim sections that have nothing to show. Rule (per the report spec):
+//   - A section flagged `manual` whose screenshot was NOT uploaded AND which has
+//     no research-backed content (no `research` flag, no bullets, no table) is
+//     removed entirely — no empty orange "[ PASTE SCREENSHOT HERE ]" box.
+//   - A `manual` section with research content but no image keeps its content
+//     and just loses the empty shot box.
+//   - Auto-captured / research sections are always kept.
+// A section is considered to "have content" if it carries a table, bullets,
+// willdo, cols or weeks — i.e. something beyond the screenshot placeholder.
+function hasBody(sec) {
+  return !!(sec.table || (sec.bullets && sec.bullets.length) || sec.willdo || sec.cols || sec.weeks || sec.image);
+}
+function pruneSections(data) {
+  for (const ch of (data.chapters || [])) {
+    ch.sections = (ch.sections || []).filter((sec) => {
+      const hasImg = !!(sec.shot && sec.shot.img);
+      if (hasImg) return true;                 // uploaded/auto image → keep
+      if (!sec.manual) return true;            // normal research section → keep
+      // manual section, no image:
+      if (sec.research && hasBody(sec)) {       // keep the researched content...
+        delete sec.shot;                        // ...but remove the empty box
+        return true;
+      }
+      return false;                             // nothing to show → drop section
+    });
+  }
+  // A chapter with no sections left would render an empty band; drop it too.
+  data.chapters = (data.chapters || []).filter((ch) => (ch.sections && ch.sections.length) || ch.stats);
+}
+
 // Generate the PDF from the (possibly edited) report data.
 async function generate(reportId) {
   const report = await PreSeoReport.findByPk(reportId);
   if (!report || !report.data || !report.data.report) throw new Error('Report not analysed yet.');
-  await setStatus(reportId, { status: 'rendering', currentStep: 'Generating PDF' });
-  // re-attach shots as file:// for the PDF
-  attachShots(report.data, report.shots || {});
-  const { pdfPath, htmlPath } = await renderPreSeo(report.data, `${report.domain}-${report.id}`);
+  await setStatus(reportId, { status: 'rendering', currentStep: 'Reading uploaded screenshots' });
+  // Work on a deep copy so pruning/refresh for the PDF never mutates the stored
+  // data (the user may upload more screenshots and regenerate).
+  const pdfData = JSON.parse(JSON.stringify(report.data));
+
+  // Read the uploaded screenshots now (they usually arrive in the review step,
+  // after run()) and write a real per-section observation from each, plus the
+  // live AI Answers section. This is why uploaded sections get relevant text.
+  try {
+    const s = await Settings.findOne();
+    const keys = { anthropicKey: s && s.getKey ? s.getKey('anthropic') : null, openaiKey: s && s.getKey ? s.getKey('openai') : null };
+    const screenshots = await loadUploadedImages(report.shots || {});
+    const meta = {
+      businessName: report.businessName || report.domain,
+      shortName: (report.businessName || report.domain || '').split(' ')[0],
+    };
+    await setStatus(reportId, { currentStep: 'Analysing screenshots with AI' });
+    await refreshUploads(pdfData, report.crawl || {}, meta, keys, screenshots);
+    // persist the refreshed observations back to the stored data too, so the
+    // review view and any re-download reflect them (without the prune).
+    const stored = JSON.parse(JSON.stringify(pdfData));
+    report.data = stored; report.changed('data', true); await report.save();
+  } catch (e) { console.error('[preSeo] refresh uploads failed:', e.message); }
+
+  await setStatus(reportId, { currentStep: 'Generating PDF' });
+  // re-attach shots as file:// for the PDF, then drop empty/un-uploaded sections
+  attachShots(pdfData, report.shots || {});
+  pruneSections(pdfData);
+  const { pdfPath, htmlPath } = await renderPreSeo(pdfData, `${report.domain}-${report.id}`);
   await setStatus(reportId, { status: 'complete', pdfPath, htmlPath, completedAt: new Date(), currentStep: 'Complete', progress: 100 });
   return { pdfPath, htmlPath };
 }

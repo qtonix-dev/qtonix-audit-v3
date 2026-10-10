@@ -10,7 +10,7 @@
  *     scores, "working vs fixing", keyword opportunity map, and the week-by-week
  *     action plan — is written by Claude from the same data (+ screenshots).
  */
-const { callAI } = require('./aiVisibility');
+const { callAI, callClaude, callOpenai } = require('./aiVisibility');
 
 const RED = '#dc2626', AMBER = '#f59e0b', GREEN = '#16a34a';
 
@@ -59,6 +59,7 @@ function skeleton(f, meta) {
       domain: f.domain, website: f.website, monthYear: meta.monthYear, auditDate: meta.auditDate,
       pagesReviewed: meta.pagesReviewed || 1, preparedBy: meta.preparedBy, contactEmail: meta.contactEmail,
       contactPhone: meta.contactPhone, clientLogo: meta.clientLogo || '',
+      services: Array.isArray(meta.services) ? meta.services : [],
       healthScore: { value: 0, deg: 0 }, // filled after Claude scores the bars
     },
     toc: TOC,
@@ -159,12 +160,155 @@ function parseJson(s) {
   try { return JSON.parse(t); } catch { return {}; }
 }
 
+// ---- per-section screenshot analysis (vision) -----------------------------
+// Each uploaded screenshot is read by Claude IN THE CONTEXT of its section, so
+// the observation is a real, specific read of the image (e.g. "Authority Score
+// 14, Organic Traffic 57, 27 keywords") — not a generic "screenshot from X".
+// SHOT_CONTEXT maps a slot key to what the image shows + what to pull from it.
+const SHOT_CONTEXT = {
+  '2.1': { tool: 'SEMrush Domain Overview', want: 'Authority Score, Organic Traffic (monthly visits), number of Organic Keywords, Referring Domains / Backlinks, and the traffic trend (growing, flat or declining).' },
+  '2.2': { tool: 'Google "site:" search results', want: 'how many pages Google has indexed (count of results), which pages appear, and whether any important pages are missing or any "No results" message shows.' },
+  '3.1': { tool: 'view-source of the homepage', want: 'the meta robots tag value (index/noindex), the <title>, and the canonical URL.' },
+  '3.2': { tool: 'the robots.txt file', want: 'which paths are disallowed, whether a Sitemap: line is present, and whether any AI crawlers (GPTBot, PerplexityBot, ClaudeBot, Google-Extended) are blocked.' },
+  '3.3': { tool: 'the XML sitemap', want: 'whether the sitemap loads, how many URLs/child sitemaps it lists, and whether the main pages are included.' },
+  '3.4': { tool: 'Screaming Frog Response Codes', want: 'how many URLs return 200 vs 3xx redirects vs 4xx/5xx errors, and whether any broken links or redirect chains are visible.' },
+  '4.1': { tool: 'PageSpeed Insights (Mobile)', want: 'the Performance score, and the LCP, CLS, TBT / Speed Index values, and any flagged "Opportunities".' },
+  '4.2': { tool: 'PageSpeed Insights (Desktop)', want: 'the Performance score and the core metrics (LCP, CLS), and how it compares to mobile.' },
+  '4.4': { tool: 'the homepage rendered on mobile/tablet/desktop', want: 'whether the layout adapts cleanly to each screen size, and any obvious overflow, overlap or broken responsiveness.' },
+  '5.2': { tool: 'Google Rich Results Test', want: 'which structured-data / schema types were detected, and whether any errors or warnings are shown.' },
+  '5.3': { tool: 'the Open Graph / social share preview', want: 'whether a share image, title and description are present and look correct, or whether the preview is blank/broken.' },
+  '8.1': { tool: 'SEMrush Backlink table', want: 'total backlinks, referring domains, authority score, toxicity, and the strongest referring domains visible.' },
+  '8.2': { tool: 'Moz / authority checker', want: 'Domain Authority (DA), Page Authority (PA), Spam Score, and linking root domains.' },
+  '9.1': { tool: 'SEMrush competitor traffic chart', want: 'which competitor domains appear, their estimated monthly traffic/keywords, and how this site compares to them.' },
+  '10.2': { tool: 'SEMrush Keyword Magic Tool', want: 'the main keywords shown with their search volume and KD% (difficulty), and which look like realistic targets.' },
+};
+
+async function analyzeShot(keys, slot, image, { domain, business }) {
+  const ctx = SHOT_CONTEXT[slot] || { tool: 'an SEO tool screenshot', want: 'the key figures and what they mean for this website.' };
+  const system = `You are a senior SEO auditor writing ONE short observation paragraph for a client-facing report, based on a screenshot the client uploaded. Rules:
+- The image is a screenshot of ${ctx.tool} for ${business} (${domain}). Read the actual numbers and text in the image.
+- Pull out ${ctx.want}
+- Write 2-4 plain, calm sentences a non-technical owner understands. State the real figures you can see. No hype, no jargon, no exclamation marks.
+- If a figure is low or a problem, say so plainly and note our team will address it on approval ("Our team will…"). If it is healthy, say that.
+- If the screenshot is unclear or does not show the expected data, say only what you can actually see; do NOT invent numbers.
+- Output ONLY the paragraph text — no heading, no JSON, no markdown.`;
+  const content = [
+    { type: 'text', text: `This is the ${ctx.tool} screenshot for ${domain}. Read it and write the observation paragraph.` },
+    { type: 'image', source: { type: 'base64', media_type: image.mime, data: image.base64 } },
+  ];
+  // Vision requires Claude; fall back to OpenAI vision if Claude key is absent.
+  try {
+    if (keys.anthropicKey) return (await callClaude(keys.anthropicKey, { system, messages: [{ role: 'user', content }], maxTokens: 500 })).trim();
+  } catch (e) { console.error('[preSeoAnalyze] shot analysis (claude) failed for', slot, e.message); }
+  try {
+    if (keys.openaiKey) return (await callOpenaiVision(keys.openaiKey, system, content)).trim();
+  } catch (e) { console.error('[preSeoAnalyze] shot analysis (openai) failed for', slot, e.message); }
+  return '';
+}
+
+// OpenAI vision: gpt-4o-mini accepts image_url content blocks (base64 data URI).
+async function callOpenaiVision(apiKey, system, claudeContent) {
+  const parts = claudeContent.map((b) => b.type === 'image'
+    ? { type: 'image_url', image_url: { url: `data:${b.source.media_type};base64,${b.source.data}` } }
+    : { type: 'text', text: b.text });
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model: 'gpt-4o-mini', max_tokens: 500, messages: [{ role: 'system', content: system }, { role: 'user', content: parts }] }),
+  });
+  if (!res.ok) throw new Error(`OpenAI vision ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const data = await res.json();
+  return (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
+}
+
+// ---- AI Answers (section 11.1): query ChatGPT + Claude live ----------------
+// Instead of asking the user to paste a ChatGPT/Perplexity screenshot, we ask
+// both models the real "best X" buying question and record which brands each
+// names and whether the client's brand appears. Returns a section-ready object.
+async function aiAnswers(keys, { facts: f, meta }) {
+  const business = meta.businessName || f.domain;
+  const bareDomain = (f.domain || '').replace(/^www\./, '');
+  // Derive the category/audience from the homepage title + schema so the query
+  // is realistic for this specific business.
+  let query = '';
+  try {
+    const q = await callAI({
+      anthropicKey: keys.anthropicKey, openaiKey: keys.openaiKey, maxTokens: 300,
+      system: 'You write one realistic buyer search query. Output ONLY valid JSON, no markdown.',
+      messages: [{ role: 'user', content: `Business: ${business}\nWebsite: ${f.domain}\nHomepage title: ${f.title}\nWhat they do (from schema/meta): ${(f.schemaTypes || []).join(', ')}\n\nWrite the single most important "best X" question a prospective customer would ask ChatGPT when ready to buy in this category. Do NOT mention "${business}" in it. Return JSON: {"query":"...","category":"short category label"}` }],
+    });
+    const parsed = parseJson(q);
+    query = parsed.query || '';
+  } catch {}
+  if (!query) query = `What are the best ${f.title ? f.title.split('|')[0].trim() : 'options'} available?`;
+
+  const ask = async (provider) => {
+    const sys = 'Answer as you normally would for a member of the public asking for a recommendation. Name specific real companies/brands/products where you can. Be concise (under 200 words).';
+    const msgs = [{ role: 'user', content: query }];
+    try {
+      if (provider === 'claude' && keys.anthropicKey) return await callClaude(keys.anthropicKey, { system: sys, messages: msgs, maxTokens: 700 });
+      if (provider === 'openai' && keys.openaiKey) return await callOpenai(keys.openaiKey, { system: sys, messages: msgs, maxTokens: 700 });
+    } catch (e) { console.error('[preSeoAnalyze] aiAnswers', provider, 'failed:', e.message); }
+    return '';
+  };
+  const [claudeAns, openaiAns] = await Promise.all([ask('claude'), ask('openai')]);
+
+  const mentioned = (txt) => {
+    if (!txt) return null;
+    const h = txt.toLowerCase();
+    return h.includes(business.toLowerCase()) || h.includes(bareDomain.toLowerCase());
+  };
+  // Pull the brand names each model recommended.
+  const extractBrands = async (txt) => {
+    if (!txt) return [];
+    try {
+      const out = await callAI({
+        anthropicKey: keys.anthropicKey, openaiKey: keys.openaiKey, maxTokens: 300,
+        system: 'Output ONLY valid JSON, no markdown.',
+        messages: [{ role: 'user', content: `List every company/brand/product named as an option in this text. Exclude generic terms and directories.\n\nTEXT:\n${txt.slice(0, 3000)}\n\nReturn JSON: {"brands":["..."]}` }],
+      });
+      return (parseJson(out).brands || []).slice(0, 8);
+    } catch { return []; }
+  };
+  const [claudeBrands, openaiBrands] = await Promise.all([extractBrands(claudeAns), extractBrands(openaiAns)]);
+
+  const rows = [];
+  if (claudeAns) rows.push({ model: 'Claude', brands: claudeBrands, mentioned: mentioned(claudeAns) });
+  if (openaiAns) rows.push({ model: 'ChatGPT (GPT-4o)', brands: openaiBrands, mentioned: mentioned(openaiAns) });
+
+  const anyMention = rows.some((r) => r.mentioned);
+  const allBrands = [...new Set([...claudeBrands, ...openaiBrands])].filter((b) => b.toLowerCase() !== business.toLowerCase());
+  let obs;
+  if (!rows.length) {
+    obs = 'AI assistant results could not be retrieved for this report. Our team will run these checks manually and include them in the first monthly report.';
+  } else if (anyMention) {
+    obs = `We asked ChatGPT and Claude the question a buyer would ask — "${query}" — without naming the brand. ${business} was mentioned in the answer, which is a good early signal. The brands named most often were ${allBrands.slice(0, 5).join(', ') || 'a mix of larger players'}. Our team will strengthen this further with schema, FAQ content and listings so the brand is recommended more consistently.`;
+  } else {
+    obs = `We asked ChatGPT and Claude the question a buyer would ask — "${query}" — without naming the brand. ${business} was not mentioned in either answer; the assistants recommended ${allBrands.slice(0, 5).join(', ') || 'other, better-known brands'} instead. This is the AI-search gap we will close by getting the site indexed, adding answer-friendly FAQ content and schema, and building listings and article mentions so AI tools start naming the brand.`;
+  }
+  return { query, obs, rows, anyMention };
+}
+
 // ---- assemble final report data -------------------------------------------
 async function buildReportData(crawl, meta, keys, screenshots) {
   const f = facts(crawl);
   const base = skeleton(f, meta);
   let n = {};
   try { n = await analyzeNarrative(keys, { facts: f, meta, screenshots }); } catch (e) { console.error('[preSeoAnalyze] claude failed:', e.message); }
+
+  // Per-section vision read of each UPLOADED screenshot → a real observation.
+  // Keyed by slot ('2.1','4.1',...); auto-captured boxes are skipped (they are
+  // generated from crawl data, not uploads, and need no vision pass).
+  const shotObs = {};
+  for (const s of (screenshots || [])) {
+    if (!s || !s.base64 || !s.mime || !SHOT_CONTEXT[s.key]) continue;
+    const text = await analyzeShot(keys, s.key, s, { domain: f.domain, business: meta.businessName });
+    if (text) shotObs[s.key] = text;
+  }
+
+  // AI Answers (11.1): live ChatGPT + Claude query, no screenshot needed.
+  let ai = null;
+  try { ai = await aiAnswers(keys, { facts: f, meta }); } catch (e) { console.error('[preSeoAnalyze] aiAnswers failed:', e.message); }
 
   // health score + bars
   const bars = (n.healthBars && n.healthBars.length === 10 ? n.healthBars : defaultBars(f)).map((x) => ({ n: x.n, s: clamp(x.s), pct: Math.max(3, clamp(x.s) * 10), color: barColor(clamp(x.s)) }));
@@ -179,7 +323,7 @@ async function buildReportData(crawl, meta, keys, screenshots) {
   base.ch1.keyTakeaway = n.keyTakeaway || 'The audit identified the key issues to fix before the campaign starts.';
   base.ch1.about = n.about || `This report shows where ${f.domain} stands today. Every fix listed will be carried out by the Qtonix team once you approve the plan.`;
 
-  base.chapters = buildChapters(f, n, meta);
+  base.chapters = buildChapters(f, n, meta, { shotObs, ai });
   delete base._facts;
   return base;
 }
@@ -212,20 +356,50 @@ function deriveTopIssues(f) {
 // Build chapters 2..14 + appendix. Narrative fields come from Claude (n),
 // factual tables from crawl facts (f). Screenshot slots reference shot keys the
 // capture step / uploads fill.
-function buildChapters(f, n, meta) {
+// Section 11.1 "AI Answers", built from the live ChatGPT + Claude query (no
+// screenshot). Shows the observation plus a table: AI model → brands it named →
+// whether this brand was mentioned. Always research-backed, so never pruned.
+function aiAnswersSection(ai, f, meta) {
+  const business = meta.businessName || f.domain;
+  const base = { num: '11.1', heading: 'AI Answers', src: 'ChatGPT + Claude (live query)', research: true };
+  if (!ai || !ai.rows || !ai.rows.length) {
+    return { ...base, bullets: [{ kind: 'info', title: 'Current Observation', badge: 'INFO', text: (ai && ai.obs) || 'AI assistant results will be included in the first monthly report.' }] };
+  }
+  const yesno = (m) => (m === true ? 'YES' : m === false ? 'NO' : '—');
+  return {
+    ...base,
+    bullets: [{ kind: ai.anyMention ? 'good' : 'high', title: 'Current Observation', badge: ai.anyMention ? 'GOOD' : 'HIGH', text: ai.obs }],
+    table: {
+      cols: [{ label: 'AI assistant', width: '22%' }, { label: `Brands it recommended`, }, { label: `${business} named?`, align: 'c', width: '18%' }],
+      rows: ai.rows.map((r) => [
+        { text: r.model, bold: true },
+        { text: (r.brands && r.brands.length) ? r.brands.slice(0, 6).join(', ') : '—' },
+        { badge: yesno(r.mentioned), align: 'c' },
+      ]),
+    },
+  };
+}
+
+function buildChapters(f, n, meta, extra) {
   const yn = (ok) => (ok ? 'PASS' : 'FAIL');
   const perfM = f.perfMobile != null ? String(f.perfMobile) : '__';
   const perfD = f.perfDesktop != null ? String(f.perfDesktop) : '__';
+  const shotObs = (extra && extra.shotObs) || {};
+  const ai = (extra && extra.ai) || null;
+  // A section's uploaded-screenshot observation, as a Current Observation bullet.
+  const obsBullet = (num, kind) => shotObs[num]
+    ? [{ kind: kind || 'info', title: 'Current Observation', badge: (kind === 'good' ? 'GOOD' : kind === 'crit' ? 'CRITICAL' : kind === 'high' ? 'HIGH' : 'INFO'), text: shotObs[num] }]
+    : null;
   return [
     { no: '02', title: 'Search Visibility Stats', sub: 'Current organic traffic, keywords and whether Google has the site in its index.', sections: [
-      { num: '2.1', heading: 'Overall Site Stats', src: 'SEMrush', shot: { label: 'SEMrush > Domain Overview > ' + f.domain, note: 'Highlight Authority Score, Organic Traffic and Keywords.' }, bullets: [{ kind: 'info', title: 'Current Observation', badge: 'INFO', text: n.searchVisibilityObs || 'Organic traffic and keywords are the baseline we will grow from.' }] },
-      { num: '2.2', heading: 'Google Index Check', src: 'site:' + f.domain, shot: { label: 'Google search: site:' + f.domain, note: 'Red box on "No results" if the site is not indexed.' }, bullets: [{ kind: f.noindex ? 'crit' : 'info', title: 'Current Observation', badge: f.noindex ? 'CRITICAL' : 'INFO', text: n.indexCheckObs || (f.noindex ? 'The site is blocked from indexing, so no pages appear in Google or Bing.' : 'Index coverage will be confirmed from Search Console.') }] },
+      { num: '2.1', heading: 'Overall Site Stats', src: 'SEMrush', manual: true, research: true, shot: { label: 'SEMrush > Domain Overview > ' + f.domain, note: 'Highlight Authority Score, Organic Traffic and Keywords.' }, bullets: obsBullet('2.1', 'info') || [{ kind: 'info', title: 'Current Observation', badge: 'INFO', text: n.searchVisibilityObs || 'Organic traffic and keywords are the baseline we will grow from.' }] },
+      { num: '2.2', heading: 'Google Index Check', src: 'site:' + f.domain, manual: true, research: true, shot: { label: 'Google search: site:' + f.domain, note: 'Red box on "No results" if the site is not indexed.' }, bullets: obsBullet('2.2', f.noindex ? 'crit' : 'info') || [{ kind: f.noindex ? 'crit' : 'info', title: 'Current Observation', badge: f.noindex ? 'CRITICAL' : 'INFO', text: n.indexCheckObs || (f.noindex ? 'The site is blocked from indexing, so no pages appear in Google or Bing.' : 'Index coverage will be confirmed from Search Console.') }] },
     ] },
     { no: '03', title: 'Technical SEO Stats', sub: 'Can search engines find, crawl and index the website?', sections: [
-      { num: '3.1', heading: 'Meta Robots Tag', src: 'Page Source', shot: { label: 'view-source of the homepage' }, bullets: [{ kind: f.noindex ? 'crit' : 'good', title: 'Current Observation', badge: f.noindex ? 'CRITICAL' : 'GOOD', text: f.noindex ? `The homepage meta robots tag is set to ${f.robotsMeta.includes('nofollow') ? 'noindex, nofollow' : 'noindex'}. This tells Google and Bing not to show the site in search results.` : 'No noindex block found on the homepage.' }], willdo: f.noindex ? { text: 'Remove the blocking setting from all pages, submit the website to Google and Bing, and request indexing. This will be our first task after approval.' } : null },
-      { num: '3.2', heading: 'Robots.txt', src: f.domain + '/robots.txt', shot: { label: f.domain + '/robots.txt' }, bullets: [{ kind: 'info', title: 'Current Observation', badge: 'MEDIUM', text: `${f.hasRobots ? 'A robots.txt file is present.' : 'No robots.txt found.'} ${f.blocksAiCrawlers ? 'It blocks some AI crawlers.' : 'AI crawlers (GPTBot, PerplexityBot, ClaudeBot, Google-Extended) are not blocked, which is good.'} ${f.hasSitemap ? '' : 'The Sitemap line is missing and will be added by our team.'}` }] },
-      { num: '3.3', heading: 'XML Sitemap', src: 'Browser', shot: { label: f.domain + '/sitemap_index.xml and /sitemap.xml' }, bullets: [{ kind: f.hasSitemap ? 'good' : 'crit', title: 'Current Observation', badge: f.hasSitemap ? 'GOOD' : 'CRITICAL', text: f.hasSitemap ? 'An XML sitemap is present.' : 'The website does not have an XML sitemap. Our team will create it and submit it to Google and Bing.' }] },
-      { num: '3.4', heading: 'Response Codes & Links', src: 'Screaming Frog', shot: { label: 'Screaming Frog > Response Codes > All', note: 'Red box on 4xx and 3xx rows.' } },
+      { num: '3.1', heading: 'Meta Robots Tag', src: 'Page Source', research: true, shot: { label: 'view-source of the homepage' }, bullets: (obsBullet('3.1', f.noindex ? 'crit' : 'good') || [{ kind: f.noindex ? 'crit' : 'good', title: 'Current Observation', badge: f.noindex ? 'CRITICAL' : 'GOOD', text: f.noindex ? `The homepage meta robots tag is set to ${f.robotsMeta.includes('nofollow') ? 'noindex, nofollow' : 'noindex'}. This tells Google and Bing not to show the site in search results.` : 'No noindex block found on the homepage.' }]), willdo: f.noindex ? { text: 'Remove the blocking setting from all pages, submit the website to Google and Bing, and request indexing. This will be our first task after approval.' } : null },
+      { num: '3.2', heading: 'Robots.txt', src: f.domain + '/robots.txt', research: true, shot: { label: f.domain + '/robots.txt' }, bullets: obsBullet('3.2', 'info') || [{ kind: 'info', title: 'Current Observation', badge: 'MEDIUM', text: `${f.hasRobots ? 'A robots.txt file is present.' : 'No robots.txt found.'} ${f.blocksAiCrawlers ? 'It blocks some AI crawlers.' : 'AI crawlers (GPTBot, PerplexityBot, ClaudeBot, Google-Extended) are not blocked, which is good.'} ${f.hasSitemap ? '' : 'The Sitemap line is missing and will be added by our team.'}` }] },
+      { num: '3.3', heading: 'XML Sitemap', src: 'Browser', research: true, shot: { label: f.domain + '/sitemap_index.xml and /sitemap.xml' }, bullets: obsBullet('3.3', f.hasSitemap ? 'good' : 'crit') || [{ kind: f.hasSitemap ? 'good' : 'crit', title: 'Current Observation', badge: f.hasSitemap ? 'GOOD' : 'CRITICAL', text: f.hasSitemap ? 'An XML sitemap is present.' : 'The website does not have an XML sitemap. Our team will create it and submit it to Google and Bing.' }] },
+      { num: '3.4', heading: 'Response Codes & Links', src: 'Screaming Frog', manual: true, shot: { label: 'Screaming Frog > Response Codes > All', note: 'Red box on 4xx and 3xx rows.' }, bullets: obsBullet('3.4', 'info') },
       { num: '3.5', heading: 'Technical Checklist', table: { cols: [{ label: 'Check', width: '34%' }, { label: 'Status', align: 'c', width: '14%' }, { label: 'Finding' }], rows: [
         [{ text: 'Meta robots tag', bold: true }, { badge: yn(!f.noindex), align: 'c' }, { text: f.noindex ? 'noindex found' : 'Indexable' }],
         [{ text: 'XML sitemap', bold: true }, { badge: yn(f.hasSitemap), align: 'c' }, { text: f.hasSitemap ? 'Present' : 'Not found' }],
@@ -238,8 +412,8 @@ function buildChapters(f, n, meta) {
     { no: '04', title: 'Page Performance & Mobile Usability', sub: 'How fast the website loads and how it works on mobile.',
       stats: [{ v: f.sizeMb != null ? `${f.sizeMb} MB` : '—', l: 'homepage size (target under 2 MB)' }, { v: String(f.imageCount), l: 'images on the homepage' }, { v: String(f.imagesNoAlt), l: 'images missing alt text' }],
       sections: [
-        { num: '4.1', heading: 'Page Performance: Mobile', src: 'Lighthouse', shot: { label: 'PageSpeed Insights > ' + f.domain + ' > Mobile', note: 'Red box on Performance score, LCP and Speed Index.' } },
-        { num: '4.2', heading: 'Page Performance: Desktop', src: 'Lighthouse', shot: { label: 'PageSpeed Insights > ' + f.domain + ' > Desktop' } },
+        { num: '4.1', heading: 'Page Performance: Mobile', src: 'Lighthouse', manual: true, research: f.perfMobile != null, shot: { label: 'PageSpeed Insights > ' + f.domain + ' > Mobile', note: 'Red box on Performance score, LCP and Speed Index.' }, bullets: obsBullet('4.1', f.perfMobile != null && f.perfMobile < 50 ? 'crit' : 'high') || (f.perfMobile != null ? [{ kind: f.perfMobile < 50 ? 'crit' : f.perfMobile < 90 ? 'high' : 'good', title: 'Current Observation', badge: f.perfMobile < 50 ? 'CRITICAL' : f.perfMobile < 90 ? 'HIGH' : 'GOOD', text: `The mobile performance score is ${f.perfMobile}/100${f.cls != null ? ` and the layout shift (CLS) score is ${f.cls}` : ''}. ${f.perfMobile < 90 ? 'Google uses these as ranking signals, so improving them is a priority. Our team will work on image sizes, render-blocking files and server response time.' : 'This is in good shape.'}` }] : null) },
+        { num: '4.2', heading: 'Page Performance: Desktop', src: 'Lighthouse', manual: true, research: f.perfDesktop != null, shot: { label: 'PageSpeed Insights > ' + f.domain + ' > Desktop' }, bullets: obsBullet('4.2', f.perfDesktop != null && f.perfDesktop < 50 ? 'crit' : 'high') || (f.perfDesktop != null ? [{ kind: f.perfDesktop < 50 ? 'crit' : f.perfDesktop < 90 ? 'high' : 'good', title: 'Current Observation', badge: f.perfDesktop < 50 ? 'CRITICAL' : f.perfDesktop < 90 ? 'HIGH' : 'GOOD', text: `The desktop performance score is ${f.perfDesktop}/100. ${f.perfDesktop < 90 ? 'Desktop is usually faster than mobile; the same speed fixes will lift both.' : 'This is in good shape.'}` }] : null) },
         { num: '4.3', heading: 'Core Web Vitals', src: "Google's speed signals", table: { cols: [{ label: 'Metric' }, { label: 'What it measures' }, { label: 'Good target' }, { label: 'This site' }], rows: [
           [{ text: 'LCP', bold: true }, { text: 'How quickly the main content appears' }, { text: '2.5 s or less' }, { text: f.lcp ? (f.lcp / 1000).toFixed(1) + ' s' : '__ s' }],
           [{ text: 'INP', bold: true }, { text: 'How quickly the page reacts to a tap' }, { text: '200 ms or less' }, { text: f.inp ? f.inp + ' ms' : '__ ms' }],
@@ -250,8 +424,8 @@ function buildChapters(f, n, meta) {
       ] },
     { no: '05', title: 'On Page SEO Stats', sub: 'Titles, descriptions, headings, images, schema and social tags.', sections: [
       { num: '5.1', heading: 'Meta Title & Meta Description', src: 'Homepage', bullets: [{ kind: 'high', title: 'Current Observation', badge: 'HIGH', list: [`Title: ${f.title ? '"' + f.title + '" (' + f.titleLength + ' chars)' : 'missing'}`, `Meta description: ${f.hasMetaDesc ? 'present' : 'missing'}`, `H1 tags: ${f.h1Count}`, `Homepage word count: ${f.wordCount}`] }] },
-      { num: '5.2', heading: 'Schema Markup', src: 'Rich Results Test', shot: { label: 'Google Rich Results Test > ' + f.domain, note: 'Red box on "No items detected".' }, bullets: [{ kind: f.hasSchema ? 'good' : 'high', title: 'Current Observation', badge: f.hasSchema ? 'GOOD' : 'HIGH', text: f.hasSchema ? `Schema found: ${f.schemaTypes.join(', ')}.` : 'No schema markup found. Our team will add Organization, WebSite and relevant schema so Google and AI tools understand the brand.' }], willdo: f.hasSchema ? null : { text: 'Add the required schema markup across the website.' } },
-      { num: '5.3', heading: 'Social Tags', src: 'Open Graph', shot: { label: 'Open Graph preview of ' + f.domain }, bullets: [{ kind: f.hasOg ? 'good' : 'high', title: 'Current Observation', badge: f.hasOg ? 'GOOD' : 'MEDIUM', text: f.hasOg ? 'Open Graph tags are present.' : 'No Open Graph tags found. When the link is shared on WhatsApp, Facebook or Discord, it will not show a proper preview. Our team will add social tags and a branded share image.' }] },
+      { num: '5.2', heading: 'Schema Markup', src: 'Rich Results Test', research: true, shot: { label: 'Google Rich Results Test > ' + f.domain, note: 'Red box on "No items detected".' }, bullets: obsBullet('5.2', f.hasSchema ? 'good' : 'high') || [{ kind: f.hasSchema ? 'good' : 'high', title: 'Current Observation', badge: f.hasSchema ? 'GOOD' : 'HIGH', text: f.hasSchema ? `Schema found: ${f.schemaTypes.join(', ')}.` : 'No schema markup found. Our team will add Organization, WebSite and relevant schema so Google and AI tools understand the brand.' }], willdo: f.hasSchema ? null : { text: 'Add the required schema markup across the website.' } },
+      { num: '5.3', heading: 'Social Tags', src: 'Open Graph', research: true, shot: { label: 'Open Graph preview of ' + f.domain }, bullets: obsBullet('5.3', f.hasOg ? 'good' : 'high') || [{ kind: f.hasOg ? 'good' : 'high', title: 'Current Observation', badge: f.hasOg ? 'GOOD' : 'MEDIUM', text: f.hasOg ? 'Open Graph tags are present.' : 'No Open Graph tags found. When the link is shared on WhatsApp, Facebook or Discord, it will not show a proper preview. Our team will add social tags and a branded share image.' }] },
       { num: '5.4', heading: 'Images', src: 'Crawl', bullets: [{ kind: 'high', title: 'Current Observation', badge: 'HIGH', list: [`Images on homepage: ${f.imageCount}`, `Images missing alt text: ${f.imagesNoAlt}`] }], willdo: { text: 'Add descriptive alt text to all images and compress large files.' } },
     ] },
     { no: '06', title: 'Content Quality & Trust', sub: 'Google rewards Experience, Expertise, Authority and Trust (E-E-A-T).', sections: [
@@ -267,19 +441,19 @@ function buildChapters(f, n, meta) {
       ] } },
     ] },
     { no: '08', title: 'Off Page Stats', sub: 'Who links to the website today, and how strong those links are.', sections: [
-      { num: '8.1', heading: 'Backlink Status', src: 'SEMrush', shot: { label: 'SEMrush backlink table for ' + f.domain }, bullets: [{ kind: 'high', title: 'Current Observation', badge: 'HIGH', text: 'Backlink detail will be added from the SEMrush upload. Link building will start from a clean baseline.' }] },
-      { num: '8.2', heading: 'Website Authority', src: 'Moz', shot: { label: 'Authority checker > ' + f.domain, note: 'Red box on DA, PA and Spam Score.' } },
+      { num: '8.1', heading: 'Backlink Status', src: 'SEMrush', manual: true, shot: { label: 'SEMrush backlink table for ' + f.domain }, bullets: obsBullet('8.1', 'high') },
+      { num: '8.2', heading: 'Website Authority', src: 'Moz', manual: true, shot: { label: 'Authority checker > ' + f.domain, note: 'Red box on DA, PA and Spam Score.' }, bullets: obsBullet('8.2', 'info') },
     ] },
     { no: '09', title: 'Competitor Overview', sub: 'How the market looks in search.', sections: [
-      { num: '9.1', heading: 'Competitor Traffic', src: 'SEMrush', shot: { label: 'Estimated monthly traffic chart for the top competitors' } },
+      { num: '9.1', heading: 'Competitor Traffic', src: 'SEMrush', manual: true, shot: { label: 'Estimated monthly traffic chart for the top competitors' }, bullets: obsBullet('9.1', 'info') },
       { num: '9.2', heading: 'Where You Can Win', table: { cols: [{ label: 'Competitor strength' }, { label: 'Your opening' }], rows: (n.competitorOpenings || [{ strength: 'Big players own broad terms', opening: 'Target niche, buying-intent searches first' }]).map((o) => [{ text: o.strength }, { text: o.opening }]) } },
     ] },
     { no: '10', title: 'Keyword Opportunity Map', sub: 'The main search phrase each page should focus on.', sections: [
       { num: '10.1', heading: 'Proposed Keyword Targets', src: 'For approval', table: { cols: [{ label: 'Page' }, { label: 'Primary keyword' }, { label: 'Supporting keywords' }, { label: 'Difficulty', align: 'c', width: '14%' }], rows: (n.keywordTargets || []).map((k) => [{ text: k.page, bold: true }, { text: k.keyword }, { text: k.supporting }, { badge: (k.difficulty || 'MODERATE'), align: 'c' }]) } },
-      { num: '10.2', heading: 'Keyword Research', src: 'SEMrush Keyword Magic Tool', shot: { label: 'SEMrush > Keyword Magic Tool', note: 'Red box on volume and KD% for the main keywords.' } },
+      { num: '10.2', heading: 'Keyword Research', src: 'SEMrush Keyword Magic Tool', manual: true, shot: { label: 'SEMrush > Keyword Magic Tool', note: 'Red box on volume and KD% for the main keywords.' }, bullets: obsBullet('10.2', 'info') },
     ] },
     { no: '11', title: 'AI Search Visibility', sub: 'ChatGPT, Perplexity, Gemini and Google AI Overviews.', sections: [
-      { num: '11.1', heading: 'AI Answers', src: 'ChatGPT / Perplexity', shot: { label: 'ChatGPT or Perplexity answer for the main "best X" query', note: 'Red box on the list of tools / brands mentioned.' } },
+      aiAnswersSection(ai, f, meta),
       { num: '11.2', heading: 'AI Readiness Checklist', table: { cols: [{ label: 'Check' }, { label: 'Status', align: 'c', width: '14%' }, { label: 'Finding' }], rows: [
         [{ text: 'Indexed in Google and Bing', bold: true }, { badge: yn(!f.noindex), align: 'c' }, { text: f.noindex ? 'Blocked by noindex' : 'Indexable' }],
         [{ text: 'AI crawlers allowed', bold: true }, { badge: yn(!f.blocksAiCrawlers), align: 'c' }, { text: f.blocksAiCrawlers ? 'Some blocked' : 'Not blocked in robots.txt' }],
@@ -322,4 +496,38 @@ function buildChapters(f, n, meta) {
   ];
 }
 
-module.exports = { buildReportData, facts };
+// Patch an already-built report at PDF-generation time: read any uploaded
+// screenshots (which usually arrive AFTER the initial run, in the review step)
+// and write a real per-section observation from each, and refresh the live AI
+// Answers section. Mutates `data` in place. Preserves all other user edits.
+async function refreshUploads(data, crawl, meta, keys, screenshots) {
+  const f = facts(crawl || {});
+  // 1) per-section observations from uploaded screenshots
+  for (const s of (screenshots || [])) {
+    if (!s || !s.base64 || !s.mime || !SHOT_CONTEXT[s.key]) continue;
+    let text = '';
+    try { text = await analyzeShot(keys, s.key, s, { domain: f.domain || (data.report && data.report.domain), business: meta.businessName || (data.report && data.report.businessName) }); }
+    catch (e) { console.error('[preSeoAnalyze] refresh shot failed', s.key, e.message); }
+    if (!text) continue;
+    const sec = findSection(data, s.key);
+    if (sec) {
+      const kind = /not indexed|no pages|blocked|missing|slow|0\/100|fail/i.test(text) ? 'high' : 'info';
+      sec.bullets = [{ kind, title: 'Current Observation', badge: kind === 'high' ? 'HIGH' : 'INFO', text }];
+    }
+  }
+  // 2) refresh AI Answers (11.1)
+  try {
+    const ai = await aiAnswers(keys, { facts: f, meta });
+    const sec = findSection(data, '11.1');
+    const built = aiAnswersSection(ai, f, meta);
+    if (sec) Object.assign(sec, built);
+  } catch (e) { console.error('[preSeoAnalyze] refresh aiAnswers failed:', e.message); }
+  return data;
+}
+
+function findSection(data, num) {
+  for (const ch of (data.chapters || [])) for (const sec of (ch.sections || [])) if (sec.num === num) return sec;
+  return null;
+}
+
+module.exports = { buildReportData, facts, refreshUploads };

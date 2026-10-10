@@ -110,6 +110,7 @@ body{ font-family:'Plus Jakarta Sans', sans-serif; color:var(--ink); font-size:9
 .shot img{ max-width:100%; border-radius:6px; }
 .shotimg{ border:1px solid var(--line); border-radius:8px; padding:6px; margin:10px 0; text-align:center; }
 .shotimg img{ max-width:100%; border-radius:4px; }
+.shotimg .cap{ font-size:7.5pt; color:var(--muted); margin-top:5px; }
 
 /* callouts */
 .callout{ border-left:4px solid var(--violet); background:#f5f3ff; border-radius:0 8px 8px 0; padding:12px 15px; margin:10px 0; }
@@ -133,6 +134,7 @@ body{ font-family:'Plus Jakarta Sans', sans-serif; color:var(--ink); font-size:9
 .b-good{ color:var(--green); } .b-info{ color:var(--blue); } .b-pass{ color:var(--green); }
 .b-fail{ color:var(--red); } .b-pending{ color:var(--blue); } .b-missing{ color:var(--red); }
 .b-optional{ color:var(--muted); } .b-opt{ color:var(--muted); }
+.b-yes{ color:var(--green); } .b-no{ color:var(--red); }
 
 /* tables */
 table{ width:100%; border-collapse:collapse; margin:8px 0; font-size:8.5pt; }
@@ -307,8 +309,8 @@ td b{ font-weight:800; }
   {{#each this.sections}}
   <div class="sub-h{{#if @first}} first{{/if}}"><span class="n">{{this.num}}</span> {{this.heading}}{{#if this.src}}<span class="src">| {{this.src}}</span>{{/if}}</div>
 
-  {{#if this.shot}}<div class="shot"><div class="t">[ PASTE SCREENSHOT HERE ]</div><div class="d">{{this.shot.label}}</div>{{#if this.shot.note}}<div class="n">{{this.shot.note}}</div>{{/if}}{{#if this.shot.img}}<img src="{{this.shot.img}}">{{/if}}</div>{{/if}}
-  {{#if this.image}}<div class="shotimg"><img src="{{this.image}}"></div>{{/if}}
+  {{#if this.shot.img}}<div class="shotimg"><img src="{{this.shot.img}}">{{#if this.shot.label}}<div class="cap">{{this.shot.label}}</div>{{/if}}</div>{{else}}{{#if this.shot}}{{#if @root.forWeb}}<div class="shot"><div class="t">[ PASTE SCREENSHOT HERE ]</div><div class="d">{{this.shot.label}}</div>{{#if this.shot.note}}<div class="n">{{this.shot.note}}</div>{{/if}}</div>{{/if}}{{/if}}{{/if}}
+  {{#if this.image}}<div class="shotimg"><img src="{{this.image}}">{{#if this.imageCap}}<div class="cap">{{this.imageCap}}</div>{{/if}}</div>{{/if}}
 
   {{#if this.table}}
   <table><thead><tr>{{#each this.table.cols}}<th class="{{this.align}}" {{#if this.width}}style="width:{{this.width}}"{{/if}}>{{this.label}}</th>{{/each}}</tr></thead><tbody>

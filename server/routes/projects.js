@@ -378,10 +378,13 @@ router.post('/:id/preseo', guard, requireHrAdmin, async (req, res, next) => {
     if (!website || website.length < 4) return res.status(400).json({ error: 'A website URL is required.' });
     let domain = '';
     try { domain = flow.istToday && new URL(website.startsWith('http') ? website : 'https://' + website).hostname.replace(/^www\./, ''); } catch { domain = website.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0]; }
+    const services = Array.isArray(b.services) ? b.services.filter(Boolean).slice(0, 6)
+      : (typeof b.services === 'string' && b.services ? b.services.split(/[,+]/).map((s) => s.trim()).filter(Boolean) : []);
     const report = await PreSeoReport.create({
-      projectId: project ? project.id : null, kind: 'pre_seo', website: website.startsWith('http') ? website : 'https://' + website,
+      projectId: project ? project.id : null, kind: String(b.reportType || 'pre_seo'), website: website.startsWith('http') ? website : 'https://' + website,
       domain, businessName: b.businessName || (project && project.customerName) || domain,
       createdById: act.id, createdByName: act.name || 'Qtonix', status: 'capturing', progress: 5,
+      data: { _services: services }, // seed; runner carries it into data.report.services
     });
     // fire-and-forget
     preSeoRunner.run(report.id).catch((e) => console.error('[preseo] run error:', e.message));
@@ -403,6 +406,85 @@ router.get('/:id/preseo', guard, requireHrAdmin, async (req, res, next) => {
   try {
     const rows = await PreSeoReport.findAll({ where: { projectId: req.params.id }, order: [['createdAt', 'DESC']], attributes: ['id', 'status', 'progress', 'domain', 'businessName', 'createdAt', 'completedAt'] });
     res.json({ reports: rows });
+  } catch (e) { next(e); }
+});
+
+// Global list of ALL Pre-SEO reports (the Reports list page). Mirrors the CRM
+// reports list: health score, business, agent, status, run date, share state.
+router.get('/preseo', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const q = String((req.query && req.query.q) || '').trim().toLowerCase();
+    const rows = await PreSeoReport.findAll({ order: [['createdAt', 'DESC']], limit: 500 });
+    const items = rows.map((r) => {
+      const hs = r.data && r.data.report && r.data.report.healthScore;
+      const svc = (r.data && r.data.report && r.data.report.services) || [];
+      return {
+        id: r.id, projectId: r.projectId, domain: r.domain, businessName: r.businessName,
+        status: r.status, progress: r.progress, score: hs && typeof hs.value === 'number' ? hs.value : null,
+        services: Array.isArray(svc) ? svc : [], agentName: r.createdByName || '',
+        createdAt: r.createdAt, completedAt: r.completedAt,
+        shared: !!r.publicEnabled, publicSlug: r.publicSlug || null,
+        shotCount: Object.values(r.shots || {}).filter((s) => s && s.source === 'upload').length,
+      };
+    }).filter((it) => !q || it.businessName.toLowerCase().includes(q) || (it.domain || '').toLowerCase().includes(q));
+    res.json({ items });
+  } catch (e) { next(e); }
+});
+
+// Delete a Pre-SEO report (admin).
+router.delete('/preseo/:rid', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    await r.destroy();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// ---- Public share link (same trackable /r/ pattern as CRM reports) ---------
+const publicUrl = require('../services/publicUrl');
+function preseoSlug(name) {
+  return String(name || 'report').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 40) || 'report';
+}
+// Create / return the public link.
+router.post('/preseo/:rid/share', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    if (!r.publicSlug) {
+      let slug = preseoSlug(r.businessName || r.domain);
+      const exists = await PreSeoReport.findOne({ where: { publicSlug: slug } });
+      if (exists && exists.id !== r.id) slug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
+      r.publicSlug = slug;
+    }
+    r.publicEnabled = true; await r.save();
+    const base = await publicUrl.baseFor('reports', req);
+    res.json({ slug: r.publicSlug, url: `${base}/pr/${r.publicSlug}`, enabled: true });
+  } catch (e) { next(e); }
+});
+router.post('/preseo/:rid/share/disable', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    r.publicEnabled = false; await r.save();
+    res.json({ enabled: false });
+  } catch (e) { next(e); }
+});
+// Current link + view/download tracking log.
+router.get('/preseo/:rid/share', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    const base = await publicUrl.baseFor('reports', req);
+    const views = Array.isArray(r.publicViews) ? r.publicViews : [];
+    res.json({
+      slug: r.publicSlug, enabled: !!r.publicEnabled,
+      url: r.publicSlug ? `${base}/pr/${r.publicSlug}` : null,
+      views,
+      viewCount: views.filter((v) => v.type === 'view').length,
+      downloadCount: views.filter((v) => v.type === 'download').length,
+      lastViewedAt: views.length ? views[views.length - 1].at : null,
+    });
   } catch (e) { next(e); }
 });
 
