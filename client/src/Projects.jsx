@@ -708,7 +708,6 @@ function PreSeoReportWizard({ projectId, project, onClose, onDone, editReport })
   // Edit mode: reopen an existing complete report straight at the review/upload step.
   const [step, setStep] = useState(editReport ? 'review' : 'pick'); // pick | url | running | review | done
   const [reportType, setReportType] = useState('pre_seo');
-  const [services, setServices] = useState((project && project.servicesTaken) || ['SEO']);
   const [bizName, setBizName] = useState((project && project.customerName) || '');
   const [website, setWebsite] = useState((editReport && editReport.website) || (project && project.website) || '');
   const [rid, setRid] = useState(editReport ? editReport.id : null);
@@ -727,6 +726,10 @@ function PreSeoReportWizard({ projectId, project, onClose, onDone, editReport })
     if (!website.trim()) { toast('Enter the website URL'); return; }
     setBusy(true);
     try {
+      // Services aren't asked for here — a Pre-SEO audit covers the whole site
+      // regardless. If the report is run inside a project, carry its services
+      // through only so the list can show matching chips.
+      const services = (project && project.servicesTaken) || [];
       const r = await hrApi(`/projects/${projectId || 'none'}/preseo`, { method: 'POST', body: JSON.stringify({ website: website.trim(), businessName: bizName || (project && project.customerName), services, reportType }) });
       setRid(r.id); setStep('running');
     } catch (e) { toast(e.message); }
@@ -770,8 +773,6 @@ function PreSeoReportWizard({ projectId, project, onClose, onDone, editReport })
     setGen(false);
   };
 
-  const SERVICE_OPTS = ['SEO', 'AI SEO', 'Social', 'Web'];
-  const toggleSvc = (s) => setServices((cur) => cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]);
   const title = editReport ? `Edit — ${editReport.businessName || editReport.domain}` : (step === 'done' ? 'Report ready' : 'Run a Pre-SEO Report');
   const subtitle = editReport ? 'Upload a missing screenshot or replace one, then regenerate.'
     : step === 'review' ? 'Review the analysis, upload tool screenshots, then generate.'
@@ -801,8 +802,6 @@ function PreSeoReportWizard({ projectId, project, onClose, onDone, editReport })
                 <input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://example.com" className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-[13.5px] focus:outline-none focus:ring-2 focus:ring-orange-200" /></div>
               <div className="mb-3"><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Business name <span className="font-medium text-slate-300">· shown on the cover</span></label>
                 <input value={bizName} onChange={(e) => setBizName(e.target.value)} placeholder="Client / business name" className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-[13.5px] focus:outline-none focus:ring-2 focus:ring-orange-200" /></div>
-              <div className="mb-3"><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Services</label>
-                <div className="flex flex-wrap gap-2">{SERVICE_OPTS.map((s) => <button key={s} onClick={() => toggleSvc(s)} className="px-3 py-1.5 rounded-lg text-[12px] font-bold border" style={services.includes(s) ? { borderColor: '#FF6A00', background: '#FFF7ED', color: '#FF4500' } : { borderColor: '#e2e8f0', color: '#64748b' }}>{s}</button>)}</div></div>
               <div className="rounded-xl bg-slate-50 border border-slate-200 text-[11.5px] text-slate-500 px-3 py-2.5 leading-snug">
                 Claude will <b className="text-slate-700">crawl the site &amp; auto-capture</b> the homepage, robots.txt, sitemap, schema and mobile views (issues highlighted in red), then write the analysis. On the next step you can upload tool screenshots — Claude reads each one to write that section. <b className="text-slate-700">Sections you don't upload are excluded.</b> The ChatGPT / Perplexity section is generated automatically via the OpenAI + Claude APIs.
               </div>
