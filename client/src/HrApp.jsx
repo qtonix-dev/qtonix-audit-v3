@@ -249,6 +249,15 @@ const TASK_CARD_STYLE = {
   task_status_pending_approval:  { bg: '#F5F3FF', border: '#DDD6FE', icon: '\u23F3', accent: '#7C3AED', label: 'Pending Approval' },
   task_status_on_hold:           { bg: '#F1F5F9', border: '#E2E8F0', icon: '\u23F8\uFE0F', accent: '#64748B', label: 'On Hold' },
   task_status:           { bg: '#FFF7ED', border: '#FED7AA', icon: '\uD83D\uDD04', accent: '#EA580C', label: 'Status update' },
+  subtask_assigned:      { bg: '#EFF6FF', border: '#BFDBFE', icon: '\u21B3', accent: '#2563EB', label: 'Subtask assigned to you' },
+  subtask_coassigned:    { bg: '#F0FDFA', border: '#99F6E4', icon: '\u21B3', accent: '#0D9488', label: 'Subtask co-assigned' },
+  subtask_completed:     { bg: '#F0FDF4', border: '#BBF7D0', icon: '\u2705', accent: '#16A34A', label: 'Subtask completed' },
+  subtask_status_not_started:       { bg: '#F8FAFC', border: '#E2E8F0', icon: '\u21B3', accent: '#64748B', label: 'Subtask \u00B7 Not Started' },
+  subtask_status_in_progress:       { bg: '#FFF7ED', border: '#FED7AA', icon: '\u21B3', accent: '#EA580C', label: 'Subtask \u00B7 In Progress' },
+  subtask_status_pending_review:    { bg: '#EFF6FF', border: '#BFDBFE', icon: '\u21B3', accent: '#2563EB', label: 'Subtask \u00B7 Pending Review' },
+  subtask_status_changes_requested: { bg: '#FEF2F2', border: '#FECACA', icon: '\u21B3', accent: '#DC2626', label: 'Subtask \u00B7 Changes Requested' },
+  subtask_status_pending_approval:  { bg: '#F5F3FF', border: '#DDD6FE', icon: '\u21B3', accent: '#7C3AED', label: 'Subtask \u00B7 Pending Approval' },
+  subtask_status_on_hold:           { bg: '#F1F5F9', border: '#E2E8F0', icon: '\u21B3', accent: '#64748B', label: 'Subtask \u00B7 On Hold' },
   celebration_birthday:  { bg: '#FDF2F8', border: '#FBCFE8', icon: '\uD83C\uDF82', accent: '#DB2777', label: 'Birthday' },
   celebration_anniversary:{ bg: '#FEFCE8', border: '#FEF08A', icon: '\uD83C\uDF8A', accent: '#CA8A04', label: 'Work Anniversary' },
   celebration_joinee:    { bg: '#ECFEFF', border: '#A5F3FC', icon: '\uD83D\uDC4B', accent: '#0891B2', label: 'New Joinee' },
@@ -258,7 +267,7 @@ const TASK_CARD_STYLE = {
   company_survey:        { bg: '#F5F3FF', border: '#DDD6FE', icon: '\uD83D\uDCCB', accent: '#7C3AED', label: 'Survey' },
 };
 function taskCardStyle(kindTag) { return TASK_CARD_STYLE[kindTag] || TASK_CARD_STYLE.task_status; }
-function isTaskCard(kindTag) { return !!kindTag && (kindTag.startsWith('task_') || kindTag.startsWith('celebration_') || kindTag.startsWith('company_')) && kindTag !== 'task_note'; }
+function isTaskCard(kindTag) { return !!kindTag && (kindTag.startsWith('task_') || kindTag.startsWith('subtask_') || kindTag.startsWith('celebration_') || kindTag.startsWith('company_')) && kindTag !== 'task_note'; }
 
 const STAGE = {
   not_started: { label: 'Not Started', cls: 'bg-slate-100 text-slate-600' },
@@ -3676,7 +3685,7 @@ function TaskKanban({ allTasks, onMove, onReorder, onOpen, prep }) {
                           </div>
                         <TAvatar person={t.assignee} size={22} />
                       </div>
-                      {t.subtaskCount > 0 && <div className="mt-2 text-[10px] text-slate-400">✓ {t.subtaskDone}/{t.subtaskCount} subtasks</div>}
+                      {t.subtaskCount > 0 && <div className="mt-2 text-[10px] text-slate-400">{Math.max(0, (t.subtaskCount || 0) - (t.subtaskDone || 0))}/{t.subtaskCount} subtasks remaining</div>}
                     </div>
                     </div>
                   </React.Fragment>
@@ -3838,7 +3847,7 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
               {isSub && <span className="text-slate-300 mr-1.5 text-xs shrink-0" title="subtask">↳</span>}
               <button onClick={() => setOpenTask(t)} className={`text-sm font-bold truncate text-left hover:underline ${t.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</button>
               {completedTime && <span className="ml-2 text-[10px] text-green-500 shrink-0 font-semibold">✓ {completedTime}</span>}
-              {hasSubs && <span className="ml-2 text-[10px] text-slate-400 shrink-0">{t.subtaskDone}/{t.subtaskCount}</span>}
+              {hasSubs && <span className="ml-2 text-[10px] text-slate-400 shrink-0" title="remaining / total subtasks">{Math.max(0, (t.subtaskCount || 0) - (t.subtaskDone || 0))}/{t.subtaskCount}</span>}
               {tracking && t.assignee && <span className="ml-2 text-[10px] text-purple-500 shrink-0">→ {titleCase(t.assignee.name)}</span>}
               {tracking && (t.reassignChain || []).length > 0 && <span className="ml-1.5 text-[10px] font-bold text-orange-500 shrink-0" title={(t.reassignChain || []).map((c) => `${c.fromName || '—'} → ${c.toName}`).join('\n')}>↪ reassigned ×{(t.reassignChain || []).length}</span>}
             </div>
@@ -4425,7 +4434,7 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
             };
             return (
               <div className="mb-5">
-                <div className="text-xs font-bold text-slate-500 mb-1">Subtasks {subs.length > 0 && <span className="text-slate-400 font-normal">· {done.length}/{subs.length}</span>}</div>
+                <div className="text-xs font-bold text-slate-500 mb-1">Subtasks {subs.length > 0 && <span className="text-slate-400 font-normal">· {open.length}/{subs.length} remaining</span>}</div>
                 {/* Open subtasks on top + add row */}
                 <div className="rounded-lg border border-slate-200 divide-y divide-slate-100">
                   {open.map((s) => SubRow(s))}
@@ -6223,7 +6232,7 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
                       <ReviewIcon kind="leave" />
                       <div className="min-w-0 flex-1">
                         <div className={NAME}>Leave <span className="text-slate-500">· {titleCase(it.who)}</span></div>
-                        <div className={`${SUBT} mb-1.5 capitalize`}>{it.type}{it.duration === 'half' ? ' · half day' : it.days > 1 ? ` · ${it.days} days` : ' · full day'}</div>
+                        <div className={`${SUBT} mb-1.5 capitalize`}>{it.type}{it.duration === 'half' ? ` · half day${it.halfPeriod === 'second' ? ' (2nd half)' : it.halfPeriod === 'first' ? ' (1st half)' : ''}` : it.days > 1 ? ` · ${it.days} days` : ' · full day'}</div>
                         <button onClick={() => setDecideItem(it)} className="text-[11px] font-bold rounded-lg px-3 py-1.5 text-white" style={{ background: ORNG }}>Take Decision</button>
                       </div>
                     </div>
@@ -6968,7 +6977,8 @@ function LeaveDecisionModal({ item, onClose, onDecide }) {
   const fmtDay = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return d; } };
   const weekday = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long' }); } catch { return ''; } };
   const dates = item.dates && item.dates.length ? item.dates : [item.date];
-  const durLabel = item.duration === 'half' ? 'Half day' : dates.length > 1 ? `Multiple days · ${dates.length} days` : 'Full day';
+  const halfLbl = item.halfPeriod === 'second' ? ' · 2nd half' : item.halfPeriod === 'first' ? ' · 1st half' : '';
+  const durLabel = item.duration === 'half' ? `Half day${halfLbl}` : dates.length > 1 ? `Multiple days · ${dates.length} days` : 'Full day';
   const go = async (approve) => { setBusy(true); try { await onDecide(approve, note); } finally { setBusy(false); } };
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
@@ -6994,7 +7004,7 @@ function LeaveDecisionModal({ item, onClose, onDecide }) {
                 ))}
               </div>
             ) : (
-              <div className="text-[13px] text-slate-700">{fmtDay(dates[0])} <span className="text-slate-400">({weekday(dates[0])})</span>{item.duration === 'half' ? ' · half day' : ''}</div>
+              <div className="text-[13px] text-slate-700">{fmtDay(dates[0])} <span className="text-slate-400">({weekday(dates[0])})</span>{item.duration === 'half' ? ` · half day${halfLbl}` : ''}</div>
             )}
             {item.reason && <div className="text-[12px] text-slate-500 mt-2 pt-2 border-t border-slate-200/70">Reason: {item.reason}</div>}
           </div>
@@ -7027,6 +7037,7 @@ function ApplyLeaveModal({ approverName, approverChain, onClose, onDone }) {
   const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
   const [type, setType] = useState('casual');
   const [duration, setDuration] = useState('full');
+  const [halfPeriod, setHalfPeriod] = useState('first'); // first | second (half-day only)
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(today);
   const [halfDate, setHalfDate] = useState(today);
@@ -7051,11 +7062,21 @@ function ApplyLeaveModal({ approverName, approverChain, onClose, onDone }) {
       setErr(`A medical certificate is required because ${medReq.reasons.join(', and ')}. Please upload it.`);
       return;
     }
+    if (duration === 'half' && !halfPeriod) { setErr('Choose which half — First half or Second half.'); return; }
     const body = duration === 'half'
-      ? { type, duration: 'half', date: halfDate, reason, documentUrl }
+      ? { type, duration: 'half', date: halfDate, halfPeriod, reason, documentUrl }
       : { type, duration: 'full', from, to, reason, documentUrl };
     setBusy(true);
-    try { await hrApi('/me/leave', { method: 'POST', body: JSON.stringify(body) }); onDone(); }
+    try {
+      const r = await hrApi('/me/leave', { method: 'POST', body: JSON.stringify(body) });
+      if (r && r.lop) {
+        const why = r.lopReason === 'no_balance' ? 'your paid leave balance is used up'
+          : r.lopReason === 'probation' ? "you're within probation"
+          : r.lopReason === 'notice' ? "you're serving notice" : 'no paid credit is available';
+        toast(`Submitted. Note: some/all of this will be Loss of Pay (LOP) because ${why}.`);
+      }
+      onDone();
+    }
     catch (e) { setErr(e.message); setBusy(false); }
   };
   // Check whether a medical certificate is required, after the reason is entered.
@@ -7095,7 +7116,15 @@ function ApplyLeaveModal({ approverName, approverChain, onClose, onDone }) {
               <div className="flex-1"><div className="text-[12px] font-bold text-slate-600 mb-1">To</div><input type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
             </div>
           ) : (
-            <div><div className="text-[12px] font-bold text-slate-600 mb-1">Date</div><input type="date" value={halfDate} min={today} onChange={(e) => setHalfDate(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
+            <>
+              <div><div className="text-[12px] font-bold text-slate-600 mb-1">Date</div><input type="date" value={halfDate} min={today} onChange={(e) => setHalfDate(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
+              <div><div className="text-[12px] font-bold text-slate-600 mb-1">Which half <span className="text-red-500">*</span></div>
+                <div className="flex gap-2">
+                  <button onClick={() => setHalfPeriod('first')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${halfPeriod === 'first' ? 'border-amber-300 bg-amber-50 text-amber-600' : 'border-slate-200 text-slate-500'}`}>1st half <span className="text-[10px] font-normal">· morning</span></button>
+                  <button onClick={() => setHalfPeriod('second')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${halfPeriod === 'second' ? 'border-amber-300 bg-amber-50 text-amber-600' : 'border-slate-200 text-slate-500'}`}>2nd half <span className="text-[10px] font-normal">· afternoon</span></button>
+                </div>
+              </div>
+            </>
           )}
           <div><div className="text-[12px] font-bold text-slate-600 mb-1">Reason</div><textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} onBlur={checkMedical} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Add a short reason…" /></div>
           {type === 'medical' && (
@@ -7190,7 +7219,7 @@ function LeaveHistoryModal({ leaves, onClose }) {
                     <td className="px-2 py-2.5 text-slate-500">{fmtApplied(l.createdAt)}</td>
                     <td className="px-2 py-2.5 capitalize font-semibold text-[#050A1F]">{l.type}</td>
                     <td className="px-2 py-2.5 text-slate-600">{l.days > 1 ? `${fmt(l.from)} – ${fmt(l.to)}` : fmt(l.from)}</td>
-                    <td className="px-2 py-2.5 text-slate-600">{l.duration === 'half' ? 'Half day' : (l.days > 1 ? `${l.days} days` : 'Full day')}</td>
+                    <td className="px-2 py-2.5 text-slate-600">{l.duration === 'half' ? `Half day${l.halfPeriod === 'second' ? ' · 2nd' : l.halfPeriod === 'first' ? ' · 1st' : ''}` : (l.days > 1 ? `${l.days} days` : 'Full day')}</td>
                     <td className="px-2 py-2.5 text-slate-600">{l.approver}</td>
                     <td className="px-2 py-2.5"><span className="text-[10px] font-extrabold rounded-md px-2 py-0.5 capitalize" style={stCls[l.status] || stCls.pending}>{l.status}</span></td>
                   </tr>

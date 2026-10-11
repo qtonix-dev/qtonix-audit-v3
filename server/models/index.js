@@ -2157,6 +2157,7 @@ const HrLeave = sequelize.define('HrLeave', {
   type: { type: DataTypes.STRING(20), allowNull: false },     // casual|medical|privilege|wfh|lop
   date: { type: DataTypes.STRING(10), allowNull: false },     // YYYY-MM-DD (single-day entries)
   duration: { type: DataTypes.STRING(10), defaultValue: 'full' }, // full|half
+  halfPeriod: { type: DataTypes.STRING(10), allowNull: true },    // first|second (only when duration=half)
   paid: { type: DataTypes.BOOLEAN, defaultValue: true },
   reason: { type: DataTypes.STRING(300), allowNull: true },
   approvedBy: { type: DataTypes.STRING(160), allowNull: true },
@@ -2861,6 +2862,7 @@ const ChatMessage = sequelize.define('ChatMessage', {
   kindTag: { type: DataTypes.STRING(40), defaultValue: '' },       // '' | task_assigned | task_status_* | celebration_* etc
   dedupeKey: { type: DataTypes.STRING(80), allowNull: true },       // guards scheduled system posts against duplicates
   taskId: { type: DataTypes.INTEGER, allowNull: true },            // linked task (for the View-task button + note-back)
+  meta: { type: DataTypes.JSON, allowNull: true },                 // extra link data, e.g. { parentTaskId } for subtask alerts
   replyToId: { type: DataTypes.INTEGER, allowNull: true },         // quoted message id
   replyToName: { type: DataTypes.STRING(120), defaultValue: '' },
   replyToBody: { type: DataTypes.STRING(200), defaultValue: '' },

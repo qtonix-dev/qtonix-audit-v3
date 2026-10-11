@@ -23,8 +23,9 @@ async function taskChannelFor(userId) {
 }
 
 // Post a task alert into the assignee's #task channel. kindTag =
-// 'task_assigned' | 'task_status'. Links the message to the task.
-async function postTaskAlert(assigneeId, { kindTag, taskId, body }) {
+// 'task_assigned' | 'task_status' | 'subtask_assigned' | … . Links the message
+// to the task (and, for a subtask, its parent task via meta).
+async function postTaskAlert(assigneeId, { kindTag, taskId, body, parentTaskId }) {
   try {
     if (!assigneeId) return;
     const convId = await taskChannelFor(assigneeId);
@@ -32,6 +33,7 @@ async function postTaskAlert(assigneeId, { kindTag, taskId, body }) {
     const msg = await ChatMessage.create({
       conversationId: convId, senderId: 0, senderName: 'Tasks',
       body: String(body || '').slice(0, 500), kindTag, taskId: taskId || null,
+      meta: parentTaskId ? { parentTaskId } : null,
     });
     await ChatConversation.update({ lastMessageAt: msg.createdAt, lastMessageText: String(body || '').slice(0, 200), lastMessageBy: 0 }, { where: { id: convId } });
     return msg;

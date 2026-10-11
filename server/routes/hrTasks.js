@@ -119,15 +119,21 @@ async function logActivity(taskId, ctx, kind, detail) {
 async function notifyAssignee(assigneeId, ctx, task, kindTag = 'task_assigned') {
   if (!assigneeId || assigneeId === ctx.actorId) return;
   const isCo = kindTag === 'task_coassigned';
-  const verb = isCo ? 'added you as a co-assignee on' : 'assigned you a task:';
-  const text = ctx.actorName + ' ' + verb + ' \u201C' + String(task.title).slice(0, 120) + '\u201D';
+  // A subtask alert names its parent so it's trackable in #task.
+  let parentTitle = '';
+  if (task.parentTaskId) { try { const p = await Task.findByPk(task.parentTaskId, { attributes: ['title'] }); parentTitle = p ? p.title : ''; } catch {} }
+  const noun = task.parentTaskId ? 'subtask' : 'task';
+  const verb = isCo ? `added you as a co-assignee on a ${noun}:` : `assigned you a ${noun}:`;
+  const tail = parentTitle ? ` (under \u201C${String(parentTitle).slice(0, 60)}\u201D)` : '';
+  const text = ctx.actorName + ' ' + verb + ' \u201C' + String(task.title).slice(0, 120) + '\u201D' + tail;
+  const tag = task.parentTaskId ? (isCo ? 'subtask_coassigned' : 'subtask_assigned') : kindTag;
   try {
     await HrNotification.create({
-      userId: assigneeId, actorKind: 'hr', type: kindTag,
-      text, meta: { taskId: task.id },
+      userId: assigneeId, actorKind: 'hr', type: tag,
+      text, meta: { taskId: task.id, parentTaskId: task.parentTaskId || null },
     });
   } catch { /* non-fatal */ }
-  try { if (assigneeId > 0) await require('../services/chatTask').postTaskAlert(assigneeId, { kindTag, taskId: task.id, body: text }); } catch { /* non-fatal */ }
+  try { if (assigneeId > 0) await require('../services/chatTask').postTaskAlert(assigneeId, { kindTag: tag, taskId: task.id, parentTaskId: task.parentTaskId || null, body: text }); } catch { /* non-fatal */ }
 }
 
 // Notify the ACTOR (assigner) in their own #task feed as a confirmation.
@@ -940,11 +946,20 @@ router.patch('/tasks/:id', guard, async (req, res, next) => {
       row.completedAt = b.stage === 'completed' ? now : (b.stage === prevStage ? row.completedAt : null);
       await logActivity(row.id, ctx, b.stage === 'completed' ? 'completed' : 'stage', 'moved to ' + STAGE_LABEL[b.stage]);
       // Notify ALL assignees (except the actor) with a STAGE-SPECIFIC tag so the
-      // #task card is colored per status. Completed gets its own tag.
-      const stageTag = b.stage === 'completed' ? 'task_completed' : ('task_status_' + b.stage);
+      // #task card is colored per status. Completed gets its own tag. Subtasks
+      // are labelled and linked to their parent so they're trackable in #task.
+      const isSub = !!row.parentTaskId;
+      let parentTitle = '';
+      if (isSub) { try { const p = await Task.findByPk(row.parentTaskId, { attributes: ['title', 'boardOwnerId'] }); parentTitle = p ? p.title : ''; row._parent = p; } catch {} }
+      const stageTag = b.stage === 'completed' ? (isSub ? 'subtask_completed' : 'task_completed') : ((isSub ? 'subtask_status_' : 'task_status_') + b.stage);
+      const noun = isSub ? 'Subtask' : 'Task';
+      const tail = isSub && parentTitle ? ` (under \u201C${String(parentTitle).slice(0, 60)}\u201D)` : '';
+      const stBody = `${noun} \u201C${String(row.title).slice(0, 100)}\u201D moved to ${STAGE_LABEL[b.stage]}${tail}`;
       const stNotify = new Set([row.assigneeId, ...(Array.isArray(row.assigneeIds) ? row.assigneeIds : [])].filter((x) => x > 0 && x !== ctx.actorId));
+      // Also tell the PARENT task's owner when a subtask completes, so they can track it.
+      if (isSub && b.stage === 'completed' && row._parent && row._parent.boardOwnerId > 0) stNotify.add(row._parent.boardOwnerId);
       for (const uid of stNotify) {
-        try { await require('../services/chatTask').postTaskAlert(uid, { kindTag: stageTag, taskId: row.id, body: '\u201C' + String(row.title).slice(0, 100) + '\u201D moved to ' + STAGE_LABEL[b.stage] }); } catch {}
+        try { await require('../services/chatTask').postTaskAlert(uid, { kindTag: stageTag, taskId: row.id, parentTaskId: row.parentTaskId || null, body: stBody }); } catch {}
       }
       // If this task belongs to a project step, advance the project flow.
       if (b.stage === 'completed') { try { await require('../services/projectFlow').onTaskCompleted(row.id); } catch {} }

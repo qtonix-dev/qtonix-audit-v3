@@ -2981,7 +2981,11 @@ router.post('/me/leave', requireHrAccess, async (req, res, next) => {
     const type = ['casual', 'medical', 'privilege', 'wfh'].includes(b.type) ? b.type : null;
     const duration = b.duration === 'half' ? 'half' : 'full';
     if (!type) return res.status(400).json({ error: 'Choose a valid leave type.' });
+    // Half day must say WHICH half (first = morning, second = afternoon).
+    const halfPeriod = duration === 'half' ? (['first', 'second'].includes(b.halfPeriod) ? b.halfPeriod : null) : null;
+    if (duration === 'half' && !halfPeriod) return res.status(400).json({ error: 'Choose which half — First half or Second half.' });
     const valid = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
+    const todayStr = istDateStr(); // employees can't apply for dates in the past
 
     // Build the list of dates. Half day → a single date. Full day → a From/To
     // range (inclusive); a single date is just from===to.
@@ -2999,6 +3003,12 @@ router.post('/me/leave', requireHrAccess, async (req, res, next) => {
       let cur = new Date(from + 'T00:00:00'); const end = new Date(to + 'T00:00:00'); let guard = 0;
       while (cur <= end && guard < 60) { dates.push(cur.toISOString().slice(0, 10)); cur.setDate(cur.getDate() + 1); guard += 1; }
     }
+
+    // Reject back-dated applications. The date picker disables past dates, but a
+    // manually-typed past date must be blocked on the server too. (HR recording
+    // on an employee's behalf uses a different endpoint and is not affected.)
+    const past = dates.find((d) => d < todayStr);
+    if (past) return res.status(400).json({ error: `You can't apply for a past date (${past}). Pick today or a future date.` });
 
     // Reject if any date already has a pending/approved request of this type.
     const existing = await HrLeave.findAll({ where: { employeeId: emp.id, type, status: { [Op.in]: ['pending', 'approved'] } } });
@@ -3022,24 +3032,41 @@ router.post('/me/leave', requireHrAccess, async (req, res, next) => {
     const created = [];
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     const _pol = getHrPolicy(s);
+
+    // Remaining PAID balance for this leave type = allocation − already-used paid
+    // days (pending + approved). Once the balance runs out, further days of this
+    // request are reclassified as LOP (Loss of Pay). WFH is never paid.
+    const alloc = allocationFor(_pol, emp);
+    let remaining = Infinity;
+    let lopReason = null;
+    if (type !== 'wfh') {
+      const priorRows = await HrLeave.findAll({ where: { employeeId: emp.id, type, paid: true, status: { [Op.in]: ['pending', 'approved'] } } });
+      const usedPaid = priorRows.reduce((a, r) => a + (r.duration === 'half' ? 0.5 : 1), 0);
+      remaining = Math.max(0, +((alloc[type] || 0) - usedPaid).toFixed(1));
+    }
+
     let anyLop = false;
     for (const date of dates) {
-      // During probation or notice, leave credit isn't available → the leave is
-      // reclassified as LOP (Loss of Pay). WFH is never paid leave either.
+      const dayCost = duration === 'half' ? 0.5 : 1;
       let rowType = type;
       let paid = type !== 'wfh';
       if (paid) {
+        // (1) Probation / notice → no paid credit at all.
         const elig = leavePaidEligibility(emp, date, _pol);
-        if (!elig.paidAllowed) { rowType = 'lop'; paid = false; anyLop = true; }
+        if (!elig.paidAllowed) { rowType = 'lop'; paid = false; anyLop = true; lopReason = lopReason || (inProbation(emp, _pol) ? 'probation' : 'notice'); }
+        // (2) Paid balance exhausted → this day is LOP. Partial balance covers
+        //     what it can; the rest spills to LOP.
+        else if (remaining < dayCost) { rowType = 'lop'; paid = false; anyLop = true; lopReason = lopReason || 'no_balance'; }
+        else { remaining = +(remaining - dayCost).toFixed(1); }
       }
       const row = await HrLeave.create({
-        employeeId: emp.id, type: rowType, date, duration, paid,
+        employeeId: emp.id, type: rowType, date, duration, halfPeriod, paid,
         reason, documentUrl, status: 'pending', groupId,
         appliedById: emp.id, approverId: approver.approverId, approverName: approver.approverName, decidedByKind: approver.kind,
       });
       created.push(row.toJSON());
     }
-    res.status(201).json({ status: 'pending', days: created.length, groupId, leaves: created, lop: anyLop, lopReason: anyLop ? (inProbation(emp, _pol) ? 'probation' : 'notice') : null });
+    res.status(201).json({ status: 'pending', days: created.length, groupId, leaves: created, lop: anyLop, lopReason });
   } catch (e) { next(e); }
 });
 
