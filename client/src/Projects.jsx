@@ -179,23 +179,48 @@ function PreSeoReports({ onBackTab }) {
   const [edit, setEdit] = useState(null); // a report object being edited
   const [run, setRun] = useState(false);
   const [runGuide, setRunGuide] = useState(false);
+  const [editGuide, setEditGuide] = useState(null); // a brand-guide report being edited
   const [pickType, setPickType] = useState(false);
   const [err, setErr] = useState('');
   const load = () => hrApi('/projects/preseo').then((r) => { setItems(r.items || []); setErr(''); }).catch((e) => { setItems([]); setErr(e.message || 'Could not load reports'); });
   useEffect(() => { load(); }, []);
+  // Live-poll while any report is still building, so Status shows progress.
+  useEffect(() => {
+    if (!items || !items.some((r) => ['capturing', 'analyzing', 'rendering', 'draft'].includes(r.status))) return;
+    const t = setInterval(load, 3000);
+    return () => clearInterval(t);
+  }, [items]);
 
   if (view) return <PreSeoReportView id={view} onBack={() => { setView(null); load(); }} onEdit={(rep) => { setView(null); setEdit(rep); }} />;
 
-  const shown = (items || []).filter((r) => !q || r.businessName.toLowerCase().includes(q.toLowerCase()) || (r.domain || '').toLowerCase().includes(q.toLowerCase()));
-  const download = (id, name) => { const t = localStorage.getItem(PRESEO_TOKEN) || ''; window.open(`${API_BASE}/api/hr/projects/preseo/${id}/download?token=${encodeURIComponent(t)}`, '_blank'); };
-  const del = async (r) => { if (!confirm(`Permanently delete the report for ${r.businessName}? This cannot be undone.`)) return; try { await hrApi(`/projects/preseo/${r.id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); } };
-  const rerun = async (r) => { if (!confirm(`Re-run the audit for ${r.businessName} with a fresh crawl? Your uploaded screenshots are kept.`)) return; try { await hrApi(`/projects/preseo/${r.id}/rerun`, { method: 'POST' }); toast('Re-running — fresh crawl started.'); load(); } catch (e) { toast('Re-run failed: ' + e.message); } };
+  const isGuide = (r) => r.kind === 'brand_guideline';
+  const shown = (items || []).filter((r) => !q || (r.businessName || '').toLowerCase().includes(q.toLowerCase()) || (r.domain || '').toLowerCase().includes(q.toLowerCase()));
+  const base = (r) => isGuide(r) ? 'brandguide' : 'preseo';
+  const download = (r) => { const t = localStorage.getItem(PRESEO_TOKEN) || ''; window.open(`${API_BASE}/api/hr/projects/${base(r)}/${r.id}/download?token=${encodeURIComponent(t)}`, '_blank'); };
+  const openEdit = (r) => { if (isGuide(r)) setEditGuide(r); else setEdit(r); };
+  const del = async (r) => { if (!confirm(`Permanently delete the report for ${r.businessName}? This cannot be undone.`)) return; try { await hrApi(`/projects/${base(r)}/${r.id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); } };
+  const rerun = async (r) => { if (!confirm(`Re-run ${r.businessName} with a fresh crawl?`)) return; try { await hrApi(`/projects/${base(r)}/${r.id}/rerun`, { method: 'POST' }); toast('Re-running — fresh crawl started.'); load(); } catch (e) { toast('Re-run failed: ' + e.message); } };
+  // Status cell: live progress while building, pill otherwise.
+  const statusCell = (r) => {
+    if (['capturing', 'analyzing', 'rendering', 'draft'].includes(r.status)) {
+      return (
+        <div className="min-w-[120px]">
+          <div className="flex items-center gap-1.5 text-[11.5px] font-bold text-orange-600"><span className="inline-block w-3 h-3 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />{r.currentStep || 'Working…'}</div>
+          <div className="h-1.5 rounded bg-slate-100 overflow-hidden mt-1"><div className="h-full rounded" style={{ width: `${r.progress || 5}%`, background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }} /></div>
+        </div>
+      );
+    }
+    return psPill(r.status);
+  };
+  const typeChip = (r) => isGuide(r)
+    ? <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#f5f3ff', color: '#7c3aed' }}>Brand Guideline</span>
+    : <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#eff6ff', color: '#2563eb' }}>Pre-SEO</span>;
 
   return (
     <div className="pb-8">
       <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div className="flex items-center gap-3">
-          <div><h1 className="text-2xl font-extrabold text-[#050A1F]">Pre-SEO Reports</h1><div className="text-[13px] text-slate-400">{items ? items.length : '…'} total</div></div>
+          <div><h1 className="text-2xl font-extrabold text-[#050A1F]">Reports</h1><div className="text-[13px] text-slate-400">{items ? items.length : '…'} total</div></div>
           <div className="flex gap-1 bg-slate-100 rounded-xl p-1 ml-2">
             <button onClick={onBackTab} className="px-3.5 py-1.5 rounded-lg text-[12.5px] font-bold text-slate-500">Projects</button>
             <button className="px-3.5 py-1.5 rounded-lg text-[12.5px] font-bold bg-white text-[#050A1F]" style={{ boxShadow: '0 1px 2px rgba(0,0,0,.08)' }}>Reports</button>
@@ -213,14 +238,14 @@ function PreSeoReports({ onBackTab }) {
       <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
         <div className="overflow-x-auto"><table className="w-full border-collapse">
           <thead className="bg-slate-50/70"><tr className="text-left text-[11px] font-extrabold text-slate-400 uppercase">
-            <th className="px-4 py-2.5 w-16 text-center">Score</th><th className="px-4 py-2.5">Business</th><th className="px-3 py-2.5">Agent</th><th className="px-3 py-2.5">Status</th><th className="px-3 py-2.5">Run</th><th className="px-3 py-2.5 text-right">Actions</th>
+            <th className="px-4 py-2.5 w-16 text-center">Score</th><th className="px-4 py-2.5">Business</th><th className="px-3 py-2.5">Type</th><th className="px-3 py-2.5">Agent</th><th className="px-3 py-2.5">Status</th><th className="px-3 py-2.5">Run</th><th className="px-3 py-2.5 text-right">Actions</th>
           </tr></thead>
           <tbody>
-            {items && shown.length === 0 && <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-400 text-sm">No reports yet. Hit “Run Report” to generate one.</td></tr>}
-            {!items && <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-400 text-sm">Loading…</td></tr>}
+            {items && shown.length === 0 && <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400 text-sm">No reports yet. Hit “Run Report” to generate one.</td></tr>}
+            {!items && <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400 text-sm">Loading…</td></tr>}
             {shown.map((r) => (
               <tr key={r.id} className="border-t border-slate-100 hover:bg-slate-50/60">
-                <td className="px-4 py-3 text-center">{r.score != null ? <div className="text-xl font-extrabold leading-none" style={{ color: scoreColor(r.score) }}>{r.score}</div> : <div className="text-xl font-extrabold text-slate-300">—</div>}<div className="text-[8px] text-slate-400 font-bold tracking-wider mt-0.5">SCORE</div></td>
+                <td className="px-4 py-3 text-center">{isGuide(r) ? <div className="text-xl">★</div> : (r.score != null ? <div className="text-xl font-extrabold leading-none" style={{ color: scoreColor(r.score) }}>{r.score}</div> : <div className="text-xl font-extrabold text-slate-300">—</div>)}<div className="text-[8px] text-slate-400 font-bold tracking-wider mt-0.5">{isGuide(r) ? 'BRAND' : 'SCORE'}</div></td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-9 h-9 rounded-lg flex items-center justify-center text-white font-extrabold text-[13px] flex-none" style={{ background: favColor(r.businessName) }}>{reportInitials(r.businessName)}</div>
@@ -228,30 +253,31 @@ function PreSeoReports({ onBackTab }) {
                       <div className="font-bold text-[#050A1F] text-[13.5px] truncate">{r.businessName}</div>
                       <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                         <span className="text-[11.5px] text-slate-400">{r.domain}</span>
-                        {(r.services || []).slice(0, 3).map((s) => <span key={s} className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#FFF7ED', color: '#FF4500' }}>{s}</span>)}
-                        {r.shotCount > 0 && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#eff6ff', color: '#2563eb' }}>{r.shotCount} screenshot{r.shotCount > 1 ? 's' : ''}</span>}
+                        {!isGuide(r) && (r.services || []).slice(0, 3).map((s) => <span key={s} className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#FFF7ED', color: '#FF4500' }}>{s}</span>)}
+                        {!isGuide(r) && r.shotCount > 0 && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#eff6ff', color: '#2563eb' }}>{r.shotCount} screenshot{r.shotCount > 1 ? 's' : ''}</span>}
                         {!r.shared && r.status === 'complete' && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#fffbeb', color: '#b45309' }}>⚠ Not shared</span>}
                       </div>
                     </div>
                   </div>
                 </td>
+                <td className="px-3 py-3 whitespace-nowrap">{typeChip(r)}</td>
                 <td className="px-3 py-3 text-[12.5px] text-slate-600 whitespace-nowrap">{r.agentName || '—'}</td>
-                <td className="px-3 py-3">{psPill(r.status)}</td>
+                <td className="px-3 py-3">{statusCell(r)}</td>
                 <td className="px-3 py-3 text-[12px] text-slate-500 whitespace-nowrap">{r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-GB') : '—'}</td>
                 <td className="px-3 py-3 text-right whitespace-nowrap">
                   <div className="inline-flex items-center gap-1.5 justify-end">
                     {r.status === 'complete' && <>
-                      <button onClick={() => setView(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>
-                      <button onClick={() => download(r.id, r.businessName)} className="rounded-lg px-2.5 py-1.5 text-[11.5px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>PDF</button>
-                      <button onClick={() => setEdit(r)} title="Edit / upload screenshots" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:text-[#050A1F]">✎</button>
-                      <button onClick={() => rerun(r)} title="Re-run with a fresh crawl (keeps screenshots)" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:text-[#050A1F]">↻</button>
+                      {!isGuide(r) && <button onClick={() => setView(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>}
+                      <button onClick={() => download(r)} className="rounded-lg px-2.5 py-1.5 text-[11.5px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>PDF</button>
+                      <button onClick={() => openEdit(r)} title="Edit" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:text-[#050A1F]">✎</button>
+                      <button onClick={() => rerun(r)} title="Re-run with a fresh crawl" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:text-[#050A1F]">↻</button>
                     </>}
                     {(r.status === 'ready') && <>
-                      <button onClick={() => setEdit(r)} className="rounded-lg border border-orange-300 px-2.5 py-1.5 text-[11.5px] font-bold text-orange-600 hover:bg-orange-50">Review</button>
-                      <button onClick={() => rerun(r)} title="Re-run with a fresh crawl (keeps screenshots)" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:text-[#050A1F]">↻</button>
+                      <button onClick={() => openEdit(r)} className="rounded-lg border border-orange-300 px-2.5 py-1.5 text-[11.5px] font-bold text-orange-600 hover:bg-orange-50">Review</button>
+                      <button onClick={() => rerun(r)} title="Re-run with a fresh crawl" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:text-[#050A1F]">↻</button>
                     </>}
-                    {['capturing', 'analyzing', 'rendering'].includes(r.status) && <span className="text-[11.5px] text-slate-400">working…</span>}
-                    {r.status === 'draft' && <button onClick={() => setEdit(r)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600">Resume</button>}
+                    {r.status === 'draft' && <button onClick={() => openEdit(r)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600">Resume</button>}
+                    {r.status === 'failed' && <button onClick={() => rerun(r)} className="rounded-lg border border-red-200 px-2.5 py-1.5 text-[11.5px] font-bold text-red-600">Retry</button>}
                     <button onClick={() => del(r)} title="Delete" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-400 hover:text-red-500 hover:border-red-200">🗑</button>
                   </div>
                 </td>
@@ -262,9 +288,10 @@ function PreSeoReports({ onBackTab }) {
       </div>
 
       {pickType && <ReportTypePicker onClose={() => setPickType(false)} onPick={(k) => { setPickType(false); if (k === 'brand_guideline') setRunGuide(true); else setRun(true); }} />}
-      {run && <PreSeoReportWizard projectId={'none'} project={null} onClose={() => setRun(false)} onDone={load} />}
+      {run && <PreSeoReportWizard projectId={'none'} project={null} chooseProject onClose={() => setRun(false)} onStarted={() => { setRun(false); load(); }} onDone={load} />}
       {edit && <PreSeoReportWizard projectId={edit.projectId || 'none'} project={null} editReport={edit} onClose={() => { setEdit(null); load(); }} onDone={load} />}
-      {runGuide && <BrandGuideWizard projectId={'none'} project={null} onClose={() => setRunGuide(false)} onDone={() => {}} />}
+      {runGuide && <BrandGuideWizard projectId={'none'} project={null} chooseProject onClose={() => setRunGuide(false)} onStarted={() => { setRunGuide(false); load(); }} onDone={load} />}
+      {editGuide && <BrandGuideWizard projectId={editGuide.projectId || 'none'} project={null} editReport={editGuide} onClose={() => { setEditGuide(null); load(); }} onDone={load} />}
     </div>
   );
 }
@@ -678,103 +705,71 @@ function ReportsTab({ id, data, onReload }) {
   // All hooks first — never after a conditional return (Rules of Hooks).
   const [dels, setDels] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
-  const [runReport, setRunReport] = useState(false);
-  const [preseo, setPreseo] = useState(null); // this project's Pre-SEO reports
+  const [reports, setReports] = useState(null); // this project's reports (both kinds)
   const [editRep, setEditRep] = useState(null);
   const [viewRep, setViewRep] = useState(null);
-  const [runGuide, setRunGuide] = useState(false);
   const [editGuide, setEditGuide] = useState(null);
-  const [guides, setGuides] = useState(null);
-  const [pickType, setPickType] = useState(false);
   const cycle = (data.cycles || [])[0];
   const load = () => hrApi(`/projects/${id}/deliverables`).then((r) => setDels(r.deliverables || [])).catch(() => setDels([]));
-  const loadPreseo = () => hrApi(`/projects/${id}/preseo`).then((r) => setPreseo(r.reports || [])).catch(() => setPreseo([]));
-  const loadGuides = () => hrApi(`/projects/${id}/brandguide`).then((r) => setGuides(r.reports || [])).catch(() => setGuides([]));
-  useEffect(() => { load(); loadPreseo(); loadGuides(); }, [id]);
-  // Keep polling while any report is still being built, so the list updates live.
+  const loadReports = () => hrApi(`/projects/${id}/preseo`).then((r) => setReports(r.reports || [])).catch(() => setReports([]));
+  useEffect(() => { load(); loadReports(); }, [id]);
+  // Keep polling while any report is still building, so Status shows live progress.
   useEffect(() => {
-    const building = (arr) => arr && arr.some((r) => ['capturing', 'analyzing', 'rendering', 'draft'].includes(r.status));
-    if (!building(preseo) && !building(guides)) return;
-    const t = setInterval(() => { loadPreseo(); loadGuides(); }, 3000);
+    if (!reports || !reports.some((r) => ['capturing', 'analyzing', 'rendering', 'draft'].includes(r.status))) return;
+    const t = setInterval(loadReports, 3000);
     return () => clearInterval(t);
-  }, [preseo, guides]);
-  const downloadGuide = (rid) => { const t = localStorage.getItem('qtx_hr_token') || ''; window.open(`${API_BASE}/api/hr/projects/brandguide/${rid}/download?token=${encodeURIComponent(t)}`, '_blank'); };
-  const delGuide = async (r) => { if (!confirm(`Delete the brand guideline for ${r.businessName || r.domain}?`)) return; try { await hrApi(`/projects/brandguide/${r.id}`, { method: 'DELETE' }); loadGuides(); } catch (e) { toast(e.message); } };
+  }, [reports]);
+  const isGuide = (r) => r.kind === 'brand_guideline';
+  const base = (r) => isGuide(r) ? 'brandguide' : 'preseo';
   const canApprove = data.myPerms && (data.myPerms.admin || data.myPerms.approveDeliverables);
   const canUpload = data.myPerms && (data.myPerms.admin || data.myPerms.uploadDeliverables);
   const approve = async (d, ok) => { try { await hrApi(`/projects/${id}/deliverables/${d.id}/approve`, { method: 'POST', body: JSON.stringify({ approved: ok }) }); load(); } catch (e) { toast(e.message); } };
-  const downloadPre = (rid) => { const t = localStorage.getItem('qtx_hr_token') || ''; window.open(`${API_BASE}/api/hr/projects/preseo/${rid}/download?token=${encodeURIComponent(t)}`, '_blank'); };
-  const delPre = async (r) => { if (!confirm(`Delete the report for ${r.businessName || r.domain}?`)) return; try { await hrApi(`/projects/preseo/${r.id}`, { method: 'DELETE' }); loadPreseo(); } catch (e) { toast(e.message); } };
-  const rerunPre = async (r) => { if (!confirm(`Re-run the audit for ${r.businessName || r.domain} with a fresh crawl? Your uploaded screenshots are kept.`)) return; try { await hrApi(`/projects/preseo/${r.id}/rerun`, { method: 'POST' }); toast('Re-running — fresh crawl started.'); loadPreseo(); } catch (e) { toast('Re-run failed: ' + e.message); } };
+  const download = (r) => { const t = localStorage.getItem('qtx_hr_token') || ''; window.open(`${API_BASE}/api/hr/projects/${base(r)}/${r.id}/download?token=${encodeURIComponent(t)}`, '_blank'); };
+  const del = async (r) => { if (!confirm(`Delete the report for ${r.businessName || r.domain}?`)) return; try { await hrApi(`/projects/${base(r)}/${r.id}`, { method: 'DELETE' }); loadReports(); } catch (e) { toast(e.message); } };
+  const rerun = async (r) => { if (!confirm(`Re-run ${r.businessName || r.domain} with a fresh crawl?`)) return; try { await hrApi(`/projects/${base(r)}/${r.id}/rerun`, { method: 'POST' }); toast('Re-running — fresh crawl started.'); loadReports(); } catch (e) { toast('Re-run failed: ' + e.message); } };
+  const openEdit = (r) => { if (isGuide(r)) setEditGuide(r); else setEditRep(r); };
+  const statusCell = (r) => {
+    if (['capturing', 'analyzing', 'rendering', 'draft'].includes(r.status)) return (
+      <div className="min-w-[120px]">
+        <div className="flex items-center gap-1.5 text-[11px] font-bold text-orange-600"><span className="inline-block w-3 h-3 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />{r.currentStep || 'Working…'}</div>
+        <div className="h-1.5 rounded bg-slate-100 overflow-hidden mt-1"><div className="h-full rounded" style={{ width: `${r.progress || 5}%`, background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }} /></div>
+      </div>
+    );
+    return psPill(r.status);
+  };
+  const typeChip = (r) => isGuide(r)
+    ? <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#f5f3ff', color: '#7c3aed' }}>Brand Guideline</span>
+    : <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#eff6ff', color: '#2563eb' }}>Pre-SEO</span>;
 
-  if (viewRep) return <PreSeoReportView id={viewRep} onBack={() => { setViewRep(null); loadPreseo(); }} onEdit={(rep) => { setViewRep(null); setEditRep(rep); }} />;
+  if (viewRep) return <PreSeoReportView id={viewRep} onBack={() => { setViewRep(null); loadReports(); }} onEdit={(rep) => { setViewRep(null); setEditRep(rep); }} />;
   if (!dels) return <div className="text-slate-400 text-sm py-6 text-center">Loading…</div>;
   return (
     <div>
-      {/* Run Report — one button, then pick the report type. */}
-      <div className="flex items-center justify-between mb-3 rounded-xl border border-slate-200 bg-white p-3 flex-wrap gap-2">
-        <div><b className="text-[13px] text-[#050A1F]">Run a report</b><div className="text-[11.5px] text-slate-400">Generate a branded deliverable for this client.</div></div>
-        <button onClick={() => setPickType(true)} className="text-[12.5px] font-extrabold text-white rounded-lg px-4 py-2" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>▶ Run Report</button>
-      </div>
-      {pickType && <ReportTypePicker onClose={() => setPickType(false)} onPick={(k) => { setPickType(false); if (k === 'brand_guideline') setRunGuide(true); else setRunReport(true); }} />}
-      {runReport && <PreSeoReportWizard projectId={id} project={data.project} onClose={() => { setRunReport(false); loadPreseo(); }} onDone={loadPreseo} />}
-      {editRep && <PreSeoReportWizard projectId={id} project={data.project} editReport={editRep} onClose={() => { setEditRep(null); loadPreseo(); }} onDone={loadPreseo} />}
-      {runGuide && <BrandGuideWizard projectId={id} project={data.project} onClose={() => { setRunGuide(false); loadGuides(); }} onDone={loadGuides} />}
-      {editGuide && <BrandGuideWizard projectId={id} project={data.project} editReport={editGuide} onClose={() => { setEditGuide(null); loadGuides(); }} onDone={loadGuides} />}
+      {/* Reports are started from the top Reports tab. This tab lists this project's reports. */}
+      {editRep && <PreSeoReportWizard projectId={id} project={data.project} editReport={editRep} onClose={() => { setEditRep(null); loadReports(); }} onDone={loadReports} />}
+      {editGuide && <BrandGuideWizard projectId={id} project={data.project} editReport={editGuide} onClose={() => { setEditGuide(null); loadReports(); }} onDone={loadReports} />}
 
-      {/* Pre-SEO reports run for this project */}
-      {preseo && preseo.length > 0 && (
+      {reports && reports.length > 0 && (
         <div className="mb-4 rounded-xl border border-slate-200 overflow-hidden">
-          <div className="px-3 py-2 bg-slate-50 text-[11px] font-extrabold text-slate-500 uppercase">Pre-SEO Reports</div>
+          <div className="px-3 py-2 bg-slate-50 text-[11px] font-extrabold text-slate-500 uppercase">Reports</div>
           <table className="w-full text-[12.5px]">
             <tbody>
-              {preseo.map((r) => (
+              {reports.map((r) => (
                 <tr key={r.id} className="border-t border-slate-100">
-                  <td className="px-3 py-2.5"><div className="font-bold text-[#050A1F]">{r.businessName || r.domain}</div><div className="text-[11px] text-slate-400">{r.domain} · {new Date(r.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div></td>
-                  <td className="px-3 py-2.5">{psPill(r.status)}</td>
+                  <td className="px-3 py-2.5"><div className="flex items-center gap-2"><span className="font-bold text-[#050A1F]">{r.businessName || r.domain}</span>{typeChip(r)}</div><div className="text-[11px] text-slate-400">{r.domain} · {new Date(r.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div></td>
+                  <td className="px-3 py-2.5">{statusCell(r)}</td>
                   <td className="px-3 py-2.5 text-right whitespace-nowrap">
                     <div className="inline-flex gap-1.5 justify-end">
                       {r.status === 'complete' && <>
-                        <button onClick={() => setViewRep(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>
-                        <button onClick={() => downloadPre(r.id)} className="rounded-lg px-2.5 py-1 text-[11px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>PDF</button>
-                        <button onClick={() => setEditRep(r)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">Edit</button>
-                        <button onClick={() => rerunPre(r)} title="Re-run with a fresh crawl (keeps screenshots)" className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-bold text-slate-600">↻</button>
+                        {!isGuide(r) && <button onClick={() => setViewRep(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>}
+                        <button onClick={() => download(r)} className="rounded-lg px-2.5 py-1 text-[11px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>PDF</button>
+                        <button onClick={() => openEdit(r)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">Edit</button>
+                        <button onClick={() => rerun(r)} title="Re-run with a fresh crawl" className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-bold text-slate-600">↻</button>
                       </>}
-                      {r.status === 'ready' && <>
-                        <button onClick={() => setEditRep(r)} className="rounded-lg border border-orange-300 px-2.5 py-1 text-[11px] font-bold text-orange-600">Review & upload</button>
-                        <button onClick={() => rerunPre(r)} title="Re-run with a fresh crawl (keeps screenshots)" className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-bold text-slate-600">↻</button>
-                      </>}
-                      {['capturing', 'analyzing', 'rendering'].includes(r.status) && <span className="text-[11px] text-slate-400">working…</span>}
-                      {r.status === 'draft' && <button onClick={() => setEditRep(r)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">Resume</button>}
-                      <button onClick={() => delPre(r)} className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] text-slate-400 hover:text-red-500">🗑</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Brand guidelines run for this project */}
-      {guides && guides.length > 0 && (
-        <div className="mb-4 rounded-xl border border-slate-200 overflow-hidden">
-          <div className="px-3 py-2 bg-slate-50 text-[11px] font-extrabold text-slate-500 uppercase">Brand Guidelines</div>
-          <table className="w-full text-[12.5px]">
-            <tbody>
-              {guides.map((r) => (
-                <tr key={r.id} className="border-t border-slate-100">
-                  <td className="px-3 py-2.5"><div className="font-bold text-[#050A1F]">{r.businessName || r.domain}</div><div className="text-[11px] text-slate-400">{r.domain} · {new Date(r.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div></td>
-                  <td className="px-3 py-2.5">{psPill(r.status)}</td>
-                  <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                    <div className="inline-flex gap-1.5 justify-end">
-                      {r.status === 'complete' && <>
-                        <button onClick={() => downloadGuide(r.id)} className="rounded-lg px-2.5 py-1 text-[11px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>PDF</button>
-                        <button onClick={() => setEditGuide(r)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">Edit</button>
-                      </>}
-                      {r.status === 'ready' && <button onClick={() => setEditGuide(r)} className="rounded-lg border border-orange-300 px-2.5 py-1 text-[11px] font-bold text-orange-600">Review</button>}
-                      {['capturing', 'analyzing', 'rendering'].includes(r.status) && <span className="text-[11px] text-slate-400">working…</span>}
-                      <button onClick={() => delGuide(r)} className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] text-slate-400 hover:text-red-500">🗑</button>
+                      {r.status === 'ready' && <button onClick={() => openEdit(r)} className="rounded-lg border border-orange-300 px-2.5 py-1 text-[11px] font-bold text-orange-600">Review</button>}
+                      {r.status === 'draft' && <button onClick={() => openEdit(r)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">Resume</button>}
+                      {r.status === 'failed' && <button onClick={() => rerun(r)} className="rounded-lg border border-red-200 px-2.5 py-1 text-[11px] font-bold text-red-600">Retry</button>}
+                      <button onClick={() => del(r)} className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] text-slate-400 hover:text-red-500">🗑</button>
                     </div>
                   </td>
                 </tr>
@@ -821,12 +816,15 @@ const MANUAL_SLOTS = [
   // Sections with no uploaded screenshot are excluded from the final PDF.
 ];
 
-function PreSeoReportWizard({ projectId, project, onClose, onDone, editReport }) {
+function PreSeoReportWizard({ projectId, project, onClose, onDone, onStarted, chooseProject, editReport }) {
   // Edit mode: reopen an existing complete report straight at the review/upload step.
   const [step, setStep] = useState(editReport ? 'review' : 'pick'); // pick | url | running | review | done
   const [reportType, setReportType] = useState('pre_seo');
   const [bizName, setBizName] = useState((project && project.customerName) || '');
   const [website, setWebsite] = useState((editReport && editReport.website) || (project && project.website) || '');
+  const [projectSel, setProjectSel] = useState(projectId && projectId !== 'none' ? String(projectId) : '');
+  const [projectList, setProjectList] = useState([]);
+  useEffect(() => { if (chooseProject) hrApi('/projects').then((r) => setProjectList(r.projects || [])).catch(() => {}); }, [chooseProject]);
   const [sitemapUrl, setSitemapUrl] = useState('');
   const [noSitemap, setNoSitemap] = useState(false);
   const [accessMode, setAccessMode] = useState('unsure'); // share | coordinate | unsure
@@ -850,7 +848,11 @@ function PreSeoReportWizard({ projectId, project, onClose, onDone, editReport })
       // regardless. If the report is run inside a project, carry its services
       // through only so the list can show matching chips.
       const services = (project && project.servicesTaken) || [];
-      const r = await hrApi(`/projects/${projectId || 'none'}/preseo`, { method: 'POST', body: JSON.stringify({ website: website.trim(), businessName: bizName || (project && project.customerName), services, reportType, sitemapUrl: sitemapUrl.trim(), noSitemap, accessMode }) });
+      const pid = projectSel || projectId || 'none';
+      const r = await hrApi(`/projects/${pid}/preseo`, { method: 'POST', body: JSON.stringify({ website: website.trim(), businessName: bizName || (project && project.customerName), services, reportType, sitemapUrl: sitemapUrl.trim(), noSitemap, accessMode }) });
+      // Close the popup immediately — progress shows under Status in the list.
+      toast('Started — crawling the site. Watch its progress in the list.');
+      if (onStarted) { onStarted(); return; }
       setRid(r.id); setStep('running');
     } catch (e) { toast(e.message); }
     setBusy(false);
@@ -939,13 +941,11 @@ function PreSeoReportWizard({ projectId, project, onClose, onDone, editReport })
         <div className="flex-1 overflow-auto px-5 py-4">
           {(step === 'pick' || step === 'url') && (
             <div>
-              <div className="mb-3">
-                <label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Report type</label>
-                <div className="flex flex-wrap gap-2">
-                  <div className="px-3 py-2 rounded-xl text-[12px] font-bold border-2 cursor-pointer" style={{ borderColor: '#FF6A00', background: '#FFF7ED', color: '#FF4500' }}>Pre-SEO Audit</div>
-                  <div className="px-3 py-2 rounded-xl text-[12px] font-bold border border-slate-200 text-slate-400 cursor-not-allowed">Full SEO Audit (soon)</div>
+              {chooseProject && (
+                <div className="mb-3"><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Project <span className="font-medium text-slate-300">· optional — tie this report to a project</span></label>
+                  <select value={projectSel} onChange={(e) => { setProjectSel(e.target.value); const p = projectList.find((x) => String(x.id) === e.target.value); if (p) { if (!website) setWebsite(p.website || ''); if (!bizName) setBizName(p.customerName || ''); } }} className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-[13.5px] focus:outline-none focus:ring-2 focus:ring-orange-200"><option value="">— No project —</option>{projectList.map((p) => <option key={p.id} value={p.id}>{p.customerName || p.name || ('Project #' + p.id)}</option>)}</select>
                 </div>
-              </div>
+              )}
               <div className="mb-3"><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Website URL</label>
                 <input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://example.com" className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-[13.5px] focus:outline-none focus:ring-2 focus:ring-orange-200" /></div>
               <div className="mb-3"><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Business name <span className="font-medium text-slate-300">· shown on the cover</span></label>
@@ -1194,10 +1194,13 @@ function ReportTypePicker({ onClose, onPick }) {
 // ---- Brand Guideline wizard ----------------------------------------------
 const BG_PLATFORMS = ['Instagram', 'Facebook', 'YouTube', 'TikTok', 'LinkedIn', 'X (Twitter)', 'Pinterest'];
 
-function BrandGuideWizard({ projectId, project, onClose, onDone, editReport }) {
+function BrandGuideWizard({ projectId, project, onClose, onDone, onStarted, chooseProject, editReport }) {
   const [step, setStep] = useState(editReport ? 'review' : 'input'); // input | running | review
   const [website, setWebsite] = useState((editReport && editReport.website) || (project && project.website) || '');
   const [bizName, setBizName] = useState((editReport && editReport.businessName) || (project && project.customerName) || '');
+  const [projectSel, setProjectSel] = useState(projectId && projectId !== 'none' ? String(projectId) : '');
+  const [projectList, setProjectList] = useState([]);
+  useEffect(() => { if (chooseProject) hrApi('/projects').then((r) => setProjectList(r.projects || [])).catch(() => {}); }, [chooseProject]);
   const [industry, setIndustry] = useState('');
   const [audiences, setAudiences] = useState('');
   const [postsPerMonth, setPostsPerMonth] = useState(10);
@@ -1225,12 +1228,16 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, editReport }) {
     if (!website.trim()) { toast('Enter the website URL'); return; }
     setBusy(true);
     try {
-      const r = await hrApi(`/projects/${projectId || 'none'}/brandguide`, { method: 'POST', body: JSON.stringify({
+      const pid = projectSel || projectId || 'none';
+      const r = await hrApi(`/projects/${pid}/brandguide`, { method: 'POST', body: JSON.stringify({
         website: website.trim(), businessName: bizName, industry, audiences,
         postsPerMonth: Number(postsPerMonth) || 10, platforms, cadence, peakSeason, tone, logoUrl: logoUrl.trim(),
       }) });
       // If the user picked a logo file, upload it now that the report exists.
       if (logoFile) { try { await uploadLogo(r.id, logoFile); } catch (e) { toast('Logo upload failed: ' + e.message); } }
+      // Close the popup immediately — the table shows progress under Status.
+      toast('Started — building the guideline. Watch its progress in the list.');
+      if (onStarted) { onStarted(); return; }
       setRid(r.id); setStep('running');
     } catch (e) { toast(e.message); }
     setBusy(false);
@@ -1271,10 +1278,23 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, editReport }) {
     return () => { stop = true; };
   }, [rid, step]);
 
+  const [verify, setVerify] = useState(null);
+  // Verify-before-download: AI checks brand name / tagline; on mismatch, confirm.
   const generate = async () => {
     setGen(true);
-    try { await hrApi(`/projects/brandguide/${rid}/generate`, { method: 'POST' }); const r = await hrApi(`/projects/brandguide/${rid}`); setRep(r); toast('Guideline ready ✓'); if (onDone) onDone(); }
-    catch (e) { toast(e.message); }
+    try {
+      const v = await hrApi(`/projects/brandguide/${rid}/verify`, { method: 'POST' });
+      if (v && v.needsReview) { setVerify(v); setGen(false); return; }
+      await doGenerate();
+    } catch (e) { toast('Verification failed: ' + (e.message || 'error')); setGen(false); }
+  };
+  const doGenerate = async (resolutions) => {
+    setGen(true);
+    try {
+      if (resolutions) await hrApi(`/projects/brandguide/${rid}/apply-verification`, { method: 'POST', body: JSON.stringify({ resolutions }) });
+      await hrApi(`/projects/brandguide/${rid}/generate`, { method: 'POST' });
+      const r = await hrApi(`/projects/brandguide/${rid}`); setRep(r); setVerify(null); toast('Guideline ready ✓'); if (onDone) onDone();
+    } catch (e) { toast(e.message); }
     setGen(false);
   };
   const rerun = async () => {
@@ -1301,6 +1321,11 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, editReport }) {
         <div className="flex-1 overflow-auto px-5 py-4">
           {step === 'input' && (
             <div className="space-y-3">
+              {chooseProject && (
+                <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Project <span className="font-medium text-slate-300">· optional — tie this guideline to a project</span></label>
+                  <select value={projectSel} onChange={(e) => { setProjectSel(e.target.value); const p = projectList.find((x) => String(x.id) === e.target.value); if (p) { if (!website) setWebsite(p.website || ''); if (!bizName) setBizName(p.customerName || ''); } }} className={fld}><option value="">— No project —</option>{projectList.map((p) => <option key={p.id} value={p.id}>{p.customerName || p.name || ('Project #' + p.id)}</option>)}</select>
+                </div>
+              )}
               <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Website URL *</label><input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://brand.com" className={fld} /><div className="text-[10.5px] text-slate-400 mt-1">We crawl this for the logo, real photos, colours and copy.</div></div>
               <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Brand / business name</label><input value={bizName} onChange={(e) => setBizName(e.target.value)} placeholder="Shown on the cover" className={fld} /></div>
               <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Industry / what they sell</label><input value={industry} onChange={(e) => setIndustry(e.target.value)} placeholder="e.g. ultra-light hunting gear" className={fld} /></div>
@@ -1364,6 +1389,8 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, editReport }) {
             <button onClick={generate} disabled={gen} className="px-5 py-2.5 rounded-xl text-[13px] font-extrabold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)', opacity: gen ? 0.6 : 1 }}>{gen ? 'Generating…' : isComplete ? 'Regenerate PDF →' : 'Generate PDF →'}</button>
           </div>}
         </div>
+
+        {verify && <VerifyDialog verify={verify} busy={gen} onCancel={() => setVerify(null)} onConfirm={(resolutions) => doGenerate(resolutions)} />}
       </aside>
     </div>
   );

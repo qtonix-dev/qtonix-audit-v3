@@ -414,11 +414,11 @@ router.get('/preseo/:rid', guard, requireHrAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// List a project's Pre-SEO reports.
+// List a project's reports (both Pre-SEO and Brand Guideline, with kind + live progress).
 router.get('/:id/preseo', guard, requireHrAdmin, async (req, res, next) => {
   try {
-    const rows = await PreSeoReport.findAll({ where: { projectId: req.params.id, kind: { [Op.ne]: 'brand_guideline' } }, order: [['createdAt', 'DESC']], attributes: ['id', 'status', 'progress', 'domain', 'businessName', 'createdAt', 'completedAt'] });
-    res.json({ reports: rows });
+    const rows = await PreSeoReport.findAll({ where: { projectId: req.params.id }, order: [['id', 'DESC']], attributes: ['id', 'kind', 'status', 'progress', 'currentStep', 'domain', 'businessName', 'createdAt', 'completedAt'] });
+    res.json({ reports: rows.map((r) => ({ id: r.id, kind: r.kind || 'pre_seo', status: r.status, progress: r.progress, currentStep: r.currentStep || '', domain: r.domain, businessName: r.businessName, createdAt: r.createdAt, completedAt: r.completedAt })) });
   } catch (e) { next(e); }
 });
 
@@ -432,8 +432,10 @@ router.get('/preseo', guard, requireHrAdmin, async (req, res, next) => {
     // overflows MySQL's sort buffer ("Out of sort memory"). So the sorted query
     // excludes those blobs; we load the two we need (data, shots) in a second,
     // UN-sorted query keyed by id.
-    const SCALAR = ['id', 'projectId', 'domain', 'businessName', 'status', 'progress', 'createdByName', 'createdAt', 'completedAt', 'publicEnabled', 'publicSlug'];
-    const rows = await PreSeoReport.findAll({ where: { kind: { [Op.ne]: 'brand_guideline' } }, attributes: SCALAR, order: [['id', 'DESC']], limit: 500 });
+    // Both report types live in this table; the UI shows a Type column and,
+    // while a report is building, its live progress under Status.
+    const SCALAR = ['id', 'projectId', 'kind', 'domain', 'businessName', 'status', 'progress', 'currentStep', 'createdByName', 'createdAt', 'completedAt', 'publicEnabled', 'publicSlug'];
+    const rows = await PreSeoReport.findAll({ attributes: SCALAR, order: [['id', 'DESC']], limit: 500 });
     const ids = rows.map((r) => r.id);
     // Second pass: just id + the two JSON columns we summarise, no ORDER BY.
     const blobMap = {};
@@ -446,8 +448,9 @@ router.get('/preseo', guard, requireHrAdmin, async (req, res, next) => {
       const hs = b.data && b.data.report && b.data.report.healthScore;
       const svc = (b.data && b.data.report && b.data.report.services) || [];
       return {
-        id: r.id, projectId: r.projectId, domain: r.domain, businessName: r.businessName,
-        status: r.status, progress: r.progress, score: hs && typeof hs.value === 'number' ? hs.value : null,
+        id: r.id, projectId: r.projectId, kind: r.kind || 'pre_seo', domain: r.domain, businessName: r.businessName,
+        status: r.status, progress: r.progress, currentStep: r.currentStep || '',
+        score: hs && typeof hs.value === 'number' ? hs.value : null,
         services: Array.isArray(svc) ? svc : [], agentName: r.createdByName || '',
         createdAt: r.createdAt, completedAt: r.completedAt,
         shared: !!r.publicEnabled, publicSlug: r.publicSlug || null,
@@ -734,6 +737,22 @@ router.put('/brandguide/:rid', guard, requireHrAdmin, async (req, res, next) => 
     if (!r || r.kind !== BG_KIND) return res.status(404).json({ error: 'Guideline not found.' });
     if (req.body && req.body.data) { r.data = req.body.data; r.changed('data', true); await r.save(); }
     res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Pre-download AI verification (brand name / tagline consistency).
+router.post('/brandguide/:rid/verify', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r || r.kind !== BG_KIND) return res.status(404).json({ error: 'Guideline not found.' });
+    res.json(await brandGuideRunner.verify(r.id));
+  } catch (e) { next(e); }
+});
+router.post('/brandguide/:rid/apply-verification', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r || r.kind !== BG_KIND) return res.status(404).json({ error: 'Guideline not found.' });
+    res.json(await brandGuideRunner.applyVerification(r.id, (req.body && req.body.resolutions) || {}));
   } catch (e) { next(e); }
 });
 

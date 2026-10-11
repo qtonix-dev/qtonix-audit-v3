@@ -108,4 +108,95 @@ async function generate(reportId) {
   return { pdfPath, htmlPath, pdfUrl, htmlUrl };
 }
 
-module.exports = { run, generate, setStatus };
+// ---------------------------------------------------------------------------
+// Pre-download AI verification for a brand guideline. Checks the factual bits
+// the guideline asserts — business name, tagline, and the contact details on
+// the back cover — against the crawl evidence, and flags mismatches (e.g. the
+// brand name on the site differs from what the guideline shows). Same resolve-
+// in-a-popup pattern as the Pre-SEO report.
+// ---------------------------------------------------------------------------
+async function verify(reportId) {
+  const report = await PreSeoReport.findByPk(reportId);
+  if (!report || !report.data) throw new Error('Guideline not analysed yet.');
+  const data = report.data;
+  const crawl = report.crawl || {};
+  const nap = (crawl.nap) || {};
+  const f = data.foundation || {};
+
+  const cur = {
+    name: (data.report && data.report.business) || report.businessName || '',
+    tagline: f.tagline || '',
+    contactEmail: data.contactEmail || '',
+    contactPhone: data.contactPhone || '',
+  };
+  const evidence = {
+    domain: crawl.domain || report.domain,
+    siteBrand: (crawl.brand && crawl.brand.primary) || '',
+    schemaName: (nap.schema && nap.schema.schemaName) || (nap.name) || '',
+    pageName: (nap.schema && nap.schema.pageName) || '',
+    title: crawl.title || '',
+    guidelineName: cur.name,
+    guidelineTagline: cur.tagline,
+    bodyTextSample: (crawl.bodyTextSample || '').slice(0, 1200),
+  };
+
+  let ai = null;
+  try {
+    const s = await Settings.findOne();
+    const anthropicKey = s && s.getKey ? s.getKey('anthropic') : null;
+    const openaiKey = s && s.getKey ? s.getKey('openai') : null;
+    if (anthropicKey || openaiKey) {
+      const { callAI } = require('./aiVisibility');
+      const sys = 'You QA a brand guideline before it is sent to a client. Compare the name and tagline the guideline shows against the evidence from the website. Flag anything that looks wrong or inconsistent (e.g. the brand name differs from the site, the tagline is marketing fluff not grounded in the site). Output ONLY JSON.';
+      const prompt = `Evidence:\n${JSON.stringify(evidence, null, 2)}\n\nReturn JSON exactly:\n{ "checks":[ { "id":"name|tagline", "verdict":"ok|fix|uncertain", "suggestion":"recommended value or empty", "confidence":0-100, "note":"one short reason" } ] }`;
+      const out = await callAI({ anthropicKey, openaiKey, system: sys, messages: [{ role: 'user', content: prompt }], maxTokens: 600 });
+      try { ai = JSON.parse((out || '').replace(/```json|```/g, '').trim()); } catch { ai = null; }
+    }
+  } catch (e) { console.error('[brandGuide] verify AI failed:', e.message); }
+
+  const aiByField = {}; if (ai && Array.isArray(ai.checks)) for (const c of ai.checks) if (c && c.id) aiByField[c.id] = c;
+
+  // Rule-based brand-name mismatch (works even without AI).
+  const soft = (x) => String(x || '').toLowerCase().replace(/\b(inc|ltd|llc|corp|co|the|company|limited)\b/g, '').replace(/[^a-z0-9]/g, '');
+  const same = (a, b) => { const x = soft(a), y = soft(b); return x && y && (x === y || x.includes(y) || y.includes(x)); };
+  const siteName = evidence.schemaName || evidence.siteBrand || evidence.pageName || '';
+  const nameMismatch = siteName && cur.name && !same(siteName, cur.name);
+
+  const mk = (id, label, current, ruleVerdict, ruleNote) => {
+    const a = aiByField[id] || {};
+    const rank = { fix: 2, uncertain: 1, ok: 0 };
+    const v = (rank[ruleVerdict || 'ok'] >= rank[a.verdict || 'ok']) ? (ruleVerdict || a.verdict || 'ok') : a.verdict;
+    return { id, label, current, aiSuggestion: a.suggestion != null ? String(a.suggestion) : (ruleVerdict === 'fix' ? siteName : ''), aiConfidence: a.confidence != null ? a.confidence : null, aiVerdict: v || 'ok', note: a.note || ruleNote || '' };
+  };
+
+  const checks = [
+    mk('name', 'Brand name', cur.name, nameMismatch ? 'fix' : (cur.name ? 'ok' : 'uncertain'), nameMismatch ? `The site's brand name looks like "${siteName}", which differs from "${cur.name}".` : ''),
+    mk('tagline', 'Tagline', cur.tagline, cur.tagline ? 'ok' : 'uncertain', ''),
+  ];
+  const needsReview = checks.some((c) => c.aiVerdict !== 'ok');
+  return { checks, notes: [], needsReview };
+}
+
+async function applyVerification(reportId, resolutions) {
+  const report = await PreSeoReport.findByPk(reportId);
+  if (!report || !report.data) throw new Error('Guideline not analysed yet.');
+  let v = null; try { v = await verify(reportId); } catch {}
+  const byId = {}; if (v) for (const c of v.checks) byId[c.id] = c;
+  const resolve = (id) => {
+    const r = (resolutions && resolutions[id]) || { mode: 'keep' };
+    const c = byId[id] || {};
+    if (r.mode === 'blank') return '';
+    if (r.mode === 'custom') return r.value != null ? r.value : '';
+    if (r.mode === 'ai') return c.aiSuggestion || c.current || '';
+    return c.current != null ? c.current : '';
+  };
+  const d = JSON.parse(JSON.stringify(report.data));
+  const name = resolve('name'); const tagline = resolve('tagline');
+  if (name) { d.report = d.report || {}; d.report.business = name; report.businessName = name; }
+  if (tagline != null) { d.foundation = d.foundation || {}; d.foundation.tagline = tagline; }
+  report.data = d; report.changed('data', true);
+  await report.save();
+  return { ok: true };
+}
+
+module.exports = { run, generate, setStatus, verify, applyVerification };
