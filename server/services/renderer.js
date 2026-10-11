@@ -39,6 +39,8 @@ Handlebars.registerHelper('formatDate', (d) =>
 Handlebars.registerHelper('upper', (s) => String(s || '').toUpperCase());
 Handlebars.registerHelper('lower', (s) => String(s || '').toLowerCase().replace(/[^a-z]/g, ''));
 Handlebars.registerHelper('inc', (i) => Number(i) + 1);
+Handlebars.registerHelper('firstLetter', (s) => String(s || '?').trim().charAt(0).toUpperCase());
+Handlebars.registerHelper('join', (arr, sep) => Array.isArray(arr) ? arr.join(typeof sep === 'string' ? sep : ', ') : '');
 Handlebars.registerHelper('seconds', (ms) => ((Number(ms) || 0) / 1000).toFixed(1));
 
 /** Colour a stat by thresholds: below `bad` is red, above `good` is green. */
@@ -540,4 +542,80 @@ async function renderPreSeo(data, slugBase) {
   return { pdfPath, htmlPath, pdfUrl, htmlUrl, pdfFileId, htmlFileId };
 }
 
-module.exports = { renderReport, renderHtml, buildViewModel, renderPreSeo, renderPreSeoHtml };
+// ---------------------------------------------------------------------------
+// Brand Guideline renderer (landscape slide deck, Raleway, site-derived palette)
+// ---------------------------------------------------------------------------
+const BG_ASSET_DIR = process.env.BG_ASSET_DIR || path.join(__dirname, '../assets/fonts');
+
+// Shade a hex colour darker by a factor (0..1) for the "deep" brand accent.
+function shade(hex, factor = 0.78) {
+  const h = String(hex || '#E55B2A').replace('#', '');
+  if (h.length !== 6) return '#B4461E';
+  const [r, g, b] = [0, 2, 4].map((i) => Math.round(parseInt(h.slice(i, i + 2), 16) * factor));
+  return '#' + [r, g, b].map((n) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, '0')).join('');
+}
+
+// Prepare the view model: attach CSS-safe colour vars + per-swatch hexCss.
+function bgViewModel(data) {
+  const pal = (data.palette || []).map((c) => ({ ...c, hexCss: c.hex }));
+  const brand = (pal.find((c) => c.role === 'brand') || pal[0] || {}).hex || '#E55B2A';
+  const dark = (pal.find((c) => c.role === 'dark') || {}).hex || '#242424';
+  const light = (pal.find((c) => c.role === 'light') || {}).hex || '#F5F1E8';
+  const olive = (pal.find((c) => c.role === 'neutral') || {}).hex || '#4A5233';
+  // Flatten the image arrays to simple named URLs — Handlebars can't take a
+  // numeric index (images.lifestyle.0) in {{#if}}/{{src}} positions.
+  const imgs = data.images || {};
+  const life = imgs.lifestyle || [];
+  const prod = imgs.product || [];
+  const flat = {};
+  for (let i = 0; i < 6; i++) flat['life' + i] = (life[i] && life[i].url) || '';
+  for (let i = 0; i < 4; i++) flat['prod' + i] = (prod[i] && prod[i].url) || '';
+  flat.heroImg = (imgs.hero) || (data.cover && data.cover.heroImage) || '';
+  return {
+    ...data,
+    palette: pal,
+    img: flat,
+    brandCss: brand, brandDeep: shade(brand), darkCss: dark, lightCss: light, oliveCss: olive,
+  };
+}
+
+async function renderBrandGuidelineHtml(data, opts = {}) {
+  const tplSrc = await fs.readFile(path.join(__dirname, '../templates/brandGuideline.hbs'), 'utf8');
+  const tpl = Handlebars.compile(tplSrc);
+  return tpl({ ...bgViewModel(data), forWeb: !!opts.forWeb, assetDir: 'file://' + BG_ASSET_DIR });
+}
+
+async function renderBrandGuideline(data, slugBase) {
+  await fs.mkdir(OUT_DIR, { recursive: true });
+  const slug = `brandguide-${String(slugBase || (data.report && data.report.business) || 'guide').replace(/[^a-z0-9]/gi, '-')}`;
+  const htmlPath = path.join(OUT_DIR, `${slug}.html`);
+  const pdfPath = path.join(OUT_DIR, `${slug}.pdf`);
+  await fs.writeFile(htmlPath, await renderBrandGuidelineHtml(data, { forWeb: true }), 'utf8');
+  const pdfHtmlPath = path.join(OUT_DIR, `${slug}.pdf.html`);
+  await fs.writeFile(pdfHtmlPath, await renderBrandGuidelineHtml(data, { forWeb: false }), 'utf8');
+  await new Promise((resolve, reject) => {
+    const { execFile } = require('child_process');
+    execFile('python3', ['-m', 'weasyprint', '-e', 'utf-8', '-u', path.dirname(pdfHtmlPath), pdfHtmlPath, pdfPath], { timeout: 180000 },
+      (err, stdout, stderr) => err ? reject(new Error(`WeasyPrint failed: ${stderr || err.message}`)) : resolve());
+  });
+
+  let pdfUrl = null, htmlUrl = null, pdfFileId = null, htmlFileId = null;
+  try {
+    const ik = require('./imagekit');
+    const { Settings } = require('../models');
+    const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+    if (ik.isConfigured(settings)) {
+      const webHtml = await renderBrandGuidelineHtml(data, { forWeb: true });
+      const [pr, hr] = await Promise.all([
+        fs.readFile(pdfPath).then((buf) => ik.uploadFile({ base64: buf.toString('base64'), fileName: `${slug}.pdf`, folder: '/qtonix/brandguide/reports' })),
+        ik.uploadFile({ base64: Buffer.from(webHtml, 'utf8').toString('base64'), fileName: `${slug}.html`, folder: '/qtonix/brandguide/reports' }),
+      ]);
+      pdfUrl = pr.url; pdfFileId = pr.fileId || null;
+      htmlUrl = hr.url; htmlFileId = hr.fileId || null;
+    }
+  } catch (e) { console.error('[renderBrandGuideline] ImageKit upload failed, keeping local only:', e.message); }
+
+  return { pdfPath, htmlPath, pdfUrl, htmlUrl, pdfFileId, htmlFileId };
+}
+
+module.exports = { renderReport, renderHtml, buildViewModel, renderPreSeo, renderPreSeoHtml, renderBrandGuideline, renderBrandGuidelineHtml };

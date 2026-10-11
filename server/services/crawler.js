@@ -603,4 +603,99 @@ async function runTechnicalAudit(website, pageSpeedKey, opts = {}) {
   };
 }
 
-module.exports = { runTechnicalAudit, crawlHomepage, getPageSpeed, checkRobots, normaliseUrl };
+// ---------------------------------------------------------------------------
+// Brand-asset harvester for the Brand Guideline report. Works on already-
+// fetched HTML (so it reuses the same crawl, no extra request to the homepage)
+// and pulls the REAL images, colour palette and fonts the site actually uses.
+//   images  — [{ url, alt, kind }]  kind: hero|product|lifestyle|og|gallery
+//   colors  — [{ hex, rgb, count, role }]  role: brand|accent|dark|light|neutral
+//   fonts   — ["Raleway", "Arial", ...]  from CSS font-family + Google Fonts
+// baseUrl is used to resolve relative image paths to absolute URLs.
+// ---------------------------------------------------------------------------
+function harvestBrandAssets(html, baseUrl) {
+  const out = { images: [], colors: [], fonts: [] };
+  if (!html) return out;
+  let $;
+  try { $ = cheerio.load(html); } catch { return out; }
+  const abs = (u) => { try { return new URL(u, baseUrl).href; } catch { return ''; } };
+  const isReal = (u) => u && !/^data:/i.test(u) && !/\.(svg)(\?|$)/i.test(u) && !/sprite|icon|logo|favicon|pixel|blank|spacer|1x1|placeholder/i.test(u);
+
+  // --- Images: prefer large content images; capture src + srcset + lazy attrs.
+  const seen = new Set();
+  const pushImg = (rawUrl, alt, kind) => {
+    const u = abs(rawUrl);
+    if (!u || !isReal(u) || seen.has(u)) return;
+    seen.add(u);
+    out.images.push({ url: u, alt: (alt || '').trim().slice(0, 140), kind: kind || 'gallery' });
+  };
+  // og:image first (usually the hero / brand shot).
+  const og = $('meta[property="og:image"]').attr('content') || $('meta[name="og:image"]').attr('content');
+  if (og) pushImg(og, 'Primary brand image', 'og');
+  // Hero: first big image in header / hero / banner sections.
+  $('header img, .hero img, [class*="hero"] img, [class*="banner"] img, [class*="slider"] img, .carousel img').each((_, el) => {
+    const s = $(el).attr('src') || $(el).attr('data-src') || $(el).attr('data-lazy-src') || firstFromSrcset($(el).attr('srcset'));
+    if (s) pushImg(s, $(el).attr('alt'), 'hero');
+  });
+  // Product shots: images inside product / shop / gallery blocks.
+  $('[class*="product"] img, [class*="shop"] img, [class*="gallery"] img, [class*="feature"] img, figure img').each((_, el) => {
+    const s = $(el).attr('src') || $(el).attr('data-src') || $(el).attr('data-lazy-src') || firstFromSrcset($(el).attr('srcset'));
+    if (s) pushImg(s, $(el).attr('alt'), 'product');
+  });
+  // Everything else as general lifestyle/gallery, skipping tiny images.
+  $('img').each((_, el) => {
+    const w = parseInt($(el).attr('width') || '0', 10);
+    const h = parseInt($(el).attr('height') || '0', 10);
+    if ((w && w < 150) || (h && h < 150)) return; // skip icons/thumbs
+    const s = $(el).attr('src') || $(el).attr('data-src') || $(el).attr('data-lazy-src') || firstFromSrcset($(el).attr('srcset'));
+    if (s) pushImg(s, $(el).attr('alt'), 'lifestyle');
+  });
+  out.images = out.images.slice(0, 24);
+
+  // --- Colours: count hex colours across inline styles + <style> blocks, then
+  //     rank by frequency. Classify each into a role so the palette cards read
+  //     like Pack Wheel's (brand / accent / dark / light / neutral).
+  const cssText = ($('style').map((_, el) => $(el).text()).get().join(' ') + ' ' +
+    $('[style]').map((_, el) => $(el).attr('style')).get().join(' '));
+  const hexCounts = {};
+  (cssText.match(/#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b/g) || []).forEach((h) => {
+    let hex = h.toLowerCase();
+    if (hex.length === 4) hex = '#' + hex[1] + hex[1] + hex[2] + hex[2] + hex[3] + hex[3];
+    hexCounts[hex] = (hexCounts[hex] || 0) + 1;
+  });
+  // rgb()/rgba() too.
+  (cssText.match(/rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}/gi) || []).forEach((m) => {
+    const [r, g, b] = m.replace(/rgba?\(/i, '').split(',').map((x) => parseInt(x.trim(), 10));
+    if ([r, g, b].every((n) => n >= 0 && n <= 255)) { const hex = '#' + [r, g, b].map((n) => n.toString(16).padStart(2, '0')).join(''); hexCounts[hex] = (hexCounts[hex] || 0) + 1; }
+  });
+  const luminance = (hex) => { const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)); return (0.299 * r + 0.587 * g + 0.114 * b) / 255; };
+  const saturation = (hex) => { const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255); const mx = Math.max(r, g, b), mn = Math.min(r, g, b); return mx === 0 ? 0 : (mx - mn) / mx; };
+  const roleFor = (hex) => { const l = luminance(hex), s = saturation(hex); if (l > 0.9) return 'light'; if (l < 0.18) return 'dark'; if (s > 0.35) return l < 0.55 ? 'brand' : 'accent'; return 'neutral'; };
+  const ranked = Object.entries(hexCounts)
+    .filter(([hex]) => !/#ffffff|#000000/.test(hex) || hexCounts[hex] > 3) // keep pure b/w only if common
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 12)
+    .map(([hex, count]) => { const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)); return { hex: hex.toUpperCase(), rgb: `${r} ${g} ${b}`, count, role: roleFor(hex) }; });
+  out.colors = ranked;
+
+  // --- Fonts: CSS font-family declarations + Google Fonts links.
+  const fonts = new Set();
+  (cssText.match(/font-family\s*:\s*([^;}"']+)/gi) || []).forEach((m) => {
+    m.replace(/font-family\s*:\s*/i, '').split(',').forEach((f) => {
+      const name = f.replace(/["']/g, '').trim();
+      if (name && !/^(inherit|initial|unset|sans-serif|serif|monospace|system-ui|-apple-system|blinkmacsystemfont|ui-sans-serif|ui-serif|ui-monospace|arial|helvetica)$/i.test(name) && name.length <= 40) fonts.add(name);
+    });
+  });
+  $('link[href*="fonts.googleapis.com"]').each((_, el) => {
+    const href = $(el).attr('href') || '';
+    (href.match(/family=([^&:]+)/g) || []).forEach((m) => { const name = decodeURIComponent(m.replace('family=', '').replace(/\+/g, ' ')).split(':')[0].trim(); if (name) fonts.add(name); });
+  });
+  out.fonts = [...fonts].slice(0, 8);
+  return out;
+}
+
+function firstFromSrcset(srcset) {
+  if (!srcset) return '';
+  return String(srcset).split(',')[0].trim().split(/\s+/)[0] || '';
+}
+
+module.exports = { runTechnicalAudit, crawlHomepage, getPageSpeed, checkRobots, normaliseUrl, harvestBrandAssets };

@@ -178,6 +178,7 @@ function PreSeoReports({ onBackTab }) {
   const [view, setView] = useState(null); // a report id being viewed
   const [edit, setEdit] = useState(null); // a report object being edited
   const [run, setRun] = useState(false);
+  const [runGuide, setRunGuide] = useState(false);
   const [err, setErr] = useState('');
   const load = () => hrApi('/projects/preseo').then((r) => { setItems(r.items || []); setErr(''); }).catch((e) => { setItems([]); setErr(e.message || 'Could not load reports'); });
   useEffect(() => { load(); }, []);
@@ -199,7 +200,10 @@ function PreSeoReports({ onBackTab }) {
             <button className="px-3.5 py-1.5 rounded-lg text-[12.5px] font-bold bg-white text-[#050A1F]" style={{ boxShadow: '0 1px 2px rgba(0,0,0,.08)' }}>Reports</button>
           </div>
         </div>
-        <button onClick={() => setRun(true)} className="text-white font-bold px-4 py-2.5 rounded-xl text-sm" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>▶ Run Report</button>
+        <div className="flex gap-2">
+          <button onClick={() => setRun(true)} className="text-white font-bold px-4 py-2.5 rounded-xl text-sm" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>▶ Pre-SEO Audit</button>
+          <button onClick={() => setRunGuide(true)} className="font-bold px-4 py-2.5 rounded-xl text-sm border-2" style={{ borderColor: '#FF6A00', color: '#FF4500' }}>★ Brand Guideline</button>
+        </div>
       </div>
 
       {err && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 text-red-700 text-[12.5px] px-4 py-2.5">Couldn't load reports: {err}. If this persists, open <span className="font-mono">/api/hr/projects/preseo-diag</span> while logged in and share the result.</div>}
@@ -261,6 +265,7 @@ function PreSeoReports({ onBackTab }) {
 
       {run && <PreSeoReportWizard projectId={'none'} project={null} onClose={() => setRun(false)} onDone={load} />}
       {edit && <PreSeoReportWizard projectId={edit.projectId || 'none'} project={null} editReport={edit} onClose={() => { setEdit(null); load(); }} onDone={load} />}
+      {runGuide && <BrandGuideWizard projectId={'none'} project={null} onClose={() => setRunGuide(false)} onDone={() => {}} />}
     </div>
   );
 }
@@ -678,16 +683,23 @@ function ReportsTab({ id, data, onReload }) {
   const [preseo, setPreseo] = useState(null); // this project's Pre-SEO reports
   const [editRep, setEditRep] = useState(null);
   const [viewRep, setViewRep] = useState(null);
+  const [runGuide, setRunGuide] = useState(false);
+  const [editGuide, setEditGuide] = useState(null);
+  const [guides, setGuides] = useState(null);
   const cycle = (data.cycles || [])[0];
   const load = () => hrApi(`/projects/${id}/deliverables`).then((r) => setDels(r.deliverables || [])).catch(() => setDels([]));
   const loadPreseo = () => hrApi(`/projects/${id}/preseo`).then((r) => setPreseo(r.reports || [])).catch(() => setPreseo([]));
-  useEffect(() => { load(); loadPreseo(); }, [id]);
+  const loadGuides = () => hrApi(`/projects/${id}/brandguide`).then((r) => setGuides(r.reports || [])).catch(() => setGuides([]));
+  useEffect(() => { load(); loadPreseo(); loadGuides(); }, [id]);
   // Keep polling while any report is still being built, so the list updates live.
   useEffect(() => {
-    if (!preseo || !preseo.some((r) => ['capturing', 'analyzing', 'rendering', 'draft'].includes(r.status))) return;
-    const t = setInterval(loadPreseo, 3000);
+    const building = (arr) => arr && arr.some((r) => ['capturing', 'analyzing', 'rendering', 'draft'].includes(r.status));
+    if (!building(preseo) && !building(guides)) return;
+    const t = setInterval(() => { loadPreseo(); loadGuides(); }, 3000);
     return () => clearInterval(t);
-  }, [preseo]);
+  }, [preseo, guides]);
+  const downloadGuide = (rid) => { const t = localStorage.getItem('qtx_hr_token') || ''; window.open(`${API_BASE}/api/hr/projects/brandguide/${rid}/download?token=${encodeURIComponent(t)}`, '_blank'); };
+  const delGuide = async (r) => { if (!confirm(`Delete the brand guideline for ${r.businessName || r.domain}?`)) return; try { await hrApi(`/projects/brandguide/${r.id}`, { method: 'DELETE' }); loadGuides(); } catch (e) { toast(e.message); } };
   const canApprove = data.myPerms && (data.myPerms.admin || data.myPerms.approveDeliverables);
   const canUpload = data.myPerms && (data.myPerms.admin || data.myPerms.uploadDeliverables);
   const approve = async (d, ok) => { try { await hrApi(`/projects/${id}/deliverables/${d.id}/approve`, { method: 'POST', body: JSON.stringify({ approved: ok }) }); load(); } catch (e) { toast(e.message); } };
@@ -699,13 +711,18 @@ function ReportsTab({ id, data, onReload }) {
   if (!dels) return <div className="text-slate-400 text-sm py-6 text-center">Loading…</div>;
   return (
     <div>
-      {/* Run Report — analysis reports (Pre-SEO Audit, more later). */}
-      <div className="flex items-center justify-between mb-3 rounded-xl border border-slate-200 bg-white p-3">
-        <div><b className="text-[13px] text-[#050A1F]">Run a report</b><div className="text-[11.5px] text-slate-400">Generate a branded analysis report for this client.</div></div>
-        <button onClick={() => setRunReport(true)} className="text-[12.5px] font-extrabold text-white rounded-lg px-4 py-2" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>▶ Run Report</button>
+      {/* Run Report — analysis reports + brand guideline. */}
+      <div className="flex items-center justify-between mb-3 rounded-xl border border-slate-200 bg-white p-3 flex-wrap gap-2">
+        <div><b className="text-[13px] text-[#050A1F]">Run a report</b><div className="text-[11.5px] text-slate-400">Generate a branded deliverable for this client.</div></div>
+        <div className="flex gap-2">
+          <button onClick={() => setRunReport(true)} className="text-[12.5px] font-extrabold text-white rounded-lg px-4 py-2" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>▶ Pre-SEO Audit</button>
+          <button onClick={() => setRunGuide(true)} className="text-[12.5px] font-extrabold rounded-lg px-4 py-2 border-2" style={{ borderColor: '#FF6A00', color: '#FF4500' }}>★ Brand Guideline</button>
+        </div>
       </div>
       {runReport && <PreSeoReportWizard projectId={id} project={data.project} onClose={() => { setRunReport(false); loadPreseo(); }} onDone={loadPreseo} />}
       {editRep && <PreSeoReportWizard projectId={id} project={data.project} editReport={editRep} onClose={() => { setEditRep(null); loadPreseo(); }} onDone={loadPreseo} />}
+      {runGuide && <BrandGuideWizard projectId={id} project={data.project} onClose={() => { setRunGuide(false); loadGuides(); }} onDone={loadGuides} />}
+      {editGuide && <BrandGuideWizard projectId={id} project={data.project} editReport={editGuide} onClose={() => { setEditGuide(null); loadGuides(); }} onDone={loadGuides} />}
 
       {/* Pre-SEO reports run for this project */}
       {preseo && preseo.length > 0 && (
@@ -732,6 +749,34 @@ function ReportsTab({ id, data, onReload }) {
                       {['capturing', 'analyzing', 'rendering'].includes(r.status) && <span className="text-[11px] text-slate-400">working…</span>}
                       {r.status === 'draft' && <button onClick={() => setEditRep(r)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">Resume</button>}
                       <button onClick={() => delPre(r)} className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] text-slate-400 hover:text-red-500">🗑</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Brand guidelines run for this project */}
+      {guides && guides.length > 0 && (
+        <div className="mb-4 rounded-xl border border-slate-200 overflow-hidden">
+          <div className="px-3 py-2 bg-slate-50 text-[11px] font-extrabold text-slate-500 uppercase">Brand Guidelines</div>
+          <table className="w-full text-[12.5px]">
+            <tbody>
+              {guides.map((r) => (
+                <tr key={r.id} className="border-t border-slate-100">
+                  <td className="px-3 py-2.5"><div className="font-bold text-[#050A1F]">{r.businessName || r.domain}</div><div className="text-[11px] text-slate-400">{r.domain} · {new Date(r.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div></td>
+                  <td className="px-3 py-2.5">{psPill(r.status)}</td>
+                  <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                    <div className="inline-flex gap-1.5 justify-end">
+                      {r.status === 'complete' && <>
+                        <button onClick={() => downloadGuide(r.id)} className="rounded-lg px-2.5 py-1 text-[11px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>PDF</button>
+                        <button onClick={() => setEditGuide(r)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">Edit</button>
+                      </>}
+                      {r.status === 'ready' && <button onClick={() => setEditGuide(r)} className="rounded-lg border border-orange-300 px-2.5 py-1 text-[11px] font-bold text-orange-600">Review</button>}
+                      {['capturing', 'analyzing', 'rendering'].includes(r.status) && <span className="text-[11px] text-slate-400">working…</span>}
+                      <button onClick={() => delGuide(r)} className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] text-slate-400 hover:text-red-500">🗑</button>
                     </div>
                   </td>
                 </tr>
@@ -1119,6 +1164,196 @@ function VerifyDialog({ verify, busy, onCancel, onConfirm }) {
           <button onClick={() => onConfirm(res)} disabled={busy} className="px-5 py-2.5 rounded-xl text-[13px] font-extrabold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)', opacity: busy ? 0.6 : 1 }}>{busy ? 'Generating…' : 'Confirm & generate PDF →'}</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---- Brand Guideline wizard ----------------------------------------------
+const BG_PLATFORMS = ['Instagram', 'Facebook', 'YouTube', 'TikTok', 'LinkedIn', 'X (Twitter)', 'Pinterest'];
+
+function BrandGuideWizard({ projectId, project, onClose, onDone, editReport }) {
+  const [step, setStep] = useState(editReport ? 'review' : 'input'); // input | running | review
+  const [website, setWebsite] = useState((editReport && editReport.website) || (project && project.website) || '');
+  const [bizName, setBizName] = useState((editReport && editReport.businessName) || (project && project.customerName) || '');
+  const [industry, setIndustry] = useState('');
+  const [audiences, setAudiences] = useState('');
+  const [postsPerMonth, setPostsPerMonth] = useState(10);
+  const [platforms, setPlatforms] = useState(['Instagram', 'Facebook', 'YouTube']);
+  const [cadence, setCadence] = useState('');
+  const [peakSeason, setPeakSeason] = useState('');
+  const [tone, setTone] = useState('');
+  const [logoUrl, setLogoUrl] = useState('');
+  const [rid, setRid] = useState(editReport ? editReport.id : null);
+  const [rep, setRep] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [gen, setGen] = useState(false);
+  const token = localStorage.getItem(TOKEN_KEY) || '';
+
+  useEffect(() => {
+    if (!editReport) return;
+    hrApi(`/projects/brandguide/${editReport.id}`).then((r) => { setRep(r); setStep('review'); }).catch((e) => toast(e.message));
+  }, [editReport && editReport.id]);
+
+  const togglePlatform = (p) => setPlatforms((s) => s.includes(p) ? s.filter((x) => x !== p) : [...s, p]);
+
+  const start = async () => {
+    if (!website.trim()) { toast('Enter the website URL'); return; }
+    setBusy(true);
+    try {
+      const r = await hrApi(`/projects/${projectId || 'none'}/brandguide`, { method: 'POST', body: JSON.stringify({
+        website: website.trim(), businessName: bizName, industry, audiences,
+        postsPerMonth: Number(postsPerMonth) || 10, platforms, cadence, peakSeason, tone, logoUrl: logoUrl.trim(),
+      }) });
+      setRid(r.id); setStep('running');
+    } catch (e) { toast(e.message); }
+    setBusy(false);
+  };
+
+  // poll while running
+  useEffect(() => {
+    if (!rid || step !== 'running') return;
+    let stop = false;
+    const tick = async () => {
+      try {
+        const r = await hrApi(`/projects/brandguide/${rid}`);
+        if (stop) return;
+        setRep(r);
+        if (r.status === 'ready' || r.status === 'complete') { setStep('review'); return; }
+        if (r.status === 'failed') { toast('Guideline failed: ' + (r.error || '')); return; }
+      } catch {}
+      if (!stop) setTimeout(tick, 2500);
+    };
+    tick();
+    return () => { stop = true; };
+  }, [rid, step]);
+
+  const generate = async () => {
+    setGen(true);
+    try { await hrApi(`/projects/brandguide/${rid}/generate`, { method: 'POST' }); const r = await hrApi(`/projects/brandguide/${rid}`); setRep(r); toast('Guideline ready ✓'); if (onDone) onDone(); }
+    catch (e) { toast(e.message); }
+    setGen(false);
+  };
+  const rerun = async () => {
+    if (!confirm('Re-run with a fresh crawl + AI? This replaces the current draft.')) return;
+    setGen(true);
+    try { await hrApi(`/projects/brandguide/${rid}/rerun`, { method: 'POST' }); setStep('running'); }
+    catch (e) { toast(e.message); setGen(false); }
+  };
+
+  const isComplete = rep && rep.status === 'complete';
+  const title = isComplete ? 'Brand Guideline ready' : (step === 'review' ? 'Review brand guideline' : 'New Brand Guideline');
+
+  const fld = 'w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-[13.5px] focus:outline-none focus:ring-2 focus:ring-orange-200';
+
+  return (
+    <div className="fixed inset-0 z-[220]">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <aside className="absolute top-0 right-0 h-full w-full max-w-[560px] bg-white shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between px-5 py-4 border-b border-slate-100">
+          <div><div className="text-[16px] font-extrabold text-[#050A1F]">{title}</div><div className="text-[11.5px] text-slate-400 mt-0.5">A full brand book from the client's own website — images, colours and fonts pulled from the live site.</div></div>
+          <button onClick={onClose} className="text-slate-300 hover:text-slate-600 text-[20px] leading-none">×</button>
+        </div>
+
+        <div className="flex-1 overflow-auto px-5 py-4">
+          {step === 'input' && (
+            <div className="space-y-3">
+              <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Website URL *</label><input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://brand.com" className={fld} /><div className="text-[10.5px] text-slate-400 mt-1">We crawl this for the logo, real photos, colours and copy.</div></div>
+              <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Brand / business name</label><input value={bizName} onChange={(e) => setBizName(e.target.value)} placeholder="Shown on the cover" className={fld} /></div>
+              <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Industry / what they sell</label><input value={industry} onChange={(e) => setIndustry(e.target.value)} placeholder="e.g. ultra-light hunting gear" className={fld} /></div>
+              <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Target audiences <span className="font-medium text-slate-300">· optional, comma-separated</span></label><input value={audiences} onChange={(e) => setAudiences(e.target.value)} placeholder="e.g. backcountry hunters, guides" className={fld} /></div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Posts per month</label><input type="number" min="1" max="60" value={postsPerMonth} onChange={(e) => setPostsPerMonth(e.target.value)} className={fld} /></div>
+                <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Tone <span className="font-medium text-slate-300">· optional</span></label><input value={tone} onChange={(e) => setTone(e.target.value)} placeholder="e.g. rugged, honest" className={fld} /></div>
+              </div>
+              <div>
+                <label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Platforms</label>
+                <div className="flex flex-wrap gap-2">{BG_PLATFORMS.map((p) => (
+                  <button key={p} type="button" onClick={() => togglePlatform(p)} className="px-3 py-1.5 rounded-lg text-[12px] font-bold border" style={platforms.includes(p) ? { borderColor: '#FF6A00', background: '#FFF7ED', color: '#FF4500' } : { borderColor: '#e2e8f0', color: '#64748b' }}>{p}</button>
+                ))}</div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Posting cadence <span className="font-medium text-slate-300">· optional</span></label><input value={cadence} onChange={(e) => setCadence(e.target.value)} placeholder="e.g. Mon & Fri + Reels" className={fld} /></div>
+                <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Peak season <span className="font-medium text-slate-300">· optional</span></label><input value={peakSeason} onChange={(e) => setPeakSeason(e.target.value)} placeholder="e.g. Jun–Aug pre-season" className={fld} /></div>
+              </div>
+              <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Logo URL override <span className="font-medium text-slate-300">· optional, if the site logo is low-res</span></label><input value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} placeholder="https://…/logo.png" className={fld} /></div>
+              <div className="rounded-xl bg-slate-50 border border-slate-200 text-[11.5px] text-slate-500 px-3 py-2.5 leading-snug">Claude will crawl the site, pull the <b className="text-slate-700">real images, colour palette and fonts</b>, then write the full guideline — foundation, visual identity, voice &amp; messaging and a social-media playbook. You can review and tweak before generating the PDF.</div>
+            </div>
+          )}
+
+          {step === 'running' && (
+            <div className="py-12 text-center">
+              <div className="inline-block w-10 h-10 rounded-full border-4 border-orange-200 border-t-orange-500 animate-spin mb-4" />
+              <div className="text-[14px] font-bold text-[#050A1F]">{rep ? rep.currentStep || 'Working…' : 'Starting…'}</div>
+              <div className="text-[12px] text-slate-400 mt-1">{rep ? `${rep.progress || 0}%` : ''} — crawling the site and writing the guideline.</div>
+            </div>
+          )}
+
+          {step === 'review' && rep && rep.data && rep.data.report && (
+            <BrandGuideReview rep={rep} rid={rid} onSave={async (d) => { try { await hrApi(`/projects/brandguide/${rid}`, { method: 'PUT', body: JSON.stringify({ data: d }) }); toast('Saved ✓'); } catch (e) { toast(e.message); } }} />
+          )}
+          {step === 'review' && (!rep || !rep.data || !rep.data.report) && <div className="py-12 text-center text-slate-400 text-sm">Loading guideline…</div>}
+
+          {isComplete && (
+            <div className="rounded-xl border-2 border-green-200 bg-green-50 p-3 mt-3">
+              <div className="flex items-center gap-2 mb-2"><span className="text-[15px]">✅</span><b className="text-[13px] text-[#050A1F]">Guideline generated</b></div>
+              <div className="flex gap-2">
+                <a href={`${API_BASE}/api/hr/projects/brandguide/${rid}/view?token=${encodeURIComponent(token)}&v=${rep.completedAt || ''}`} target="_blank" rel="noreferrer" className="flex-1 text-center px-4 py-2.5 rounded-xl text-[12.5px] font-bold text-slate-700 bg-white border border-slate-200">Preview</a>
+                <a href={`${API_BASE}/api/hr/projects/brandguide/${rid}/download?token=${encodeURIComponent(token)}`} className="flex-1 text-center px-4 py-2.5 rounded-xl text-[12.5px] font-extrabold text-white" style={{ background: '#FF6A00' }}>Download PDF</a>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-3 border-t border-slate-100 flex justify-between items-center">
+          <button onClick={onClose} className="text-[12.5px] font-bold text-slate-500">Close</button>
+          {step === 'input' && <button onClick={start} disabled={busy} className="px-6 py-2.5 rounded-xl text-[13px] font-extrabold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)', opacity: busy ? 0.6 : 1 }}>{busy ? 'Starting…' : 'Build guideline →'}</button>}
+          {step === 'review' && <div className="flex gap-2">
+            <button onClick={rerun} disabled={gen} className="rounded-lg border border-slate-300 px-3 py-2.5 text-[12.5px] font-bold text-slate-600">↻ Re-run</button>
+            <button onClick={generate} disabled={gen} className="px-5 py-2.5 rounded-xl text-[13px] font-extrabold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)', opacity: gen ? 0.6 : 1 }}>{gen ? 'Generating…' : isComplete ? 'Regenerate PDF →' : 'Generate PDF →'}</button>
+          </div>}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+// Review step: shows key AI-written text + palette/logo, editable before generate.
+function BrandGuideReview({ rep, rid, onSave }) {
+  const [d, setD] = useState(rep.data);
+  useEffect(() => { setD(rep.data); }, [rep]);
+  const f = d.foundation || {}; const pal = d.palette || []; const imgs = d.images || {};
+  const upd = (path, v) => setD((s) => { const c = JSON.parse(JSON.stringify(s)); let o = c; for (let i = 0; i < path.length - 1; i++) { o[path[i]] = o[path[i]] || {}; o = o[path[i]]; } o[path[path.length - 1]] = v; return c; });
+  const imgUrl = (u) => (!u ? '' : /^https?:\/\//i.test(u) ? u : `${API_BASE}${u}`);
+  return (
+    <div>
+      <div className="rounded-xl bg-slate-50 p-3 mb-4 text-[12px] text-slate-500"><b className="text-[#050A1F]">{d.report.business}</b> — AI has drafted the full guideline from the live site. Review the key text, then generate.</div>
+
+      <div className="text-[11px] font-extrabold text-slate-400 uppercase mb-1">Tagline / signature line</div>
+      <input value={f.tagline || ''} onChange={(e) => upd(['foundation', 'tagline'], e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[12.5px] mb-3" />
+
+      <div className="text-[11px] font-extrabold text-slate-400 uppercase mb-1">Positioning</div>
+      <textarea value={f.positioning || ''} onChange={(e) => upd(['foundation', 'positioning'], e.target.value)} rows={2} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[12.5px] mb-3" />
+
+      <div className="text-[11px] font-extrabold text-slate-400 uppercase mb-1">Story</div>
+      <textarea value={f.story || ''} onChange={(e) => upd(['foundation', 'story'], e.target.value)} rows={2} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[12.5px] mb-3" />
+
+      <div className="text-[11px] font-extrabold text-slate-400 uppercase mb-1.5">Palette from the site <span className="normal-case font-medium text-slate-300">· tap a swatch to edit the hex</span></div>
+      <div className="flex flex-wrap gap-2 mb-3">
+        {pal.map((c, i) => (
+          <div key={i} className="flex items-center gap-1.5 border border-slate-200 rounded-lg px-2 py-1">
+            <span className="w-5 h-5 rounded" style={{ background: c.hex }} />
+            <input value={c.hex} onChange={(e) => upd(['palette', i, 'hex'], e.target.value)} className="w-[72px] text-[11px] font-mono text-slate-600 outline-none" />
+          </div>
+        ))}
+      </div>
+
+      <div className="text-[11px] font-extrabold text-slate-400 uppercase mb-1.5">Images pulled from the site</div>
+      <div className="flex flex-wrap gap-2 mb-3">
+        {(imgs.all || []).slice(0, 10).map((im, i) => <img key={i} src={imgUrl(im.url)} className="w-16 h-12 object-cover rounded border border-slate-200" />)}
+        {(!imgs.all || !imgs.all.length) && <div className="text-[11px] text-slate-400">No images found on the site — the guideline will use coloured panels instead.</div>}
+      </div>
+
+      <button onClick={() => onSave(d)} className="text-[12px] font-bold text-slate-500 border border-slate-200 rounded-lg px-3 py-1.5">Save edits</button>
     </div>
   );
 }

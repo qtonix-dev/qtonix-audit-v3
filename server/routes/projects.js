@@ -371,6 +371,7 @@ const shotUpload = multer({
 
 const { PreSeoReport } = require('../models');
 const preSeoRunner = require('../services/preSeoRunner');
+const brandGuideRunner = require('../services/brandGuidelineRunner');
 
 // Create a Pre-SEO report run and start crawl + capture + analysis in background.
 router.post('/:id/preseo', guard, requireHrAdmin, async (req, res, next) => {
@@ -416,7 +417,7 @@ router.get('/preseo/:rid', guard, requireHrAdmin, async (req, res, next) => {
 // List a project's Pre-SEO reports.
 router.get('/:id/preseo', guard, requireHrAdmin, async (req, res, next) => {
   try {
-    const rows = await PreSeoReport.findAll({ where: { projectId: req.params.id }, order: [['createdAt', 'DESC']], attributes: ['id', 'status', 'progress', 'domain', 'businessName', 'createdAt', 'completedAt'] });
+    const rows = await PreSeoReport.findAll({ where: { projectId: req.params.id, kind: { [Op.ne]: 'brand_guideline' } }, order: [['createdAt', 'DESC']], attributes: ['id', 'status', 'progress', 'domain', 'businessName', 'createdAt', 'completedAt'] });
     res.json({ reports: rows });
   } catch (e) { next(e); }
 });
@@ -432,7 +433,7 @@ router.get('/preseo', guard, requireHrAdmin, async (req, res, next) => {
     // excludes those blobs; we load the two we need (data, shots) in a second,
     // UN-sorted query keyed by id.
     const SCALAR = ['id', 'projectId', 'domain', 'businessName', 'status', 'progress', 'createdByName', 'createdAt', 'completedAt', 'publicEnabled', 'publicSlug'];
-    const rows = await PreSeoReport.findAll({ attributes: SCALAR, order: [['id', 'DESC']], limit: 500 });
+    const rows = await PreSeoReport.findAll({ where: { kind: { [Op.ne]: 'brand_guideline' } }, attributes: SCALAR, order: [['id', 'DESC']], limit: 500 });
     const ids = rows.map((r) => r.id);
     // Second pass: just id + the two JSON columns we summarise, no ORDER BY.
     const blobMap = {};
@@ -630,6 +631,141 @@ router.get('/preseo/:rid/view', guard, requireHrAdmin, async (req, res, next) =>
   try {
     const r = await PreSeoReport.findByPk(req.params.rid);
     if (!r) return res.status(404).json({ error: 'Report not found.' });
+    res.set('Cache-Control', 'no-store');
+    if (r.htmlPath && fsSync.existsSync(r.htmlPath)) return res.sendFile(path.resolve(r.htmlPath));
+    if (r.htmlUrl) return res.redirect(302, r.htmlUrl);
+    return res.status(404).json({ error: 'Not ready.' });
+  } catch (e) { next(e); }
+});
+
+// ===========================================================================
+// BRAND GUIDELINE reports — share the PreSeoReport table (kind='brand_guideline')
+// so they reuse the same status/sharing/ImageKit plumbing. Routes are a parallel
+// set under /brandguide so the two report types never collide.
+// ===========================================================================
+const BG_KIND = 'brand_guideline';
+
+// Create + start a brand guideline for a website.
+router.post('/:id/brandguide', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const act = await actor(req);
+    const project = req.params.id !== 'none' ? await Project.findByPk(req.params.id) : null;
+    const b = req.body || {};
+    const website = String(b.website || (project && project.website) || '').trim();
+    if (!website || website.length < 4) return res.status(400).json({ error: 'A website URL is required.' });
+    let domain = '';
+    try { domain = new URL(website.startsWith('http') ? website : 'https://' + website).hostname.replace(/^www\./, ''); } catch { domain = website.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0]; }
+    const arr = (v) => Array.isArray(v) ? v.filter(Boolean) : (typeof v === 'string' && v ? v.split(/[,;]/).map((s) => s.trim()).filter(Boolean) : []);
+    const report = await PreSeoReport.create({
+      projectId: project ? project.id : null, kind: BG_KIND,
+      website: website.startsWith('http') ? website : 'https://' + website,
+      domain, businessName: b.businessName || (project && project.customerName) || domain,
+      createdById: act.id, createdByName: act.name || 'Qtonix', status: 'capturing', progress: 5,
+      runOptions: {
+        industry: String(b.industry || '').slice(0, 300),
+        audiences: arr(b.audiences).slice(0, 6),
+        postsPerMonth: Math.max(1, Math.min(60, Number(b.postsPerMonth) || 10)),
+        platforms: arr(b.platforms).slice(0, 8),
+        cadence: String(b.cadence || '').slice(0, 300),
+        peakSeason: String(b.peakSeason || '').slice(0, 200),
+        tone: String(b.tone || '').slice(0, 200),
+        logoUrl: String(b.logoUrl || '').slice(0, 500),
+        fontOverride: String(b.fontOverride || '').slice(0, 60),
+        colorOverrides: Array.isArray(b.colorOverrides) ? b.colorOverrides.slice(0, 8) : null,
+        contactEmail: String(b.contactEmail || act.email || 'adam@qtonix.com').slice(0, 120),
+      },
+      data: {},
+    });
+    brandGuideRunner.run(report.id).catch((e) => console.error('[brandguide] run error:', e.message));
+    res.status(201).json({ id: report.id, status: report.status });
+  } catch (e) { next(e); }
+});
+
+// Poll one guideline.
+router.get('/brandguide/:rid', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r || r.kind !== BG_KIND) return res.status(404).json({ error: 'Guideline not found.' });
+    res.json({ id: r.id, status: r.status, progress: r.progress, currentStep: r.currentStep, error: r.error, domain: r.domain, businessName: r.businessName, website: r.website, data: r.data || null, runOptions: r.runOptions || {} });
+  } catch (e) { next(e); }
+});
+
+// List a project's guidelines.
+router.get('/:id/brandguide', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const rows = await PreSeoReport.findAll({ where: { projectId: req.params.id, kind: BG_KIND }, order: [['id', 'DESC']], attributes: ['id', 'status', 'progress', 'domain', 'businessName', 'createdAt', 'completedAt'] });
+    res.json({ reports: rows });
+  } catch (e) { next(e); }
+});
+
+// Global list of all guidelines (scalar columns only — avoids the JSON sort-memory issue).
+router.get('/brandguide', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const rows = await PreSeoReport.findAll({
+      where: { kind: BG_KIND },
+      attributes: ['id', 'projectId', 'domain', 'businessName', 'status', 'progress', 'createdByName', 'createdAt', 'completedAt', 'publicEnabled', 'publicSlug'],
+      order: [['id', 'DESC']], limit: 500,
+    });
+    res.json({ items: rows.map((r) => ({ id: r.id, projectId: r.projectId, domain: r.domain, businessName: r.businessName, status: r.status, agentName: r.createdByName, createdAt: r.createdAt, completedAt: r.completedAt, shared: !!r.publicEnabled })) });
+  } catch (e) { next(e); }
+});
+
+// Save edits to a guideline's data before/after generate.
+router.put('/brandguide/:rid', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r || r.kind !== BG_KIND) return res.status(404).json({ error: 'Guideline not found.' });
+    if (req.body && req.body.data) { r.data = req.body.data; r.changed('data', true); await r.save(); }
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Generate (render) the PDF.
+router.post('/brandguide/:rid/generate', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r || r.kind !== BG_KIND) return res.status(404).json({ error: 'Guideline not found.' });
+    await brandGuideRunner.generate(r.id);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Re-run: fresh crawl + AI, keeping the run options.
+router.post('/brandguide/:rid/rerun', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r || r.kind !== BG_KIND) return res.status(404).json({ error: 'Guideline not found.' });
+    r.status = 'capturing'; r.progress = 5; r.currentStep = 'Re-running'; r.error = null; await r.save();
+    brandGuideRunner.run(r.id).catch((e) => console.error('[brandguide] rerun error:', e.message));
+    res.json({ ok: true, status: 'capturing' });
+  } catch (e) { next(e); }
+});
+
+// Delete.
+router.delete('/brandguide/:rid', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r || r.kind !== BG_KIND) return res.status(404).json({ error: 'Guideline not found.' });
+    try { const ik = require('../services/imagekit'); if (r.pdfFileId) ik.deleteFile(r.pdfFileId).catch(() => {}); if (r.htmlFileId) ik.deleteFile(r.htmlFileId).catch(() => {}); } catch {}
+    await r.destroy();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Download / view.
+router.get('/brandguide/:rid/download', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r || r.kind !== BG_KIND) return res.status(404).json({ error: 'Guideline not found.' });
+    if (r.pdfPath && fsSync.existsSync(r.pdfPath)) return res.download(r.pdfPath, `${(r.businessName || r.domain || 'brand').replace(/[^\w-]/g, '_')}-Brand-Guidelines.pdf`);
+    if (r.pdfUrl) return res.redirect(302, r.pdfUrl);
+    return res.status(404).json({ error: 'PDF not ready.' });
+  } catch (e) { next(e); }
+});
+router.get('/brandguide/:rid/view', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r || r.kind !== BG_KIND) return res.status(404).json({ error: 'Guideline not found.' });
     res.set('Cache-Control', 'no-store');
     if (r.htmlPath && fsSync.existsSync(r.htmlPath)) return res.sendFile(path.resolve(r.htmlPath));
     if (r.htmlUrl) return res.redirect(302, r.htmlUrl);

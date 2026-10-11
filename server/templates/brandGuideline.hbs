@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{report.business}} — Brand Guidelines</title>
+<style>
+/* ===========================================================================
+   Qtonix Brand Guideline — landscape slide deck (Pack Wheel reference format).
+   Raleway typeface, brand palette pulled from the client's own site.
+   =========================================================================== */
+{{#if forWeb}}
+@import url('https://fonts.googleapis.com/css2?family=Raleway:wght@400;500;600;700;800;900&display=swap');
+{{else}}
+@font-face{ font-family:'Raleway'; src:url('{{assetDir}}/Raleway-400.woff2') format('woff2'); font-weight:400; }
+@font-face{ font-family:'Raleway'; src:url('{{assetDir}}/Raleway-500.woff2') format('woff2'); font-weight:500; }
+@font-face{ font-family:'Raleway'; src:url('{{assetDir}}/Raleway-600.woff2') format('woff2'); font-weight:600; }
+@font-face{ font-family:'Raleway'; src:url('{{assetDir}}/Raleway-700.woff2') format('woff2'); font-weight:700; }
+@font-face{ font-family:'Raleway'; src:url('{{assetDir}}/Raleway-800.woff2') format('woff2'); font-weight:800; }
+@font-face{ font-family:'Raleway'; src:url('{{assetDir}}/Raleway-900.woff2') format('woff2'); font-weight:900; }
+{{/if}}
+
+:root{
+  --brand:{{brandCss}};
+  --brand2:{{brandDeep}};
+  --ink:{{darkCss}}; --sand:{{lightCss}};
+  --muted:#6b7280; --muted2:#9aa0a8; --line:#e5e1d8; --line2:#efece4;
+  --olive:{{oliveCss}}; --red:#9c3b32; --green:#4A5233;
+}
+*{ margin:0; padding:0; box-sizing:border-box; }
+body{ font-family:'Raleway', Arial, sans-serif; color:var(--ink); font-size:11pt; line-height:1.5; }
+
+@page{ size: 13.333in 7.5in; margin:0; }  /* 16:9 landscape slide */
+
+body{ counter-reset:slide; }
+.slide{ position:relative; width:13.333in; height:7.5in; padding:0.7in 0.85in; overflow:hidden; page-break-after:always; background:var(--sand); counter-increment:slide; }
+/* auto page number in the footer — correct even when optional sections are skipped */
+.foot .pb .pg::before{ content:counter(slide); }
+.slide:last-child{ page-break-after:auto; }
+.slide.dark{ background:var(--ink); color:#F5F1E8; }
+.slide.white{ background:#fff; }
+
+/* footer on every content slide */
+.foot{ position:absolute; left:0.85in; right:0.85in; bottom:0.42in; display:flex; justify-content:space-between; align-items:baseline; font-size:8pt; color:var(--muted2); }
+.foot .pb{ white-space:nowrap; }
+.foot .pb b{ color:var(--brand); font-weight:800; }
+.dark .foot{ color:rgba(255,255,255,.45); }
+
+/* section eyebrow + big heading */
+.eyebrow{ font-size:9pt; letter-spacing:3px; font-weight:800; color:var(--brand); text-transform:uppercase; }
+h1.title{ font-size:34pt; font-weight:900; letter-spacing:-.5px; line-height:1.02; margin-top:6px; text-transform:uppercase; }
+.dark h1.title{ color:#F5F1E8; }
+.lead{ font-size:12.5pt; color:var(--muted); margin-top:14px; max-width:9in; }
+.dark .lead{ color:rgba(255,255,255,.7); }
+
+/* ---------- COVER ---------- */
+.cover{ background:var(--ink); color:#F5F1E8; padding:0; }
+.cover .bar{ position:absolute; top:0; left:0; right:0; height:10px; background:var(--brand); }
+.cover .inner{ position:absolute; inset:0; padding:0.85in 0.95in; display:flex; flex-direction:column; }
+.cover .heroimg{ position:absolute; right:0; top:0; bottom:0; width:52%; object-fit:cover; opacity:.85; }
+.cover .scrim{ position:absolute; right:0; top:0; bottom:0; width:60%; background:linear-gradient(90deg,var(--ink) 8%, rgba(20,20,20,.2) 100%); }
+/* fallback decoration when the site has no usable hero image */
+.cover .deco{ position:absolute; right:-1.2in; top:0.6in; width:5.2in; height:5.2in; border-radius:50%; border:1.5px solid var(--brand); opacity:.25; }
+.cover .deco2{ position:absolute; right:0.3in; bottom:0.6in; width:3in; height:3in; border-radius:50%; background:radial-gradient(circle, var(--brand) 0%, transparent 70%); opacity:.12; }
+.cover .logo{ position:relative; z-index:2; }
+.cover .logo img{ height:58px; object-fit:contain; }
+.cover .logo .wm{ font-size:26pt; font-weight:900; letter-spacing:-1px; }
+.cover .wm .o{ color:var(--brand); }
+.cover .eyb{ position:relative; z-index:2; margin-top:auto; font-size:10pt; letter-spacing:3px; font-weight:800; color:var(--brand); }
+.cover h1{ position:relative; z-index:2; font-size:60pt; font-weight:900; line-height:.98; letter-spacing:-2px; margin-top:12px; text-transform:uppercase; }
+.cover .sub{ position:relative; z-index:2; margin-top:16px; font-size:13pt; color:rgba(255,255,255,.8); max-width:5.2in; line-height:1.5; }
+.cover .prep{ position:relative; z-index:2; margin-top:28px; padding-top:16px; border-top:1px solid rgba(255,255,255,.18); display:flex; justify-content:space-between; align-items:center; width:6.2in; font-size:9pt; letter-spacing:2px; font-weight:700; color:var(--muted2); }
+.cover .prep .q{ color:#F5F1E8; }
+
+/* ---------- CONTENTS ---------- */
+.cards4{ display:flex; gap:20px; margin-top:34px; }
+.card4{ flex:1; }
+.card4 .ph{ width:100%; height:2.0in; border-radius:6px; object-fit:cover; background:var(--line2); display:block; }
+.card4 .rule{ height:3px; background:var(--brand); margin:14px 0 10px; }
+.card4 .pt{ font-size:9pt; letter-spacing:2px; font-weight:800; color:var(--brand); }
+.card4 h3{ font-size:15pt; font-weight:800; margin:3px 0 6px; }
+.card4 p{ font-size:10pt; color:var(--muted); line-height:1.45; }
+
+/* ---------- STORY / timeline ---------- */
+.two{ display:flex; gap:40px; margin-top:28px; }
+.two .l{ width:3.6in; }
+.two .l img{ width:100%; height:2.6in; object-fit:cover; border-radius:6px; }
+.two .l .cap{ font-size:13pt; font-weight:800; margin-top:16px; line-height:1.3; }
+.two .r{ flex:1; }
+.tl{ display:flex; align-items:baseline; gap:22px; padding:11px 0; border-bottom:1px solid var(--line); }
+.tl b{ font-size:17pt; font-weight:900; color:var(--brand); width:1.3in; }
+.tl span{ font-size:11.5pt; color:var(--ink); }
+
+/* ---------- positioning / stand-for (dark) ---------- */
+.standfor{ display:flex; gap:44px; margin-top:30px; }
+.standfor .l{ flex:1.1; }
+.standfor h2{ font-size:24pt; font-weight:800; line-height:1.18; }
+.standfor .blk{ border-left:4px solid var(--brand); padding-left:16px; margin-top:22px; }
+.standfor .blk .k{ font-size:9pt; letter-spacing:2px; font-weight:800; color:var(--muted2); text-transform:uppercase; }
+.standfor .blk .v{ font-size:13pt; font-weight:700; margin-top:5px; }
+.standfor .r{ flex:1; }
+.standfor .r img{ width:100%; height:3.6in; object-fit:cover; border-radius:6px; }
+.standfor .r .cap{ font-size:9.5pt; color:var(--muted2); margin-top:10px; line-height:1.4; }
+
+/* ---------- pillar/audience cards ---------- */
+.grid4{ display:flex; gap:18px; margin-top:30px; }
+.g4{ flex:1; }
+.g4 img{ width:100%; height:1.9in; object-fit:cover; border-radius:6px 6px 0 0; }
+.g4 .rule{ height:3px; background:var(--brand); }
+.g4 h3{ font-size:13.5pt; font-weight:800; margin-top:14px; }
+.g4 p{ font-size:10pt; color:var(--muted); margin-top:6px; line-height:1.45; }
+.g4 .line{ font-size:10.5pt; font-weight:800; color:var(--brand); margin-top:8px; }
+
+/* ---------- proof tiles (dark) ---------- */
+.tiles{ display:flex; flex-wrap:wrap; gap:18px; margin-top:30px; }
+.tile{ width:3.4in; background:rgba(255,255,255,.04); border-radius:8px; padding:22px 24px; }
+.tile b{ display:block; font-size:30pt; font-weight:900; color:var(--brand); line-height:1; }
+.tile span{ display:block; font-size:10pt; color:rgba(255,255,255,.72); margin-top:8px; line-height:1.4; }
+.madein{ margin-top:26px; font-size:13pt; font-weight:800; letter-spacing:1px; text-transform:uppercase; }
+
+/* ---------- product family ---------- */
+.prods{ display:flex; gap:22px; margin-top:30px; }
+.prod{ flex:1; background:#fff; border:1px solid var(--line); border-radius:8px; padding:20px; display:flex; gap:18px; }
+.prod img{ width:1.7in; height:2.0in; object-fit:cover; border-radius:6px; background:var(--line2); }
+.prod .pc h3{ font-size:14pt; font-weight:800; color:var(--brand); }
+.prod .pc .tag{ font-size:10pt; font-weight:700; color:var(--ink); margin:3px 0 10px; }
+.prod .pc ul{ list-style:none; }
+.prod .pc li{ font-size:10pt; color:var(--muted); padding-left:14px; position:relative; margin-bottom:5px; }
+.prod .pc li:before{ content:"•"; position:absolute; left:0; color:var(--brand); }
+.accnote{ margin-top:18px; font-size:10pt; color:var(--muted); }
+
+/* ---------- logo variants ---------- */
+.logos{ display:flex; gap:18px; margin-top:30px; }
+.lg{ flex:1; }
+.lg .sw{ height:2.3in; border-radius:6px; display:flex; align-items:center; justify-content:center; border:1px solid var(--line); overflow:hidden; }
+.lg .sw img{ max-width:72%; max-height:62%; object-fit:contain; }
+.lg .wm{ font-size:17pt; font-weight:900; letter-spacing:-.5px; }
+.lg .wm .o{ color:var(--brand); }
+.lg h4{ font-size:12pt; font-weight:800; margin-top:12px; }
+.lg p{ font-size:9.5pt; color:var(--muted); margin-top:4px; line-height:1.4; }
+
+/* ---------- logo rules ---------- */
+.rules{ display:flex; gap:40px; margin-top:26px; }
+.rules .l{ width:5in; }
+.rules .l .clear{ border:1px dashed var(--brand); padding:28px; background:#fff; border-radius:6px; text-align:center; }
+.rules .l .clear img{ max-height:1.4in; max-width:70%; object-fit:contain; }
+.rules .l .clear .wm{ font-size:22pt; font-weight:900; } .rules .l .clear .wm .o{ color:var(--brand); }
+.rules .l table{ width:100%; border-collapse:collapse; margin-top:16px; font-size:10pt; }
+.rules .l td{ border:1px solid var(--line); padding:8px 11px; }
+.rules .l td:first-child{ font-weight:700; width:38%; background:var(--line2); }
+.rules .r{ flex:1; }
+.rules .r h4{ font-size:12pt; font-weight:800; color:var(--red); text-transform:uppercase; letter-spacing:1px; }
+.rules .r .nv{ font-size:11pt; color:var(--ink); padding:11px 0; border-bottom:1px solid var(--line); }
+
+/* ---------- palette ---------- */
+.pal{ display:flex; flex-wrap:wrap; gap:16px; margin-top:28px; }
+.pc{ width:2.65in; border:1px solid var(--line); border-radius:8px; overflow:hidden; background:#fff; }
+.pc .chip{ height:1.5in; }
+.pc .meta{ padding:12px 14px; }
+.pc .meta b{ font-size:12pt; font-weight:800; }
+.pc .meta .hex{ font-size:9.5pt; color:var(--muted); margin-top:3px; }
+.pc .meta .use{ font-size:9.5pt; color:var(--muted); margin-top:3px; }
+
+/* ---------- colour in use ---------- */
+.ciu{ display:flex; gap:40px; margin-top:26px; }
+.ciu .l{ flex:1; }
+.ratio{ display:flex; height:1.5in; border-radius:6px; overflow:hidden; font-weight:800; }
+.ratio .a{ background:var(--sand); color:var(--ink); flex:6; display:flex; align-items:center; padding-left:20px; }
+.ratio .b{ background:var(--ink); color:#fff; flex:3; display:flex; align-items:center; padding-left:20px; }
+.ratio .c{ background:var(--brand); color:#fff; flex:1; display:flex; align-items:center; justify-content:center; }
+.ciu p{ font-size:11pt; color:var(--muted); margin-top:16px; line-height:1.5; }
+.ciu .box{ background:var(--ink); color:#fff; border-radius:8px; padding:16px 18px; margin-top:16px; }
+.ciu .box .k{ font-size:9pt; letter-spacing:2px; font-weight:800; color:var(--brand); }
+.ciu .box p{ color:rgba(255,255,255,.8); margin-top:6px; font-size:10pt; }
+.ciu .r{ flex:1; }
+.ciu table{ width:100%; border-collapse:collapse; font-size:10pt; }
+.ciu th{ background:var(--line2); text-align:left; padding:9px 11px; font-weight:800; border:1px solid var(--line); }
+.ciu td{ padding:9px 11px; border:1px solid var(--line); }
+
+/* ---------- typography ---------- */
+.typo{ display:flex; gap:40px; margin-top:26px; }
+.typo .spec{ width:4.2in; background:var(--ink); color:#fff; border-radius:8px; padding:34px; }
+.typo .spec .big{ font-size:76pt; font-weight:900; color:var(--brand); line-height:.9; }
+.typo .spec h3{ font-size:16pt; font-weight:800; margin-top:14px; text-transform:uppercase; }
+.typo .spec p{ font-size:10.5pt; color:rgba(255,255,255,.7); margin-top:8px; }
+.typo .spec .w{ font-size:9pt; color:rgba(255,255,255,.5); margin-top:14px; letter-spacing:1px; }
+.typo .tbl{ flex:1; }
+.typo table{ width:100%; border-collapse:collapse; font-size:10.5pt; }
+.typo th{ background:var(--line2); text-align:left; padding:10px 12px; font-weight:800; border:1px solid var(--line); }
+.typo td{ padding:10px 12px; border:1px solid var(--line); }
+
+/* ---------- photography grids ---------- */
+.gal{ display:flex; gap:12px; margin-top:24px; height:3.7in; }
+.gal .big{ flex:1.3; }
+.gal .big img{ width:100%; height:100%; object-fit:cover; border-radius:6px; }
+.gal .col{ flex:1; display:flex; flex-direction:column; gap:12px; }
+.gal .col img{ width:100%; flex:1; object-fit:cover; border-radius:6px; }
+
+/* show/avoid + shotlist */
+.sa{ display:flex; gap:22px; margin-top:24px; }
+.sa .c{ flex:1; background:#fff; border:1px solid var(--line); border-radius:8px; padding:18px 20px; }
+.sa .c h4{ font-size:12pt; font-weight:800; text-transform:uppercase; letter-spacing:1px; }
+.sa .c.show h4{ color:var(--green); } .sa .c.avoid h4{ color:var(--red); }
+.sa .c .it{ font-size:10.5pt; color:var(--ink); padding:9px 0; border-bottom:1px solid var(--line2); }
+.band{ background:var(--ink); color:#fff; border-radius:8px; padding:16px 20px; margin-top:18px; }
+.band .k{ font-size:9pt; letter-spacing:2px; font-weight:800; color:var(--brand); }
+.band .cols{ display:flex; gap:30px; margin-top:8px; font-size:10pt; color:rgba(255,255,255,.82); }
+.band .cols div{ flex:1; line-height:1.6; }
+
+/* product photography */
+.pp{ display:flex; gap:16px; margin-top:24px; }
+.pp .im{ flex:1; }
+.pp .im img{ width:100%; height:2.6in; object-fit:cover; border-radius:6px; background:#fff; border:1px solid var(--line); }
+.ppn{ display:flex; gap:30px; margin-top:18px; }
+.ppn div{ flex:1; } .ppn h4{ font-size:12pt; font-weight:800; } .ppn p{ font-size:10pt; color:var(--muted); margin-top:5px; line-height:1.45; }
+
+/* ---------- voice table ---------- */
+.vt{ width:100%; border-collapse:collapse; margin-top:22px; font-size:11pt; }
+.vt th{ background:var(--line2); text-align:left; padding:11px 13px; font-weight:800; border:1px solid var(--line); }
+.vt td{ padding:11px 13px; border:1px solid var(--line); vertical-align:top; }
+.vt td:first-child{ font-weight:700; width:18%; }
+
+/* before/after */
+.ba{ display:flex; flex-wrap:wrap; gap:16px; margin-top:22px; }
+.ba .c{ width:5.4in; background:#fff; border:1px solid var(--line); border-radius:8px; padding:16px 18px; }
+.ba .c .k{ font-size:8.5pt; letter-spacing:1.5px; font-weight:800; text-transform:uppercase; }
+.ba .c.before .k{ color:var(--red); } .ba .c.after .k{ color:var(--green); }
+.ba .c p{ font-size:11pt; color:var(--ink); margin-top:7px; line-height:1.45; }
+.words{ display:flex; gap:40px; margin-top:20px; }
+.words div{ flex:1; } .words .k{ font-size:9pt; letter-spacing:2px; font-weight:800; text-transform:uppercase; }
+.words .use .k{ color:var(--green); } .words .avoid .k{ color:var(--red); }
+.words p{ font-size:11pt; color:var(--ink); margin-top:8px; line-height:1.7; }
+
+/* names & claims */
+.nc{ display:flex; gap:30px; margin-top:24px; }
+.nc table{ flex:1; border-collapse:collapse; font-size:10.5pt; }
+.nc th{ background:var(--line2); text-align:left; padding:9px 11px; font-weight:800; border:1px solid var(--line); }
+.nc td{ padding:9px 11px; border:1px solid var(--line); }
+.nc .side{ flex:1; }
+.nc .side .box{ background:#fff; border:1px solid var(--line); border-radius:8px; padding:16px 18px; margin-bottom:14px; }
+.nc .side .box .k{ font-size:10pt; letter-spacing:1px; font-weight:800; text-transform:uppercase; }
+.nc .side .box.a .k{ color:var(--green); } .nc .side .box.b .k{ color:var(--brand2); }
+.nc .side .box p{ font-size:10.5pt; color:var(--ink); margin-top:7px; line-height:1.5; }
+
+/* ---------- creative specs ---------- */
+.cs{ display:flex; gap:20px; margin-top:30px; align-items:flex-end; }
+.cs .f{ text-align:left; }
+.cs .fr{ border:2px solid var(--ink); border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:18pt; font-weight:900; color:var(--ink); }
+.cs .f.orange .fr{ background:var(--brand); border-color:var(--brand); color:#fff; }
+.cs .f.sand .fr{ background:#fff; }
+.cs .f.dark .fr{ background:var(--ink); border-color:var(--ink); color:#fff; }
+.cs .f h4{ font-size:12pt; font-weight:800; margin-top:12px; }
+.cs .f p{ font-size:9.5pt; color:var(--muted); margin-top:3px; }
+.csrules{ display:flex; gap:30px; margin-top:26px; padding-top:18px; border-top:1px solid var(--line); font-size:10.5pt; color:var(--ink); }
+.csrules div{ flex:1; line-height:1.8; }
+
+/* content pillars */
+.pillars{ display:flex; gap:14px; margin-top:28px; }
+.pil{ flex:1; background:#fff; border:1px solid var(--line); border-radius:8px; padding:18px; }
+.pil .pct{ font-size:28pt; font-weight:900; color:var(--brand); line-height:1; }
+.pil h4{ font-size:12pt; font-weight:800; margin-top:6px; }
+.pil p{ font-size:9.5pt; color:var(--muted); margin-top:5px; line-height:1.4; }
+.pil .eg{ font-size:9pt; color:var(--muted2); font-style:italic; margin-top:8px; }
+.rhythm{ background:var(--ink); color:#fff; border-radius:8px; padding:18px 22px; margin-top:20px; display:flex; align-items:center; gap:24px; }
+.rhythm b{ font-size:26pt; font-weight:900; color:var(--brand); white-space:nowrap; }
+.rhythm span{ font-size:11pt; color:rgba(255,255,255,.85); line-height:1.5; }
+
+/* seasonal calendar */
+.cal{ display:flex; gap:12px; margin-top:28px; }
+.cal .ph{ flex:1; background:#fff; border:1px solid var(--line); border-radius:8px; padding:16px; }
+.cal .ph .lab{ font-size:12pt; font-weight:800; color:var(--brand); }
+.cal .ph .per{ font-size:9pt; letter-spacing:1px; font-weight:700; color:var(--muted2); text-transform:uppercase; margin-top:2px; }
+.cal .ph p{ font-size:10pt; color:var(--muted); margin-top:8px; line-height:1.45; }
+.calrule{ background:var(--ink); color:#fff; border-radius:8px; padding:16px 22px; margin-top:18px; }
+.calrule .k{ font-size:10pt; letter-spacing:1px; font-weight:800; color:var(--brand); text-transform:uppercase; }
+.calrule p{ font-size:11pt; color:rgba(255,255,255,.85); margin-top:6px; line-height:1.5; }
+
+/* checklist */
+.check{ display:flex; gap:40px; margin-top:24px; }
+.check .im{ width:3.4in; } .check .im img{ width:100%; height:4.2in; object-fit:cover; border-radius:6px; background:var(--line2); }
+.check .ls{ flex:1; }
+.check .ci{ display:flex; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid var(--line); font-size:12pt; }
+.check .ci .tick{ width:22px; height:22px; border-radius:50%; border:2px solid var(--brand); color:var(--brand); display:flex; align-items:center; justify-content:center; font-size:11pt; font-weight:800; flex:none; }
+
+/* thank you */
+.ty{ background:var(--ink); color:#F5F1E8; }
+.ty .heroimg{ position:absolute; right:0; top:0; bottom:0; width:46%; object-fit:cover; opacity:.8; }
+.ty .scrim{ position:absolute; right:0; top:0; bottom:0; width:54%; background:linear-gradient(90deg,var(--ink) 15%, transparent 100%); }
+.ty .bar{ position:absolute; top:0; left:0; right:0; height:10px; background:var(--brand); }
+.ty .inner{ position:relative; z-index:2; padding:0.3in 0.1in; }
+.ty .logo img{ height:54px; } .ty .logo .wm{ font-size:24pt; font-weight:900; } .ty .wm .o{ color:var(--brand); }
+.ty h1{ font-size:56pt; font-weight:900; text-transform:uppercase; margin-top:30px; letter-spacing:-1.5px; }
+.ty .blk{ margin-top:30px; max-width:5.4in; }
+.ty .blk .k{ font-size:9pt; letter-spacing:2px; font-weight:800; color:var(--brand); text-transform:uppercase; }
+.ty .blk .n{ font-size:14pt; font-weight:800; margin-top:6px; }
+.ty .blk .d{ font-size:10.5pt; color:rgba(255,255,255,.7); margin-top:3px; }
+.ty .blk + .blk{ margin-top:22px; padding-top:18px; border-top:1px solid rgba(255,255,255,.15); }
+</style>
+</head>
+<body>
+
+{{!-- ================= COVER ================= --}}
+<section class="slide cover">
+  <div class="bar"></div>
+  {{#if img.heroImg}}<img class="heroimg" src="{{img.heroImg}}"><div class="scrim"></div>{{else}}<div class="deco"></div><div class="deco2"></div>{{/if}}
+  <div class="inner">
+    <div class="logo">
+      {{#if logo}}<img src="{{logo}}">{{else}}<div class="wm">{{report.business}}<span class="o">.</span></div>{{/if}}
+    </div>
+    <div class="eyb">BRAND GUIDELINES · {{report.monthYear}}</div>
+    <h1>{{#if foundation.tagline}}{{foundation.tagline}}{{else}}{{report.business}}{{/if}}</h1>
+    <div class="sub">{{#if foundation.coverSubtitle}}{{foundation.coverSubtitle}}{{else}}The look, voice and rules that keep {{report.business}} consistent wherever it shows up.{{/if}}</div>
+    <div class="prep"><span>PREPARED BY <span class="q">Qtonix</span></span><span>{{report.monthYear}}</span></div>
+  </div>
+</section>
+
+{{!-- ================= CONTENTS ================= --}}
+<section class="slide">
+  <div class="eyebrow">Contents</div>
+  <h1 class="title">What's in this guide</h1>
+  <div class="cards4">
+    <div class="card4">{{#if img.life0}}<img class="ph" src="{{img.life0}}">{{else}}<div class="ph"></div>{{/if}}<div class="rule"></div><div class="pt">PART 01</div><h3>Brand foundation</h3><p>Story, purpose, pillars, proof points, products and who we build for.</p></div>
+    <div class="card4">{{#if img.prod0}}<img class="ph" src="{{img.prod0}}">{{else}}<div class="ph"></div>{{/if}}<div class="rule"></div><div class="pt">PART 02</div><h3>Visual identity</h3><p>Logo, colour, typography and photography.</p></div>
+    <div class="card4">{{#if img.life1}}<img class="ph" src="{{img.life1}}">{{else}}<div class="ph"></div>{{/if}}<div class="rule"></div><div class="pt">PART 03</div><h3>Voice &amp; messaging</h3><p>How we sound, sample copy, names and the claims we can make.</p></div>
+    <div class="card4">{{#if img.life2}}<img class="ph" src="{{img.life2}}">{{else}}<div class="ph"></div>{{/if}}<div class="rule"></div><div class="pt">PART 04</div><h3>Social media</h3><p>Creative specs, content pillars, posting rhythm and a pre-publish check.</p></div>
+  </div>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+
+{{!-- ================= STORY ================= --}}
+<section class="slide">
+  <div class="eyebrow">01 · Brand Foundation</div>
+  <h1 class="title">Our story</h1>
+  <div class="two">
+    <div class="l">{{#if img.life0}}<img src="{{img.life0}}">{{/if}}<div class="cap">{{#if foundation.story}}{{foundation.story}}{{/if}}</div></div>
+    <div class="r">
+      {{#if foundation.timeline.length}}{{#each foundation.timeline}}<div class="tl"><b>{{this.year}}</b><span>{{this.event}}</span></div>{{/each}}
+      {{else}}<p class="lead">{{foundation.positioning}}</p>{{/if}}
+    </div>
+  </div>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+
+{{!-- ================= STAND FOR ================= --}}
+<section class="slide dark">
+  <div class="eyebrow">What we stand for</div>
+  <div class="standfor">
+    <div class="l">
+      <h2>{{#if foundation.standForHeadline}}{{foundation.standForHeadline}}{{else}}{{foundation.positioning}}{{/if}}</h2>
+      <div class="blk"><div class="k">Positioning line</div><div class="v">{{foundation.positioning}}</div></div>
+      <div class="blk"><div class="k">Signature line</div><div class="v">{{foundation.signatureLine}}</div></div>
+    </div>
+    <div class="r">{{#if img.heroImg}}<img src="{{img.heroImg}}">{{/if}}<div class="cap">The clearest expression of the brand today. Real context, real promise.</div></div>
+  </div>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+
+{{!-- ================= PILLARS ================= --}}
+<section class="slide">
+  <div class="eyebrow">Messaging pillars</div>
+  <h1 class="title">What we always say</h1>
+  <div class="grid4">
+    {{#each foundation.pillars}}<div class="g4">{{#with (lookup ../images.lifestyle @index)}}<img src="{{this.url}}">{{/with}}<div class="rule"></div><h3>{{this.title}}</h3><p>{{this.text}}</p></div>{{/each}}
+  </div>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+
+{{!-- ================= PROOF POINTS ================= --}}
+{{#if foundation.proofPoints.length}}
+<section class="slide dark">
+  <div class="eyebrow">Proof points</div>
+  <h1 class="title">The facts that make it believable</h1>
+  <div class="tiles">
+    {{#each foundation.proofPoints}}<div class="tile"><b>{{this.stat}}</b><span>{{this.label}}</span></div>{{/each}}
+  </div>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+{{/if}}
+
+{{!-- ================= PRODUCT FAMILY ================= --}}
+{{#if foundation.products.length}}
+<section class="slide">
+  <div class="eyebrow">Product &amp; services</div>
+  <h1 class="title">What we offer</h1>
+  <div class="prods">
+    {{#each foundation.products}}
+    <div class="prod">{{#with (lookup ../images.product @index)}}<img src="{{this.url}}">{{/with}}<div class="pc"><h3>{{this.name}}</h3><div class="tag">{{this.tag}}</div><ul>{{#each this.points}}<li>{{this}}</li>{{/each}}</ul></div></div>
+    {{/each}}
+  </div>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+{{/if}}
+
+{{!-- ================= AUDIENCES ================= --}}
+{{#if foundation.audiences.length}}
+<section class="slide">
+  <div class="eyebrow">Who we build for</div>
+  <h1 class="title">Core audiences</h1>
+  <div class="grid4">
+    {{#each foundation.audiences}}<div class="g4">{{#with (lookup ../images.lifestyle @index)}}<img src="{{this.url}}">{{/with}}<div class="rule"></div><h3>{{this.name}}</h3><p>{{this.desc}}</p>{{#if this.line}}<div class="line">{{this.line}}</div>{{/if}}</div>{{/each}}
+  </div>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+{{/if}}
+
+{{!-- ================= LOGO ================= --}}
+<section class="slide">
+  <div class="eyebrow">02 · Visual Identity</div>
+  <h1 class="title">The logo</h1>
+  <div class="logos">
+    <div class="lg"><div class="sw" style="background:#fff">{{#if logo}}<img src="{{logo}}">{{else}}<div class="wm">{{report.business}}<span class="o">.</span></div>{{/if}}</div><h4>Full colour</h4><p>The primary logo. Use on white, sand and light photo areas.</p></div>
+    <div class="lg"><div class="sw" style="background:var(--ink)">{{#if logo}}<img src="{{logo}}">{{else}}<div class="wm" style="color:#fff">{{report.business}}<span class="o">.</span></div>{{/if}}</div><h4>Reverse</h4><p>For dark backgrounds and photos.</p></div>
+    <div class="lg"><div class="sw" style="background:var(--sand)">{{#if logo}}<img src="{{logo}}">{{else}}<div class="wm">{{report.business}}<span class="o">.</span></div>{{/if}}</div><h4>One colour</h4><p>Engraving, embroidery, stamps.</p></div>
+    <div class="lg"><div class="sw" style="background:#fff">{{#if logo}}<img src="{{logo}}" style="max-width:40%">{{else}}<div class="wm">{{firstLetter report.business}}</div>{{/if}}</div><h4>Icon</h4><p>Profile pictures, favicons, watermarks.</p></div>
+  </div>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+
+{{!-- ================= LOGO RULES ================= --}}
+<section class="slide">
+  <div class="eyebrow">Logo rules</div>
+  <h1 class="title">Give it room, keep it whole</h1>
+  <div class="rules">
+    <div class="l">
+      <div class="clear">{{#if logo}}<img src="{{logo}}">{{else}}<div class="wm">{{report.business}}<span class="o">.</span></div>{{/if}}</div>
+      <table><tr><td>Clear space</td><td>Height of the logo mark, all sides</td></tr><tr><td>Minimum size</td><td>120 px · icon 24 px</td></tr><tr><td>Placement</td><td>A corner, 8–10% of width</td></tr></table>
+    </div>
+    <div class="r">
+      <h4>Never</h4>
+      <div class="nv">Stretch, squash, rotate or tilt the logo</div>
+      <div class="nv">Recolour the wordmark or swap the brand colour</div>
+      <div class="nv">Add shadows, glows, outlines or gradients</div>
+      <div class="nv">Place it on a busy photo without a backing panel</div>
+      <div class="nv">Retype the wordmark in another font</div>
+      <div class="nv">Use screenshots or low-resolution copies</div>
+    </div>
+  </div>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+
+{{!-- ================= PALETTE ================= --}}
+<section class="slide">
+  <div class="eyebrow">Colour palette</div>
+  <h1 class="title">Taken from the brand</h1>
+  <div class="pal">
+    {{#each palette}}<div class="pc"><div class="chip" style="background:{{this.hexCss}}"></div><div class="meta"><b>{{this.label}}</b><div class="hex">{{this.hex}} · RGB {{this.rgb}}</div><div class="use">{{this.use}}</div></div></div>{{/each}}
+  </div>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+
+{{!-- ================= COLOUR IN USE ================= --}}
+<section class="slide">
+  <div class="eyebrow">Colour in use</div>
+  <h1 class="title">Brand colour is the spice</h1>
+  <div class="ciu">
+    <div class="l">
+      <div class="ratio"><div class="a">60%</div><div class="b">30%</div><div class="c">10</div></div>
+      <p><b>60%</b> light neutrals · <b>30%</b> dark · <b>10%</b> brand colour for the one thing people should notice: a button, a price, a key word.</p>
+      <div class="box"><div class="k">Tip</div><p>Keep the brand colour for emphasis. If everything is coloured, nothing stands out.</p></div>
+    </div>
+    <div class="r">
+      <table><tr><th>Text on background</th><th>Use</th></tr>
+      <tr><td>Dark on white</td><td>All text</td></tr>
+      <tr><td>Dark on light sand</td><td>All text</td></tr>
+      <tr><td>White on dark</td><td>All text</td></tr>
+      <tr><td>Brand colour on white</td><td>Links, labels</td></tr>
+      <tr><td>White on brand colour</td><td>Large &amp; bold only</td></tr>
+      <tr><td>Brand on light grey</td><td>Never for body text</td></tr></table>
+    </div>
+  </div>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+
+{{!-- ================= TYPOGRAPHY ================= --}}
+<section class="slide">
+  <div class="eyebrow">Typography</div>
+  <h1 class="title">One typeface: {{primaryFont}}</h1>
+  <div class="typo">
+    <div class="spec"><div class="big" style="font-family:'{{primaryFont}}',Raleway,sans-serif">Aa</div><h3>{{foundation.signatureLine}}</h3><p>Headlines bold and tight; body clean and easy to read.</p><div class="w">Weights: 400 · 500 · 600 · 700 · 800 · 900</div></div>
+    <div class="tbl">
+      <table>
+        <tr><th>Role</th><th>Weight</th><th>Web</th><th>Social</th></tr>
+        <tr><td>Headline</td><td>800–900, caps</td><td>40–56</td><td>96–120</td></tr>
+        <tr><td>Heading 2</td><td>700</td><td>28–32</td><td>64–72</td></tr>
+        <tr><td>Heading 3</td><td>600</td><td>20–24</td><td>44</td></tr>
+        <tr><td>Body</td><td>500</td><td>16</td><td>32–36</td></tr>
+        <tr><td>Label, button</td><td>700, caps</td><td>13–14</td><td>28</td></tr>
+        <tr><td>Fallback</td><td>Arial, sans-serif</td><td>–</td><td>–</td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+
+{{!-- ================= LIFESTYLE PHOTOGRAPHY ================= --}}
+{{#if images.lifestyle.length}}
+<section class="slide dark">
+  <div class="eyebrow">Lifestyle photography</div>
+  <h1 class="title">Real use, real context</h1>
+  <div class="gal">
+    <div class="big">{{#if img.life0}}<img src="{{img.life0}}">{{/if}}</div>
+    <div class="col">{{#if img.life1}}<img src="{{img.life1}}">{{/if}}{{#if img.life2}}<img src="{{img.life2}}">{{/if}}</div>
+    <div class="col">{{#if img.life3}}<img src="{{img.life3}}">{{/if}}{{#if img.life4}}<img src="{{img.life4}}">{{/if}}</div>
+  </div>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+{{/if}}
+
+{{!-- ================= PHOTO RULES ================= --}}
+<section class="slide">
+  <div class="eyebrow">Photo rules</div>
+  <h1 class="title">What makes a brand photo</h1>
+  <div class="sa">
+    <div class="c show"><h4>Show</h4>{{#each voice.photoShow}}<div class="it">{{this}}</div>{{/each}}</div>
+    <div class="c avoid"><h4>Avoid</h4>{{#each voice.photoAvoid}}<div class="it">{{this}}</div>{{/each}}</div>
+  </div>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+
+{{!-- ================= PRODUCT PHOTOGRAPHY ================= --}}
+{{#if voice.photoProduct}}
+<section class="slide">
+  <div class="eyebrow">Product photography</div>
+  <h1 class="title">Clean, honest, the real thing</h1>
+  <div class="pp">
+    {{#each images.product}}<div class="im"><img src="{{this.url}}"></div>{{/each}}
+  </div>
+  <div class="ppn">
+    <div><h4>Background</h4><p>{{voice.photoProduct.background}}</p></div>
+    <div><h4>Framing</h4><p>{{voice.photoProduct.framing}}</p></div>
+    <div><h4>Quality</h4><p>{{voice.photoProduct.quality}}</p></div>
+  </div>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+{{/if}}
+
+{{!-- ================= VOICE ================= --}}
+<section class="slide">
+  <div class="eyebrow">03 · Voice &amp; Messaging</div>
+  <h1 class="title">How we sound</h1>
+  <p class="lead">{{voice.voiceIntro}}</p>
+  <table class="vt">
+    <tr><th>Trait</th><th>We are</th><th>We are not</th></tr>
+    {{#each voice.voiceTable}}<tr><td>{{this.trait}}</td><td>{{this.are}}</td><td>{{this.areNot}}</td></tr>{{/each}}
+  </table>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+
+{{!-- ================= BEFORE / AFTER ================= --}}
+<section class="slide">
+  <div class="eyebrow">Voice in practice</div>
+  <h1 class="title">Before and after</h1>
+  <div class="ba">
+    {{#each voice.beforeAfter}}
+    <div class="c before"><div class="k">Before · {{this.context}}</div><p>"{{this.before}}"</p></div>
+    <div class="c after"><div class="k">After</div><p>"{{this.after}}"</p></div>
+    {{/each}}
+  </div>
+  <div class="words">
+    <div class="use"><div class="k">Words we use</div><p>{{join voice.wordsWeUse " · "}}</p></div>
+    <div class="avoid"><div class="k">Words we avoid</div><p>{{join voice.wordsWeAvoid " · "}}</p></div>
+  </div>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+
+{{!-- ================= NAMES & CLAIMS ================= --}}
+{{#if voice.namesClaims}}
+<section class="slide">
+  <div class="eyebrow">Names &amp; claims</div>
+  <h1 class="title">Say it the same way</h1>
+  <div class="nc">
+    <table><tr><th>Write</th><th>Never</th></tr>{{#each voice.namesClaims.write}}<tr><td>{{this.write}}</td><td>{{this.never}}</td></tr>{{/each}}</table>
+    <div class="side">
+      <div class="box a"><div class="k">Approved claims</div><p>{{join voice.namesClaims.approvedClaims " · "}}</p></div>
+      <div class="box b"><div class="k">Check first</div><p>{{join voice.namesClaims.checkFirst " · "}}</p></div>
+    </div>
+  </div>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+{{/if}}
+
+{{!-- ================= CREATIVE SPECS ================= --}}
+<section class="slide">
+  <div class="eyebrow">04 · Social Media</div>
+  <h1 class="title">Creative specs</h1>
+  <div class="cs">
+    <div class="f orange"><div class="fr" style="width:1.7in;height:2.1in">4:5</div>{{#with (lookup social.creativeSpecs 0)}}<h4>{{this.name}}</h4><p>{{this.size}}</p>{{/with}}</div>
+    <div class="f sand"><div class="fr" style="width:2.0in;height:2.0in">1:1</div>{{#with (lookup social.creativeSpecs 1)}}<h4>{{this.name}}</h4><p>{{this.size}}</p>{{/with}}</div>
+    <div class="f sand"><div class="fr" style="width:1.3in;height:2.3in">9:16</div>{{#with (lookup social.creativeSpecs 2)}}<h4>{{this.name}}</h4><p>{{this.size}}</p>{{/with}}</div>
+    <div class="f dark"><div class="fr" style="width:3.3in;height:1.86in">16:9</div>{{#with (lookup social.creativeSpecs 3)}}<h4>{{this.name}}</h4><p>{{this.size}}</p>{{/with}}</div>
+  </div>
+  <div class="csrules">
+    <div>{{#each social.creativeRules}}• {{this}}<br>{{/each}}</div>
+  </div>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+
+{{!-- ================= CONTENT PILLARS ================= --}}
+<section class="slide">
+  <div class="eyebrow">Content pillars &amp; rhythm</div>
+  <h1 class="title">What we post, and when</h1>
+  <div class="pillars">
+    {{#each social.contentPillars}}<div class="pil"><div class="pct">{{this.pct}}</div><h4>{{this.title}}</h4><p>{{this.desc}}</p>{{#if this.example}}<div class="eg">{{this.example}}</div>{{/if}}</div>{{/each}}
+  </div>
+  <div class="rhythm"><b>{{postsPerMonth}} / month</b><span>{{social.rhythm}}</span></div>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+
+{{!-- ================= SEASONAL CALENDAR ================= --}}
+{{#if social.calendar.length}}
+<section class="slide">
+  <div class="eyebrow">The content year</div>
+  <h1 class="title">Plan ahead by season</h1>
+  <div class="cal">
+    {{#each social.calendar}}<div class="ph"><div class="per">{{this.period}}</div><div class="lab">{{this.label}}</div><p>{{this.focus}}</p></div>{{/each}}
+  </div>
+  {{#if social.calendarRule}}<div class="calrule"><div class="k">Rule of thumb</div><p>{{social.calendarRule}}</p></div>{{/if}}
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+{{/if}}
+
+{{!-- ================= 8-POINT CHECK ================= --}}
+<section class="slide">
+  <div class="check">
+    <div class="im">{{#if img.prod0}}<img src="{{img.prod0}}">{{else}}{{#if img.heroImg}}<img src="{{img.heroImg}}">{{/if}}{{/if}}</div>
+    <div class="ls">
+      <div class="eyebrow">Before anything goes live</div>
+      <h1 class="title" style="font-size:28pt">The pre-publish check</h1>
+      {{#each social.checklist}}<div class="ci"><span class="tick">✓</span><span>{{this}}</span></div>{{/each}}
+    </div>
+  </div>
+  <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>
+</section>
+
+{{!-- ================= THANK YOU ================= --}}
+<section class="slide ty">
+  <div class="bar"></div>
+  {{#if img.heroImg}}<img class="heroimg" src="{{img.heroImg}}"><div class="scrim"></div>{{/if}}
+  <div class="inner">
+    <div class="logo">{{#if logo}}<img src="{{logo}}">{{else}}<div class="wm" style="color:#fff">{{report.business}}<span class="o">.</span></div>{{/if}}</div>
+    <h1>Thank you.</h1>
+    <div class="blk"><div class="k">Brand</div><div class="n">{{report.business}}</div><div class="d">{{report.website}}</div></div>
+    <div class="blk"><div class="k">Prepared by Qtonix</div><div class="n">Qtonix Software Pvt. Ltd.</div><div class="d">{{preparedBy}} · {{contactEmail}}{{#if contactPhone}} · {{contactPhone}}{{/if}}</div></div>
+  </div>
+</section>
+
+</body>
+</html>
