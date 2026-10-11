@@ -7046,8 +7046,17 @@ function ApplyLeaveModal({ approverName, approverChain, onClose, onDone }) {
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  // Reject past dates even when typed manually (the picker's min= only disables
+  // them in the dropdown; a hand-typed value bypasses it).
+  const clampNotPast = (v) => {
+    if (!v) return v;
+    if (v < today) { setErr(`You can't pick a past date — ${today} is the earliest.`); return today; }
+    return v;
+  };
   // Keep To in step when From moves past it.
-  const onFrom = (v) => { setFrom(v); if (to < v) setTo(v); };
+  const onFrom = (v) => { const nv = clampNotPast(v); setErr(''); setFrom(nv); if (to < nv) setTo(nv); };
+  const onTo = (v) => { let nv = clampNotPast(v); if (nv < from) nv = from; setErr(''); setTo(nv); };
+  const onHalfDate = (v) => { const nv = clampNotPast(v); setHalfDate(nv); };
   const dayCount = (() => { if (duration === 'half') return 0.5; const a = new Date(from + 'T00:00:00'), b = new Date(to + 'T00:00:00'); return Math.max(1, Math.round((b - a) / 86400000) + 1); })();
   const uploadMedical = async (file) => {
     if (!file) return; setUploading(true); setErr('');
@@ -7056,6 +7065,9 @@ function ApplyLeaveModal({ approverName, approverChain, onClose, onDone }) {
   };
   const submit = async () => {
     setErr('');
+    // Final guard: block back-dated applications (also enforced server-side).
+    const earliest = duration === 'half' ? halfDate : from;
+    if (earliest < today) { setErr(`You can't apply for a past date. ${today} is the earliest you can choose.`); return; }
     if (duration === 'full' && to < from) { setErr('The end date can’t be before the start date.'); return; }
     // Medical: certificate only required under specific rules (checked server-side).
     if (type === 'medical' && !documentUrl && medReq && medReq.required) {
@@ -7113,11 +7125,11 @@ function ApplyLeaveModal({ approverName, approverChain, onClose, onDone }) {
           {duration === 'full' ? (
             <div className="flex gap-2">
               <div className="flex-1"><div className="text-[12px] font-bold text-slate-600 mb-1">From</div><input type="date" value={from} min={today} onChange={(e) => onFrom(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
-              <div className="flex-1"><div className="text-[12px] font-bold text-slate-600 mb-1">To</div><input type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
+              <div className="flex-1"><div className="text-[12px] font-bold text-slate-600 mb-1">To</div><input type="date" value={to} min={from} onChange={(e) => onTo(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
             </div>
           ) : (
             <>
-              <div><div className="text-[12px] font-bold text-slate-600 mb-1">Date</div><input type="date" value={halfDate} min={today} onChange={(e) => setHalfDate(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
+              <div><div className="text-[12px] font-bold text-slate-600 mb-1">Date</div><input type="date" value={halfDate} min={today} onChange={(e) => onHalfDate(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
               <div><div className="text-[12px] font-bold text-slate-600 mb-1">Which half <span className="text-red-500">*</span></div>
                 <div className="flex gap-2">
                   <button onClick={() => setHalfPeriod('first')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${halfPeriod === 'first' ? 'border-amber-300 bg-amber-50 text-amber-600' : 'border-slate-200 text-slate-500'}`}>1st half <span className="text-[10px] font-normal">· morning</span></button>
