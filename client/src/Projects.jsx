@@ -1206,6 +1206,8 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, editReport }) {
   const [peakSeason, setPeakSeason] = useState('');
   const [tone, setTone] = useState('');
   const [logoUrl, setLogoUrl] = useState('');
+  const [logoFile, setLogoFile] = useState(null); // optional uploaded logo image
+  const [logoBusy, setLogoBusy] = useState(false);
   const [rid, setRid] = useState(editReport ? editReport.id : null);
   const [rep, setRep] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -1227,9 +1229,28 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, editReport }) {
         website: website.trim(), businessName: bizName, industry, audiences,
         postsPerMonth: Number(postsPerMonth) || 10, platforms, cadence, peakSeason, tone, logoUrl: logoUrl.trim(),
       }) });
+      // If the user picked a logo file, upload it now that the report exists.
+      if (logoFile) { try { await uploadLogo(r.id, logoFile); } catch (e) { toast('Logo upload failed: ' + e.message); } }
       setRid(r.id); setStep('running');
     } catch (e) { toast(e.message); }
     setBusy(false);
+  };
+
+  // Upload a logo image to a guideline (used on the input step and review step).
+  const uploadLogo = async (reportId, file) => {
+    const fd = new FormData(); fd.append('logo', file);
+    const res = await fetch(`${API_BASE}/api/hr/projects/brandguide/${reportId}/logo`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd });
+    if (!res.ok) throw new Error('Upload failed');
+    const j = await res.json();
+    return j.url;
+  };
+  // Review-step logo replacement (report already exists).
+  const replaceLogo = async (file) => {
+    if (!rid || !file) return;
+    setLogoBusy(true);
+    try { await uploadLogo(rid, file); const r = await hrApi(`/projects/brandguide/${rid}`); setRep(r); toast('Logo updated ✓'); }
+    catch (e) { toast(e.message); }
+    setLogoBusy(false);
   };
 
   // poll while running
@@ -1298,7 +1319,15 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, editReport }) {
                 <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Posting cadence <span className="font-medium text-slate-300">· optional</span></label><input value={cadence} onChange={(e) => setCadence(e.target.value)} placeholder="e.g. Mon & Fri + Reels" className={fld} /></div>
                 <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Peak season <span className="font-medium text-slate-300">· optional</span></label><input value={peakSeason} onChange={(e) => setPeakSeason(e.target.value)} placeholder="e.g. Jun–Aug pre-season" className={fld} /></div>
               </div>
-              <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Logo URL override <span className="font-medium text-slate-300">· optional, if the site logo is low-res</span></label><input value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} placeholder="https://…/logo.png" className={fld} /></div>
+              <div>
+                <label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Logo <span className="font-medium text-slate-300">· optional — we auto-fetch from the site; override here if it's low-res</span></label>
+                <input value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} placeholder="Paste a logo URL…  https://…/logo.png" className={fld} />
+                <div className="flex items-center gap-2 mt-2">
+                  <label className="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-orange-600 border border-orange-200 rounded-lg px-3 py-1.5 cursor-pointer hover:bg-orange-50">⬆ Upload logo<input type="file" accept="image/*" className="hidden" onChange={(e) => { const fl = e.target.files[0]; if (fl) { setLogoFile(fl); setLogoUrl(''); } }} /></label>
+                  {logoFile && <span className="text-[11px] text-slate-500 flex items-center gap-1.5"><img src={URL.createObjectURL(logoFile)} className="w-6 h-6 object-contain rounded border border-slate-200" />{logoFile.name} <button onClick={() => setLogoFile(null)} className="text-slate-400 hover:text-red-500">×</button></span>}
+                </div>
+                <div className="text-[10.5px] text-slate-400 mt-1">Upload a PNG/SVG for the sharpest logo on the cover and logo pages. Takes priority over the URL.</div>
+              </div>
               <div className="rounded-xl bg-slate-50 border border-slate-200 text-[11.5px] text-slate-500 px-3 py-2.5 leading-snug">Claude will crawl the site, pull the <b className="text-slate-700">real images, colour palette and fonts</b>, then write the full guideline — foundation, visual identity, voice &amp; messaging and a social-media playbook. You can review and tweak before generating the PDF.</div>
             </div>
           )}
@@ -1312,7 +1341,7 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, editReport }) {
           )}
 
           {step === 'review' && rep && rep.data && rep.data.report && (
-            <BrandGuideReview rep={rep} rid={rid} onSave={async (d) => { try { await hrApi(`/projects/brandguide/${rid}`, { method: 'PUT', body: JSON.stringify({ data: d }) }); toast('Saved ✓'); } catch (e) { toast(e.message); } }} />
+            <BrandGuideReview rep={rep} rid={rid} onReplaceLogo={replaceLogo} logoBusy={logoBusy} onSave={async (d) => { try { await hrApi(`/projects/brandguide/${rid}`, { method: 'PUT', body: JSON.stringify({ data: d }) }); toast('Saved ✓'); } catch (e) { toast(e.message); } }} />
           )}
           {step === 'review' && (!rep || !rep.data || !rep.data.report) && <div className="py-12 text-center text-slate-400 text-sm">Loading guideline…</div>}
 
@@ -1341,7 +1370,7 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, editReport }) {
 }
 
 // Review step: shows key AI-written text + palette/logo, editable before generate.
-function BrandGuideReview({ rep, rid, onSave }) {
+function BrandGuideReview({ rep, rid, onSave, onReplaceLogo, logoBusy }) {
   const [d, setD] = useState(rep.data);
   useEffect(() => { setD(rep.data); }, [rep]);
   const f = d.foundation || {}; const pal = d.palette || []; const imgs = d.images || {};
@@ -1350,6 +1379,15 @@ function BrandGuideReview({ rep, rid, onSave }) {
   return (
     <div>
       <div className="rounded-xl bg-slate-50 p-3 mb-4 text-[12px] text-slate-500"><b className="text-[#050A1F]">{d.report.business}</b> — AI has drafted the full guideline from the live site. Review the key text, then generate.</div>
+
+      <div className="text-[11px] font-extrabold text-slate-400 uppercase mb-1.5">Logo</div>
+      <div className="flex items-center gap-3 mb-3">
+        <div className="w-16 h-16 rounded-lg border border-slate-200 bg-white flex items-center justify-center overflow-hidden flex-none">{d.logo ? <img src={d.logo} className="max-w-full max-h-full object-contain" /> : <span className="text-[10px] text-slate-400 text-center px-1">No logo</span>}</div>
+        <div>
+          <label className="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-orange-600 border border-orange-200 rounded-lg px-3 py-1.5 cursor-pointer hover:bg-orange-50">{logoBusy ? 'Uploading…' : '⬆ Upload / replace logo'}<input type="file" accept="image/*" disabled={logoBusy} className="hidden" onChange={(e) => e.target.files[0] && onReplaceLogo(e.target.files[0])} /></label>
+          <div className="text-[10.5px] text-slate-400 mt-1">PNG or SVG works best. Appears on the cover and logo pages.</div>
+        </div>
+      </div>
 
       <div className="text-[11px] font-extrabold text-slate-400 uppercase mb-1">Tagline / signature line</div>
       <input value={f.tagline || ''} onChange={(e) => upd(['foundation', 'tagline'], e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[12.5px] mb-3" />
