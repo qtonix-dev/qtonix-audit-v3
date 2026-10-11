@@ -571,6 +571,8 @@ function bgViewModel(data) {
   for (let i = 0; i < 6; i++) flat['life' + i] = (life[i] && life[i].url) || '';
   for (let i = 0; i < 4; i++) flat['prod' + i] = (prod[i] && prod[i].url) || '';
   flat.heroImg = (imgs.hero) || (data.cover && data.cover.heroImage) || '';
+  // Thank-you page: prefer a different lifestyle photo than the cover; else reuse hero.
+  flat.tyImg = (life.find((x) => x && x.url && x.url !== flat.heroImg) || {}).url || flat.heroImg || '';
   return {
     ...data,
     palette: pal,

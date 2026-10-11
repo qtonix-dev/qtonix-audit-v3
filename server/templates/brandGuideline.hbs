@@ -52,23 +52,26 @@ h1.title{ font-size:34pt; font-weight:900; letter-spacing:-.5px; line-height:1.0
 .lead{ font-size:12.5pt; color:var(--muted); margin-top:14px; max-width:9in; }
 .dark .lead{ color:rgba(255,255,255,.7); }
 
-/* ---------- COVER ---------- */
+/* ---------- COVER (full-bleed hero + gradient, matches reference) ---------- */
 .cover{ background:var(--ink); color:#F5F1E8; padding:0; }
-.cover .bar{ position:absolute; top:0; left:0; right:0; height:10px; background:var(--brand); }
-.cover .inner{ position:absolute; inset:0; padding:0.85in 0.95in; display:flex; flex-direction:column; }
-.cover .heroimg{ position:absolute; right:0; top:0; bottom:0; width:52%; object-fit:cover; opacity:.85; }
-.cover .scrim{ position:absolute; right:0; top:0; bottom:0; width:60%; background:linear-gradient(90deg,var(--ink) 8%, rgba(20,20,20,.2) 100%); }
-/* fallback decoration when the site has no usable hero image */
-.cover .deco{ position:absolute; right:-1.2in; top:0.6in; width:5.2in; height:5.2in; border-radius:50%; border:1.5px solid var(--brand); opacity:.25; }
-.cover .deco2{ position:absolute; right:0.3in; bottom:0.6in; width:3in; height:3in; border-radius:50%; background:radial-gradient(circle, var(--brand) 0%, transparent 70%); opacity:.12; }
-.cover .logo{ position:relative; z-index:2; }
-.cover .logo img{ height:58px; object-fit:contain; }
-.cover .logo .wm{ font-size:26pt; font-weight:900; letter-spacing:-1px; }
+.cover .bar{ position:absolute; top:0; left:0; right:0; height:10px; background:var(--brand); z-index:3; }
+/* hero photo fills the ENTIRE cover */
+.cover .heroimg{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+/* left-to-right dark gradient keeps the left-side text readable over the photo */
+.cover .scrim{ position:absolute; inset:0; background:linear-gradient(90deg, rgba(18,18,18,.96) 0%, rgba(18,18,18,.86) 32%, rgba(18,18,18,.45) 58%, rgba(18,18,18,.15) 100%); }
+/* when there is NO photo, a branded dark panel with a subtle accent orbit */
+.cover.nophoto{ background:linear-gradient(135deg, #16161a 0%, var(--ink) 60%, #16161a 100%); }
+.cover .deco{ position:absolute; right:-1.4in; top:0.5in; width:5.6in; height:5.6in; border-radius:50%; border:2px solid var(--brand); opacity:.2; }
+.cover .deco2{ position:absolute; right:0.2in; bottom:0.4in; width:3.4in; height:3.4in; border-radius:50%; background:radial-gradient(circle, var(--brand) 0%, transparent 70%); opacity:.14; }
+.cover .inner{ position:absolute; inset:0; padding:0.75in 0.95in; display:flex; flex-direction:column; z-index:2; }
+.cover .logo{ position:relative; }
+.cover .logo img{ height:70px; max-width:3.4in; object-fit:contain; }
+.cover .logo .wm{ font-size:28pt; font-weight:900; letter-spacing:-1px; }
 .cover .wm .o{ color:var(--brand); }
-.cover .eyb{ position:relative; z-index:2; margin-top:auto; font-size:10pt; letter-spacing:3px; font-weight:800; color:var(--brand); }
-.cover h1{ position:relative; z-index:2; font-size:60pt; font-weight:900; line-height:.98; letter-spacing:-2px; margin-top:12px; text-transform:uppercase; }
-.cover .sub{ position:relative; z-index:2; margin-top:16px; font-size:13pt; color:rgba(255,255,255,.8); max-width:5.2in; line-height:1.5; }
-.cover .prep{ position:relative; z-index:2; margin-top:28px; padding-top:16px; border-top:1px solid rgba(255,255,255,.18); display:flex; justify-content:space-between; align-items:center; width:6.2in; font-size:9pt; letter-spacing:2px; font-weight:700; color:var(--muted2); }
+.cover .eyb{ position:relative; margin-top:auto; font-size:11pt; letter-spacing:3.5px; font-weight:800; color:var(--brand); }
+.cover h1{ position:relative; font-size:62pt; font-weight:900; line-height:.96; letter-spacing:-2px; margin-top:14px; text-transform:uppercase; max-width:6.5in; }
+.cover .sub{ position:relative; margin-top:20px; font-size:13.5pt; color:rgba(255,255,255,.82); max-width:4.8in; line-height:1.5; }
+.cover .prep{ position:relative; margin-top:30px; padding-top:16px; border-top:1px solid rgba(255,255,255,.22); display:flex; justify-content:space-between; align-items:center; width:100%; font-size:9.5pt; letter-spacing:2px; font-weight:700; color:var(--muted2); }
 .cover .prep .q{ color:#F5F1E8; }
 
 /* ---------- CONTENTS ---------- */
@@ -282,11 +285,12 @@ h1.title{ font-size:34pt; font-weight:900; letter-spacing:-.5px; line-height:1.0
 .check .ci .tick{ width:22px; height:22px; border-radius:50%; border:2px solid var(--brand); color:var(--brand); display:flex; align-items:center; justify-content:center; font-size:11pt; font-weight:800; flex:none; }
 
 /* thank you */
-.ty{ background:var(--ink); color:#F5F1E8; }
-.ty .heroimg{ position:absolute; right:0; top:0; bottom:0; width:46%; object-fit:cover; opacity:.8; }
-.ty .scrim{ position:absolute; right:0; top:0; bottom:0; width:54%; background:linear-gradient(90deg,var(--ink) 15%, transparent 100%); }
-.ty .bar{ position:absolute; top:0; left:0; right:0; height:10px; background:var(--brand); }
-.ty .inner{ position:relative; z-index:2; padding:0.3in 0.1in; }
+.ty{ background:var(--ink); color:#F5F1E8; padding:0; }
+.ty .heroimg{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+.ty .scrim{ position:absolute; inset:0; background:linear-gradient(90deg, rgba(18,18,18,.97) 0%, rgba(18,18,18,.88) 35%, rgba(18,18,18,.4) 65%, rgba(18,18,18,.1) 100%); }
+.ty.nophoto{ background:linear-gradient(135deg, #16161a 0%, var(--ink) 60%, #16161a 100%); }
+.ty .bar{ position:absolute; top:0; left:0; right:0; height:10px; background:var(--brand); z-index:3; }
+.ty .inner{ position:absolute; inset:0; z-index:2; padding:0.85in 0.95in; display:flex; flex-direction:column; justify-content:center; }
 .ty .logo img{ height:54px; } .ty .logo .wm{ font-size:24pt; font-weight:900; } .ty .wm .o{ color:var(--brand); }
 .ty h1{ font-size:56pt; font-weight:900; text-transform:uppercase; margin-top:30px; letter-spacing:-1.5px; }
 .ty .blk{ margin-top:30px; max-width:5.4in; }
@@ -299,7 +303,7 @@ h1.title{ font-size:34pt; font-weight:900; letter-spacing:-.5px; line-height:1.0
 <body>
 
 {{!-- ================= COVER ================= --}}
-<section class="slide cover">
+<section class="slide cover{{#unless img.heroImg}} nophoto{{/unless}}">
   <div class="bar"></div>
   {{#if img.heroImg}}<img class="heroimg" src="{{img.heroImg}}"><div class="scrim"></div>{{else}}<div class="deco"></div><div class="deco2"></div>{{/if}}
   <div class="inner">
@@ -632,9 +636,9 @@ h1.title{ font-size:34pt; font-weight:900; letter-spacing:-.5px; line-height:1.0
 </section>
 
 {{!-- ================= THANK YOU ================= --}}
-<section class="slide ty">
+<section class="slide ty{{#unless img.tyImg}} nophoto{{/unless}}">
   <div class="bar"></div>
-  {{#if img.heroImg}}<img class="heroimg" src="{{img.heroImg}}"><div class="scrim"></div>{{/if}}
+  {{#if img.tyImg}}<img class="heroimg" src="{{img.tyImg}}"><div class="scrim"></div>{{else}}<div class="deco" style="opacity:.18"></div>{{/if}}
   <div class="inner">
     <div class="logo">{{#if logo}}<img src="{{logo}}">{{else}}<div class="wm" style="color:#fff">{{report.business}}<span class="o">.</span></div>{{/if}}</div>
     <h1>Thank you.</h1>

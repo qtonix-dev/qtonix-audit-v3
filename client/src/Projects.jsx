@@ -1208,6 +1208,8 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, onStarted, choo
   const [logoUrl, setLogoUrl] = useState('');
   const [logoFile, setLogoFile] = useState(null); // optional uploaded logo image
   const [logoBusy, setLogoBusy] = useState(false);
+  const [coverFile, setCoverFile] = useState(null); // optional uploaded cover photo
+  const [coverBusy, setCoverBusy] = useState(false);
   const [rid, setRid] = useState(editReport ? editReport.id : null);
   const [rep, setRep] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -1230,8 +1232,9 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, onStarted, choo
         website: website.trim(), businessName: bizName, industry, audiences,
         postsPerMonth: Number(postsPerMonth) || 10, platforms, cadence, peakSeason, tone, logoUrl: logoUrl.trim(),
       }) });
-      // If the user picked a logo file, upload it now that the report exists.
+      // If the user picked a logo / cover file, upload it now the report exists.
       if (logoFile) { try { await uploadLogo(r.id, logoFile); } catch (e) { toast('Logo upload failed: ' + e.message); } }
+      if (coverFile) { try { await uploadCover(r.id, coverFile); } catch (e) { toast('Cover upload failed: ' + e.message); } }
       // Close the popup immediately — the table shows progress under Status.
       toast('Started — building the guideline. Watch its progress in the list.');
       if (onStarted) { onStarted(); return; }
@@ -1247,6 +1250,20 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, onStarted, choo
     if (!res.ok) throw new Error('Upload failed');
     const j = await res.json();
     return j.url;
+  };
+  // Upload a cover/hero photo to a guideline.
+  const uploadCover = async (reportId, file) => {
+    const fd = new FormData(); fd.append('cover', file);
+    const res = await fetch(`${API_BASE}/api/hr/projects/brandguide/${reportId}/cover`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd });
+    if (!res.ok) throw new Error('Upload failed');
+    const j = await res.json(); return j.url;
+  };
+  const replaceCover = async (file) => {
+    if (!rid || !file) return;
+    setCoverBusy(true);
+    try { await uploadCover(rid, file); const r = await hrApi(`/projects/brandguide/${rid}`); setRep(r); toast('Cover photo updated ✓'); }
+    catch (e) { toast(e.message); }
+    setCoverBusy(false);
   };
   // Review-step logo replacement (report already exists).
   const replaceLogo = async (file) => {
@@ -1350,6 +1367,14 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, onStarted, choo
                 </div>
                 <div className="text-[10.5px] text-slate-400 mt-1">Upload a PNG/SVG for the sharpest logo on the cover and logo pages. Takes priority over the URL.</div>
               </div>
+              <div>
+                <label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Cover photo <span className="font-medium text-slate-300">· optional — we use a real site photo; upload one for a stronger cover</span></label>
+                <div className="flex items-center gap-2">
+                  <label className="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-orange-600 border border-orange-200 rounded-lg px-3 py-1.5 cursor-pointer hover:bg-orange-50">⬆ Upload cover photo<input type="file" accept="image/*" className="hidden" onChange={(e) => { const fl = e.target.files[0]; if (fl) setCoverFile(fl); }} /></label>
+                  {coverFile && <span className="text-[11px] text-slate-500 flex items-center gap-1.5"><img src={URL.createObjectURL(coverFile)} className="w-10 h-6 object-cover rounded border border-slate-200" />{coverFile.name} <button onClick={() => setCoverFile(null)} className="text-slate-400 hover:text-red-500">×</button></span>}
+                </div>
+                <div className="text-[10.5px] text-slate-400 mt-1">A wide, high-res lifestyle/product photo works best (fills the whole cover &amp; thank-you page).</div>
+              </div>
               <div className="rounded-xl bg-slate-50 border border-slate-200 text-[11.5px] text-slate-500 px-3 py-2.5 leading-snug">Claude will crawl the site, pull the <b className="text-slate-700">real images, colour palette and fonts</b>, then write the full guideline — foundation, visual identity, voice &amp; messaging and a social-media playbook. You can review and tweak before generating the PDF.</div>
             </div>
           )}
@@ -1363,7 +1388,7 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, onStarted, choo
           )}
 
           {step === 'review' && rep && rep.data && rep.data.report && (
-            <BrandGuideReview rep={rep} rid={rid} onReplaceLogo={replaceLogo} logoBusy={logoBusy} onSave={async (d) => { try { await hrApi(`/projects/brandguide/${rid}`, { method: 'PUT', body: JSON.stringify({ data: d }) }); toast('Saved ✓'); } catch (e) { toast(e.message); } }} />
+            <BrandGuideReview rep={rep} rid={rid} onReplaceLogo={replaceLogo} logoBusy={logoBusy} onReplaceCover={replaceCover} coverBusy={coverBusy} onSave={async (d) => { try { await hrApi(`/projects/brandguide/${rid}`, { method: 'PUT', body: JSON.stringify({ data: d }) }); toast('Saved ✓'); } catch (e) { toast(e.message); } }} />
           )}
           {step === 'review' && (!rep || !rep.data || !rep.data.report) && <div className="py-12 text-center text-slate-400 text-sm">Loading guideline…</div>}
 
@@ -1394,19 +1419,35 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, onStarted, choo
 }
 
 // Review step: shows key AI-written text + palette/logo, editable before generate.
-function BrandGuideReview({ rep, rid, onSave, onReplaceLogo, logoBusy }) {
+function BrandGuideReview({ rep, rid, onSave, onReplaceLogo, logoBusy, onReplaceCover, coverBusy }) {
   const [d, setD] = useState(rep.data);
   useEffect(() => { setD(rep.data); }, [rep]);
   const f = d.foundation || {}; const pal = d.palette || []; const imgs = d.images || {};
   const upd = (path, v) => setD((s) => { const c = JSON.parse(JSON.stringify(s)); let o = c; for (let i = 0; i < path.length - 1; i++) { o[path[i]] = o[path[i]] || {}; o = o[path[i]]; } o[path[path.length - 1]] = v; return c; });
   const imgUrl = (u) => (!u ? '' : /^https?:\/\//i.test(u) ? u : `${API_BASE}${u}`);
+  const coverImg = (d.cover && d.cover.heroImage) || imgs.hero || '';
   return (
     <div>
       <div className="rounded-xl bg-slate-50 p-3 mb-4 text-[12px] text-slate-500"><b className="text-[#050A1F]">{d.report.business}</b> — AI has drafted the full guideline from the live site. Review the key text, then generate.</div>
 
+      {d.needsCoverPhoto && !coverImg && (
+        <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-3 mb-3 text-[12px] text-amber-800">
+          <b>No strong cover photo found on the site.</b> Upload one below for the best cover — otherwise the cover uses a branded panel.
+        </div>
+      )}
+
+      <div className="text-[11px] font-extrabold text-slate-400 uppercase mb-1.5">Cover photo</div>
+      <div className="flex items-center gap-3 mb-3">
+        <div className="w-24 h-14 rounded-lg border border-slate-200 bg-slate-100 flex items-center justify-center overflow-hidden flex-none">{coverImg ? <img src={imgUrl(coverImg)} className="w-full h-full object-cover" /> : <span className="text-[10px] text-slate-400 text-center px-1">No photo</span>}</div>
+        <div>
+          <label className="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-orange-600 border border-orange-200 rounded-lg px-3 py-1.5 cursor-pointer hover:bg-orange-50">{coverBusy ? 'Uploading…' : '⬆ Upload / replace cover photo'}<input type="file" accept="image/*" disabled={coverBusy} className="hidden" onChange={(e) => e.target.files[0] && onReplaceCover(e.target.files[0])} /></label>
+          <div className="text-[10.5px] text-slate-400 mt-1">Fills the whole cover &amp; thank-you page. Wide, high-res photo works best.</div>
+        </div>
+      </div>
+
       <div className="text-[11px] font-extrabold text-slate-400 uppercase mb-1.5">Logo</div>
       <div className="flex items-center gap-3 mb-3">
-        <div className="w-16 h-16 rounded-lg border border-slate-200 bg-white flex items-center justify-center overflow-hidden flex-none">{d.logo ? <img src={d.logo} className="max-w-full max-h-full object-contain" /> : <span className="text-[10px] text-slate-400 text-center px-1">No logo</span>}</div>
+        <div className="w-16 h-16 rounded-lg border border-slate-200 bg-white flex items-center justify-center overflow-hidden flex-none">{d.logo ? <img src={imgUrl(d.logo)} className="max-w-full max-h-full object-contain" /> : <span className="text-[10px] text-slate-400 text-center px-1">No logo</span>}</div>
         <div>
           <label className="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-orange-600 border border-orange-200 rounded-lg px-3 py-1.5 cursor-pointer hover:bg-orange-50">{logoBusy ? 'Uploading…' : '⬆ Upload / replace logo'}<input type="file" accept="image/*" disabled={logoBusy} className="hidden" onChange={(e) => e.target.files[0] && onReplaceLogo(e.target.files[0])} /></label>
           <div className="text-[10.5px] text-slate-400 mt-1">PNG or SVG works best. Appears on the cover and logo pages.</div>

@@ -84,6 +84,9 @@ async function buildGuidelineData(crawl, assets, meta, keys) {
   const fonts = (meta.fontOverride && [meta.fontOverride]) || (assets.fonts && assets.fonts.length ? assets.fonts : ['Raleway']);
   const primaryFont = fonts[0] || 'Raleway';
 
+  // An uploaded cover photo (meta.coverImageUrl) wins over the auto-picked hero.
+  const heroImage = meta.coverImageUrl || images.hero;
+  if (meta.coverImageUrl) images.hero = meta.coverImageUrl;
   const base = {
     report: { business, website: meta.website || crawl.domain, monthYear: meta.monthYear, type: 'Brand Guidelines' },
     preparedBy: meta.preparedBy || 'Adam G, Project Manager',
@@ -91,7 +94,8 @@ async function buildGuidelineData(crawl, assets, meta, keys) {
     contactEmail: meta.contactEmail || 'adam@qtonix.com',
     contactPhone: meta.contactPhone || '+91-8249016547',
     logo: meta.logo || '',
-    cover: { heroImage: images.hero },
+    cover: { heroImage },
+    needsCoverPhoto: !heroImage,  // UI prompts for an upload when true
     palette,
     fonts,
     primaryFont,
@@ -100,6 +104,12 @@ async function buildGuidelineData(crawl, assets, meta, keys) {
     postsPerMonth: meta.postsPerMonth || 10,
   };
 
+  // Brand signals harvested from the site, fed to the AI so the copy reflects
+  // the brand's real colours, fonts and headings — not generic text.
+  const paletteDesc = palette.map((c) => `${c.label} ${c.hex} (${c.role})`).join(', ');
+  const headings = (crawl.h1s || []).concat(crawl.h2s || []).slice(0, 12).filter(Boolean).join(' | ');
+  const services = (crawl.serviceSignals || []).slice(0, 20).join(', ');
+
   // Shared context block for every prompt so the AI stays grounded.
   const ctx = `BRAND: ${business}
 WEBSITE: ${meta.website || crawl.domain}
@@ -107,11 +117,15 @@ INDUSTRY / WHAT THEY SELL: ${meta.industry || 'infer from the site text'}
 TARGET AUDIENCES (if given): ${(meta.audiences || []).join('; ') || 'infer from the site'}
 TONE PREFERENCE: ${meta.tone || 'infer a fitting tone from the site'}
 PRODUCT / BRAND NAME AS WRITTEN: ${(crawl.brand && crawl.brand.primary) || business}
+BRAND COLOURS (from the site): ${paletteDesc || 'unknown'}
+BRAND FONTS (from the site): ${(fonts || []).join(', ') || 'unknown'}
 HOMEPAGE TITLE: ${crawl.title || ''}
 META DESCRIPTION: ${crawl.metaDescription || ''}
+KEY HEADINGS ON THE SITE: ${headings || '(none captured)'}
+SERVICE / PRODUCT TERMS DETECTED: ${services || '(none captured)'}
 HOMEPAGE TEXT (excerpt): ${siteText}`;
 
-  const sys = 'You are a senior brand strategist writing a professional brand guideline for a client. Write in clear, concrete, plain English grounded ONLY in the brand context given — never invent facts, prices or stats that are not supported by the site text. Match the brand\'s own wording for product names. Output ONLY valid JSON, no markdown fences, no commentary.';
+  const sys = 'You are a senior brand strategist writing a detailed, client-ready brand guideline. Write in clear, concrete, confident plain English in the BRAND\'S OWN voice, grounded ONLY in the brand context given — never invent facts, prices or stats not supported by the site. Match the brand\'s exact wording for product names. Make every section substantive and specific to THIS brand (no filler, no generic placeholders). Output ONLY valid JSON, no markdown fences, no commentary.';
 
   // --- Call 1: Brand foundation -------------------------------------------
   const foundationPrompt = `${ctx}

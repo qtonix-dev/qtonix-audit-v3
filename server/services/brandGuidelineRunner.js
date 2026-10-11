@@ -76,6 +76,7 @@ async function run(reportId) {
       peakSeason: ro.peakSeason || '',
       tone: ro.tone || '',
       logo,
+      coverImageUrl: ro.coverImageUrl || '',
       colorOverrides,
       fontOverride: ro.fontOverride || '',
       monthYear: monthYear(),

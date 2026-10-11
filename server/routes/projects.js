@@ -701,6 +701,22 @@ router.post('/brandguide/:rid/logo', guard, requireHrAdmin, shotUpload.single('l
   } catch (e) { next(e); }
 });
 
+// Upload a COVER / hero photo for a guideline (used on the cover + thank-you page).
+router.post('/brandguide/:rid/cover', guard, requireHrAdmin, shotUpload.single('cover'), async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r || r.kind !== BG_KIND) return res.status(404).json({ error: 'Guideline not found.' });
+    if (!req.file) return res.status(400).json({ error: 'Image required.' });
+    const { promoteLocal } = require('../services/preSeoStore');
+    const stored = await promoteLocal(`/uploads/${req.file.filename}`, `brandguide-${r.id}-cover-${req.file.filename}`);
+    const ro = { ...(r.runOptions || {}), coverImageUrl: stored.url };
+    r.runOptions = ro; r.changed('runOptions', true);
+    if (r.data && r.data.report) { const d = JSON.parse(JSON.stringify(r.data)); d.cover = d.cover || {}; d.cover.heroImage = stored.url; d.images = d.images || {}; d.images.hero = stored.url; r.data = d; r.changed('data', true); }
+    await r.save();
+    res.json({ ok: true, url: stored.url });
+  } catch (e) { next(e); }
+});
+
 // Poll one guideline.
 router.get('/brandguide/:rid', guard, requireHrAdmin, async (req, res, next) => {
   try {
