@@ -60,7 +60,10 @@ async function run(reportId) {
 
     // User overrides from the wizard (optional).
     const colorOverrides = Array.isArray(ro.colorOverrides) && ro.colorOverrides.length ? ro.colorOverrides : null;
-    const logo = ro.logoUrl || logoFor(crawl, report.domain);
+    // Logo priority: user-uploaded/URL override → the REAL site wordmark the
+    // harvester found → logoFor() (which may fall back to a favicon). Never use
+    // the tiny Google-favicon fallback when a proper logo was harvested.
+    const logo = ro.logoUrl || assets.logo || logoFor(crawl, report.domain);
 
     const meta = {
       businessName: report.businessName || report.domain,

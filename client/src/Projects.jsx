@@ -90,7 +90,6 @@ export default function ProjectsView({ user }) {
   const [projects, setProjects] = useState(null);
   const [openId, setOpenId] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [showRun, setShowRun] = useState(false);
   const [tab, setTab] = useState('projects'); // projects | reports
   const [filterStatus, setFilterStatus] = useState('');
   const [filterType, setFilterType] = useState('');
@@ -116,11 +115,9 @@ export default function ProjectsView({ user }) {
           </div>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => setShowRun(true)} className="font-bold px-4 py-2.5 rounded-xl text-sm border-2 border-orange-500 text-orange-600 bg-orange-50">▶ Run Report</button>
           <button onClick={() => setShowCreate(true)} className="text-white font-bold px-4 py-2.5 rounded-xl text-sm" style={{ background: ORANGE }}>+ Create Project</button>
         </div>
       </div>
-      {showRun && <PreSeoReportWizard projectId={'none'} project={null} onClose={() => setShowRun(false)} onDone={() => {}} />}
       <div className="bg-white border border-slate-200 rounded-2xl p-3 flex items-center gap-2.5 mb-4 flex-wrap">
         <span className="text-[13px] font-bold text-[#050A1F]">Filter</span>
         <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-[12.5px] text-slate-600 bg-white"><option value="">Status: All</option>{Object.keys(STATUS_PILL).map((s) => <option key={s} value={s}>{STATUS_PILL[s].label}</option>)}</select>

@@ -613,41 +613,99 @@ async function runTechnicalAudit(website, pageSpeedKey, opts = {}) {
 // baseUrl is used to resolve relative image paths to absolute URLs.
 // ---------------------------------------------------------------------------
 function harvestBrandAssets(html, baseUrl) {
-  const out = { images: [], colors: [], fonts: [] };
+  const out = { images: [], colors: [], fonts: [], logo: '' };
   if (!html) return out;
   let $;
   try { $ = cheerio.load(html); } catch { return out; }
   const abs = (u) => { try { return new URL(u, baseUrl).href; } catch { return ''; } };
-  const isReal = (u) => u && !/^data:/i.test(u) && !/\.(svg)(\?|$)/i.test(u) && !/sprite|icon|logo|favicon|pixel|blank|spacer|1x1|placeholder/i.test(u);
+  const srcOf = (el) => $(el).attr('src') || $(el).attr('data-src') || $(el).attr('data-lazy-src') || $(el).attr('data-original') || firstFromSrcset($(el).attr('srcset')) || firstFromSrcset($(el).attr('data-srcset'));
 
-  // --- Images: prefer large content images; capture src + srcset + lazy attrs.
+  // JUNK: ad/related-product widgets, placeholders, tracking pixels, sprites,
+  // text-only promo banners, and stock "no image" graphics. These are what made
+  // the earlier reports look unsendable (Kryptonite lock, "NO IMAGE AVAILABLE").
+  const JUNK_IMG = /(no[-_ ]?image|placeholder|coming[-_ ]?soon|default|avatar|spinner|loading|loader|pixel|blank|spacer|1x1|sprite|badge|payment|visa|mastercard|paypal|stripe|amex|trust|seal|star|rating|review|ad[-_]|advert|banner[-_]?ad|related|recommend|cross[-_]?sell|upsell|thumb_|_thumb|icon)/i;
+  const okExt = (u) => /\.(jpe?g|png|webp|avif)(\?|$)/i.test(u) || !/\.[a-z0-9]{2,5}(\?|$)/i.test(u); // allow extensionless CDN urls
+  const goodImg = (u) => u && !/^data:/i.test(u) && !/\.svg(\?|$)/i.test(u) && !/favicon/i.test(u) && okExt(u) && !JUNK_IMG.test(u);
+
+  // --- LOGO: the real site logo (wordmark), not a favicon. Try, in order:
+  //   og:logo / schema logo, then <img> whose alt/class/src says "logo" inside
+  //   a header/nav/brand link, then the first header image. Reject tiny or .ico.
+  const pickLogo = () => {
+    const cand = [];
+    const sl = $('meta[property="og:logo"]').attr('content') || $('meta[itemprop="logo"]').attr('content');
+    if (sl) cand.push(sl);
+    // schema.org logo
+    try { $('script[type="application/ld+json"]').each((_, el) => { const j = JSON.parse($(el).contents().text()); const walk = (n) => { if (!n) return; if (Array.isArray(n)) return n.forEach(walk); if (typeof n === 'object') { if (n.logo) cand.push(typeof n.logo === 'string' ? n.logo : (n.logo.url || '')); Object.values(n).forEach((v) => v && typeof v === 'object' && walk(v)); } }; walk(j); }); } catch {}
+    // explicit logo images
+    $('img').each((_, el) => {
+      const s = srcOf(el); if (!s) return;
+      const alt = ($(el).attr('alt') || '').toLowerCase();
+      const cls = ($(el).attr('class') || '').toLowerCase();
+      const idd = ($(el).attr('id') || '').toLowerCase();
+      const parentCls = ($(el).parent().attr('class') || '').toLowerCase() + ' ' + ($(el).closest('a,div').attr('class') || '').toLowerCase();
+      if (/logo|brand|wordmark/.test(alt + ' ' + cls + ' ' + idd + ' ' + parentCls) || /logo|wordmark/i.test(s)) cand.push(s);
+    });
+    // header/brand-link first image as a last resort
+    const hdr = srcOf($('header a[href="/"] img, header .logo img, nav .logo img, a.navbar-brand img, header img').first());
+    if (hdr) cand.push(hdr);
+    for (let c of cand) {
+      if (!c) continue; c = abs(c);
+      if (!c || /favicon|\.ico(\?|$)/i.test(c)) continue;
+      if (/sz=\d{1,2}\b/.test(c)) continue; // google favicon service with tiny size
+      return c;
+    }
+    return '';
+  };
+  out.logo = pickLogo();
+  const logoUrl = out.logo;
+
+  // Skip images inside related/recommended/upsell/ad/footer widgets — those
+  // pull in non-brand products (a bike lock, a motor controller, etc.).
+  const inJunkContainer = (el) => {
+    let n = el; let hops = 0;
+    while (n && hops < 6) {
+      const c = ($(n).attr('class') || '') + ' ' + ($(n).attr('id') || '');
+      if (/related|recommend|upsell|cross[-_ ]?sell|also[-_ ]?bought|you[-_ ]?may|sponsor|advert|\bads?\b|widget|sidebar|footer|cart|checkout/i.test(c)) return true;
+      n = $(n).parent()[0]; hops++;
+    }
+    return false;
+  };
+
+  // --- Images: prefer large real content photos; capture src + lazy attrs.
   const seen = new Set();
   const pushImg = (rawUrl, alt, kind) => {
     const u = abs(rawUrl);
-    if (!u || !isReal(u) || seen.has(u)) return;
+    if (!u || !goodImg(u) || seen.has(u) || u === logoUrl) return;
     seen.add(u);
     out.images.push({ url: u, alt: (alt || '').trim().slice(0, 140), kind: kind || 'gallery' });
   };
-  // og:image first (usually the hero / brand shot).
+  // og:image first (usually the hero / brand shot) — but only if it's a real photo.
   const og = $('meta[property="og:image"]').attr('content') || $('meta[name="og:image"]').attr('content');
   if (og) pushImg(og, 'Primary brand image', 'og');
-  // Hero: first big image in header / hero / banner sections.
-  $('header img, .hero img, [class*="hero"] img, [class*="banner"] img, [class*="slider"] img, .carousel img').each((_, el) => {
-    const s = $(el).attr('src') || $(el).attr('data-src') || $(el).attr('data-lazy-src') || firstFromSrcset($(el).attr('srcset'));
-    if (s) pushImg(s, $(el).attr('alt'), 'hero');
+  // Hero: first big image in header/hero/banner/slider sections.
+  $('.hero img, [class*="hero"] img, [class*="banner"] img, [class*="slide"] img, .carousel img, [class*="masthead"] img, section:first-of-type img').each((_, el) => {
+    if (inJunkContainer(el)) return;
+    pushImg(srcOf(el), $(el).attr('alt'), 'hero');
   });
-  // Product shots: images inside product / shop / gallery blocks.
-  $('[class*="product"] img, [class*="shop"] img, [class*="gallery"] img, [class*="feature"] img, figure img').each((_, el) => {
-    const s = $(el).attr('src') || $(el).attr('data-src') || $(el).attr('data-lazy-src') || firstFromSrcset($(el).attr('srcset'));
-    if (s) pushImg(s, $(el).attr('alt'), 'product');
+  // Lifestyle / editorial photos (figures and content sections).
+  $('figure img, article img, [class*="lifestyle"] img, [class*="gallery"] img, main img').each((_, el) => {
+    if (inJunkContainer(el)) return;
+    const w = parseInt($(el).attr('width') || '0', 10);
+    if (w && w < 200) return;
+    pushImg(srcOf(el), $(el).attr('alt'), 'lifestyle');
   });
-  // Everything else as general lifestyle/gallery, skipping tiny images.
+  // Product shots last (often the weakest / most ad-like).
+  $('[class*="product"] img, [class*="shop"] img, [class*="feature"] img').each((_, el) => {
+    if (inJunkContainer(el)) return;
+    pushImg(srcOf(el), $(el).attr('alt'), 'product');
+  });
+  // Anything else sizeable we haven't captured (still skipping junk containers).
   $('img').each((_, el) => {
+    if (inJunkContainer(el)) return;
     const w = parseInt($(el).attr('width') || '0', 10);
     const h = parseInt($(el).attr('height') || '0', 10);
-    if ((w && w < 150) || (h && h < 150)) return; // skip icons/thumbs
-    const s = $(el).attr('src') || $(el).attr('data-src') || $(el).attr('data-lazy-src') || firstFromSrcset($(el).attr('srcset'));
-    if (s) pushImg(s, $(el).attr('alt'), 'lifestyle');
+    if ((w && w < 300) || (h && h < 200)) return; // only clearly-large images here
+    pushImg(srcOf(el), $(el).attr('alt'), 'lifestyle');
   });
   out.images = out.images.slice(0, 24);
 
@@ -667,15 +725,41 @@ function harvestBrandAssets(html, baseUrl) {
     const [r, g, b] = m.replace(/rgba?\(/i, '').split(',').map((x) => parseInt(x.trim(), 10));
     if ([r, g, b].every((n) => n >= 0 && n <= 255)) { const hex = '#' + [r, g, b].map((n) => n.toString(16).padStart(2, '0')).join(''); hexCounts[hex] = (hexCounts[hex] || 0) + 1; }
   });
+  // Weight colours used on buttons / links / brand elements more heavily — those
+  // are the real brand accents, even if they appear fewer times than greys.
+  const brandCssBlobs = [];
+  $('[class*="btn"], button, a.button, .cta, [class*="brand"], [class*="accent"], [class*="primary"]').each((_, el) => { const s = $(el).attr('style'); if (s) brandCssBlobs.push(s); });
+  // CSS custom properties often name the brand colour (--primary, --brand, --accent, --color-primary).
+  (cssText.match(/--[a-z-]*(primary|brand|accent|orange|main|cta)[a-z-]*\s*:\s*(#[0-9a-fA-F]{3,6}|rgba?\([^)]+\))/gi) || []).forEach((m) => {
+    const hx = (m.match(/#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}/) || [])[0];
+    if (hx) { let h = hx.toLowerCase(); if (h.length === 4) h = '#' + h[1] + h[1] + h[2] + h[2] + h[3] + h[3]; hexCounts[h] = (hexCounts[h] || 0) + 10; }
+  });
+  (brandCssBlobs.join(' ').match(/#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}/g) || []).forEach((h) => { let hx = h.toLowerCase(); if (hx.length === 4) hx = '#' + hx[1] + hx[1] + hx[2] + hx[2] + hx[3] + hx[3]; hexCounts[hx] = (hexCounts[hx] || 0) + 8; });
+
   const luminance = (hex) => { const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)); return (0.299 * r + 0.587 * g + 0.114 * b) / 255; };
   const saturation = (hex) => { const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255); const mx = Math.max(r, g, b), mn = Math.min(r, g, b); return mx === 0 ? 0 : (mx - mn) / mx; };
-  const roleFor = (hex) => { const l = luminance(hex), s = saturation(hex); if (l > 0.9) return 'light'; if (l < 0.18) return 'dark'; if (s > 0.35) return l < 0.55 ? 'brand' : 'accent'; return 'neutral'; };
+  // A vivid colour = saturated and in a usable mid lightness band → a brand accent.
+  const isVivid = (hex) => { const s = saturation(hex), l = luminance(hex); return s > 0.45 && l > 0.2 && l < 0.72; };
+  const roleFor = (hex) => { const l = luminance(hex), s = saturation(hex); if (l > 0.9) return 'light'; if (l < 0.16) return 'dark'; if (s > 0.4) return l < 0.58 ? 'brand' : 'accent'; return 'neutral'; };
   const ranked = Object.entries(hexCounts)
-    .filter(([hex]) => !/#ffffff|#000000/.test(hex) || hexCounts[hex] > 3) // keep pure b/w only if common
+    .filter(([hex]) => !/#ffffff|#000000/.test(hex) || hexCounts[hex] > 3)
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 12)
+    .slice(0, 16)
     .map(([hex, count]) => { const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)); return { hex: hex.toUpperCase(), rgb: `${r} ${g} ${b}`, count, role: roleFor(hex) }; });
-  out.colors = ranked;
+
+  // GUARANTEE a vivid brand accent exists. If the ranked list has no 'brand'/
+  // 'accent' colour (site was mostly grey/black/white, which collapsed the old
+  // reports to invisible-grey), promote the most vivid colour we saw, or fall
+  // back to a strong default so the cover bar, dark-page stats and footer are
+  // always legible.
+  const hasAccent = ranked.some((c) => c.role === 'brand' || c.role === 'accent');
+  if (!hasAccent) {
+    const vivid = Object.keys(hexCounts).filter(isVivid).sort((a, b) => hexCounts[b] - hexCounts[a])[0];
+    const hex = (vivid || '#E55B2A').toUpperCase();
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    ranked.unshift({ hex, rgb: `${r} ${g} ${b}`, count: 99, role: 'brand' });
+  }
+  out.colors = ranked.slice(0, 12);
 
   // --- Fonts: CSS font-family declarations + Google Fonts links.
   const fonts = new Set();
