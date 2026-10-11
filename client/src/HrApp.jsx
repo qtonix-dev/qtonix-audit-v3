@@ -4421,6 +4421,7 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
             // Group completed by the day they were completed (IST), newest first.
             const istDay = (iso) => { try { return new Date(new Date(iso).getTime() + 330 * 60000).toISOString().slice(0, 10); } catch { return '0000-00-00'; } };
             const todayIst = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+            const doneToday = done.filter((s) => s.completedAt && istDay(s.completedAt) === todayIst).length;
             const yestIst = new Date(Date.now() + 330 * 60000 - 86400000).toISOString().slice(0, 10);
             const groupsMap = {};
             for (const s of done) { const k = s.completedAt ? istDay(s.completedAt) : '0000-00-00'; (groupsMap[k] = groupsMap[k] || []).push(s); }
@@ -4434,7 +4435,10 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
             };
             return (
               <div className="mb-5">
-                <div className="text-xs font-bold text-slate-500 mb-1">Subtasks {subs.length > 0 && <span className="text-slate-400 font-normal">· {open.length}/{subs.length} remaining</span>}</div>
+                <div className="text-xs font-bold text-slate-500 mb-1 flex items-center gap-2 flex-wrap">
+                  <span>Subtasks {subs.length > 0 && <span className="text-slate-400 font-normal">· {open.length}/{subs.length} remaining</span>}</span>
+                  {doneToday > 0 && <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5 bg-green-50 text-green-700 border border-green-200">✓ {doneToday} completed today</span>}
+                </div>
                 {/* Open subtasks on top + add row */}
                 <div className="rounded-lg border border-slate-200 divide-y divide-slate-100">
                   {open.map((s) => SubRow(s))}
