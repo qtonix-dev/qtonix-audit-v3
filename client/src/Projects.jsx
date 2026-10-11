@@ -179,6 +179,7 @@ function PreSeoReports({ onBackTab }) {
   const [edit, setEdit] = useState(null); // a report object being edited
   const [run, setRun] = useState(false);
   const [runGuide, setRunGuide] = useState(false);
+  const [pickType, setPickType] = useState(false);
   const [err, setErr] = useState('');
   const load = () => hrApi('/projects/preseo').then((r) => { setItems(r.items || []); setErr(''); }).catch((e) => { setItems([]); setErr(e.message || 'Could not load reports'); });
   useEffect(() => { load(); }, []);
@@ -200,10 +201,7 @@ function PreSeoReports({ onBackTab }) {
             <button className="px-3.5 py-1.5 rounded-lg text-[12.5px] font-bold bg-white text-[#050A1F]" style={{ boxShadow: '0 1px 2px rgba(0,0,0,.08)' }}>Reports</button>
           </div>
         </div>
-        <div className="flex gap-2">
-          <button onClick={() => setRun(true)} className="text-white font-bold px-4 py-2.5 rounded-xl text-sm" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>▶ Pre-SEO Audit</button>
-          <button onClick={() => setRunGuide(true)} className="font-bold px-4 py-2.5 rounded-xl text-sm border-2" style={{ borderColor: '#FF6A00', color: '#FF4500' }}>★ Brand Guideline</button>
-        </div>
+        <button onClick={() => setPickType(true)} className="text-white font-bold px-4 py-2.5 rounded-xl text-sm" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>▶ Run Report</button>
       </div>
 
       {err && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 text-red-700 text-[12.5px] px-4 py-2.5">Couldn't load reports: {err}. If this persists, open <span className="font-mono">/api/hr/projects/preseo-diag</span> while logged in and share the result.</div>}
@@ -263,6 +261,7 @@ function PreSeoReports({ onBackTab }) {
         </table></div>
       </div>
 
+      {pickType && <ReportTypePicker onClose={() => setPickType(false)} onPick={(k) => { setPickType(false); if (k === 'brand_guideline') setRunGuide(true); else setRun(true); }} />}
       {run && <PreSeoReportWizard projectId={'none'} project={null} onClose={() => setRun(false)} onDone={load} />}
       {edit && <PreSeoReportWizard projectId={edit.projectId || 'none'} project={null} editReport={edit} onClose={() => { setEdit(null); load(); }} onDone={load} />}
       {runGuide && <BrandGuideWizard projectId={'none'} project={null} onClose={() => setRunGuide(false)} onDone={() => {}} />}
@@ -686,6 +685,7 @@ function ReportsTab({ id, data, onReload }) {
   const [runGuide, setRunGuide] = useState(false);
   const [editGuide, setEditGuide] = useState(null);
   const [guides, setGuides] = useState(null);
+  const [pickType, setPickType] = useState(false);
   const cycle = (data.cycles || [])[0];
   const load = () => hrApi(`/projects/${id}/deliverables`).then((r) => setDels(r.deliverables || [])).catch(() => setDels([]));
   const loadPreseo = () => hrApi(`/projects/${id}/preseo`).then((r) => setPreseo(r.reports || [])).catch(() => setPreseo([]));
@@ -711,14 +711,12 @@ function ReportsTab({ id, data, onReload }) {
   if (!dels) return <div className="text-slate-400 text-sm py-6 text-center">Loading…</div>;
   return (
     <div>
-      {/* Run Report — analysis reports + brand guideline. */}
+      {/* Run Report — one button, then pick the report type. */}
       <div className="flex items-center justify-between mb-3 rounded-xl border border-slate-200 bg-white p-3 flex-wrap gap-2">
         <div><b className="text-[13px] text-[#050A1F]">Run a report</b><div className="text-[11.5px] text-slate-400">Generate a branded deliverable for this client.</div></div>
-        <div className="flex gap-2">
-          <button onClick={() => setRunReport(true)} className="text-[12.5px] font-extrabold text-white rounded-lg px-4 py-2" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>▶ Pre-SEO Audit</button>
-          <button onClick={() => setRunGuide(true)} className="text-[12.5px] font-extrabold rounded-lg px-4 py-2 border-2" style={{ borderColor: '#FF6A00', color: '#FF4500' }}>★ Brand Guideline</button>
-        </div>
+        <button onClick={() => setPickType(true)} className="text-[12.5px] font-extrabold text-white rounded-lg px-4 py-2" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>▶ Run Report</button>
       </div>
+      {pickType && <ReportTypePicker onClose={() => setPickType(false)} onPick={(k) => { setPickType(false); if (k === 'brand_guideline') setRunGuide(true); else setRunReport(true); }} />}
       {runReport && <PreSeoReportWizard projectId={id} project={data.project} onClose={() => { setRunReport(false); loadPreseo(); }} onDone={loadPreseo} />}
       {editRep && <PreSeoReportWizard projectId={id} project={data.project} editReport={editRep} onClose={() => { setEditRep(null); loadPreseo(); }} onDone={loadPreseo} />}
       {runGuide && <BrandGuideWizard projectId={id} project={data.project} onClose={() => { setRunGuide(false); loadGuides(); }} onDone={loadGuides} />}
@@ -1162,6 +1160,31 @@ function VerifyDialog({ verify, busy, onCancel, onConfirm }) {
         <div className="px-5 py-3 border-t border-slate-100 flex justify-between items-center">
           <button onClick={onCancel} disabled={busy} className="text-[12.5px] font-bold text-slate-500">Cancel</button>
           <button onClick={() => onConfirm(res)} disabled={busy} className="px-5 py-2.5 rounded-xl text-[13px] font-extrabold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)', opacity: busy ? 0.6 : 1 }}>{busy ? 'Generating…' : 'Confirm & generate PDF →'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Report type picker (shown when "Run Report" is clicked) --------------
+function ReportTypePicker({ onClose, onPick }) {
+  const TYPES = [
+    { k: 'pre_seo', icon: '🔍', name: 'Pre-SEO Audit', desc: 'Full technical + on-page SEO audit of a website, with screenshots, Core Web Vitals, NAP, schema and an AI-visibility check.', asks: 'Asks for: website, business name, sitemap and access details.' },
+    { k: 'brand_guideline', icon: '★', name: 'Brand Guideline', desc: 'A complete brand book for the social team — foundation, logo, colour, typography, voice and a social-media playbook, built from the client\'s own site.', asks: 'Asks for: website, industry, audiences, posts per month, platforms and tone.' },
+  ];
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[230] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-[560px] p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between mb-1"><div className="text-[16px] font-extrabold text-[#050A1F]">What do you want to generate?</div><button onClick={onClose} className="text-slate-300 hover:text-slate-600 text-[20px] leading-none">×</button></div>
+        <div className="text-[11.5px] text-slate-400 mb-4">Pick a report type — we'll ask for what it needs next.</div>
+        <div className="grid gap-3">
+          {TYPES.map((t) => (
+            <button key={t.k} onClick={() => onPick(t.k)} className="text-left rounded-xl border-2 border-slate-200 hover:border-orange-400 hover:bg-orange-50/40 p-4 transition-colors">
+              <div className="flex items-center gap-2 mb-1"><span className="text-[18px]" style={{ color: '#FF4500' }}>{t.icon}</span><b className="text-[14px] text-[#050A1F]">{t.name}</b></div>
+              <div className="text-[12px] text-slate-500 leading-snug">{t.desc}</div>
+              <div className="text-[10.5px] text-orange-600 font-bold mt-2">{t.asks}</div>
+            </button>
+          ))}
         </div>
       </div>
     </div>
