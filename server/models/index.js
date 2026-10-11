@@ -1385,6 +1385,7 @@ async function initDb({ sync = true } = {}) {
     await addCol('publicSlug', '`publicSlug` VARCHAR(80) NULL');
     await addCol('publicEnabled', '`publicEnabled` TINYINT(1) NULL DEFAULT 0');
     await addCol('publicViews', '`publicViews` JSON NULL');
+    await addCol('runOptions', '`runOptions` JSON NULL');
     await addCol('completedAt', '`completedAt` DATETIME NULL');
     await addCol('currentStep', '`currentStep` VARCHAR(120) NULL');
     await addCol('progress', '`progress` INT NULL DEFAULT 0');
@@ -2559,6 +2560,10 @@ const PreSeoReport = sequelize.define('PreSeoReport', {
   htmlUrl: { type: DataTypes.STRING(500), allowNull: true },
   pdfFileId: { type: DataTypes.STRING(120), allowNull: true },
   htmlFileId: { type: DataTypes.STRING(120), allowNull: true },
+  // Run options (sitemap URL, no-sitemap flag, access mode, services) kept
+  // separately from `data` so a re-run preserves them after the first analysis
+  // overwrites `data` with the report payload.
+  runOptions: { type: DataTypes.JSON, defaultValue: {} },
   completedAt: { type: DataTypes.DATE, allowNull: true },
   // Public sharing — same trackable /r/ link + logging pattern as Report.
   // NOTE: not a DB-level unique index — uniqueness is enforced in the share

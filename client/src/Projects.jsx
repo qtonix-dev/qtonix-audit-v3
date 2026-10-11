@@ -187,6 +187,7 @@ function PreSeoReports({ onBackTab }) {
   const shown = (items || []).filter((r) => !q || r.businessName.toLowerCase().includes(q.toLowerCase()) || (r.domain || '').toLowerCase().includes(q.toLowerCase()));
   const download = (id, name) => { const t = localStorage.getItem(PRESEO_TOKEN) || ''; window.open(`${API_BASE}/api/hr/projects/preseo/${id}/download?token=${encodeURIComponent(t)}`, '_blank'); };
   const del = async (r) => { if (!confirm(`Permanently delete the report for ${r.businessName}? This cannot be undone.`)) return; try { await hrApi(`/projects/preseo/${r.id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); } };
+  const rerun = async (r) => { if (!confirm(`Re-run the audit for ${r.businessName} with a fresh crawl? Your uploaded screenshots are kept.`)) return; try { await hrApi(`/projects/preseo/${r.id}/rerun`, { method: 'POST' }); toast('Re-running — fresh crawl started.'); load(); } catch (e) { toast('Re-run failed: ' + e.message); } };
 
   return (
     <div className="pb-8">
@@ -241,8 +242,12 @@ function PreSeoReports({ onBackTab }) {
                       <button onClick={() => setView(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>
                       <button onClick={() => download(r.id, r.businessName)} className="rounded-lg px-2.5 py-1.5 text-[11.5px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>PDF</button>
                       <button onClick={() => setEdit(r)} title="Edit / upload screenshots" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:text-[#050A1F]">✎</button>
+                      <button onClick={() => rerun(r)} title="Re-run with a fresh crawl (keeps screenshots)" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:text-[#050A1F]">↻</button>
                     </>}
-                    {(r.status === 'ready') && <button onClick={() => setEdit(r)} className="rounded-lg border border-orange-300 px-2.5 py-1.5 text-[11.5px] font-bold text-orange-600 hover:bg-orange-50">Review</button>}
+                    {(r.status === 'ready') && <>
+                      <button onClick={() => setEdit(r)} className="rounded-lg border border-orange-300 px-2.5 py-1.5 text-[11.5px] font-bold text-orange-600 hover:bg-orange-50">Review</button>
+                      <button onClick={() => rerun(r)} title="Re-run with a fresh crawl (keeps screenshots)" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:text-[#050A1F]">↻</button>
+                    </>}
                     {['capturing', 'analyzing', 'rendering'].includes(r.status) && <span className="text-[11.5px] text-slate-400">working…</span>}
                     {r.status === 'draft' && <button onClick={() => setEdit(r)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600">Resume</button>}
                     <button onClick={() => del(r)} title="Delete" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-400 hover:text-red-500 hover:border-red-200">🗑</button>
@@ -265,13 +270,27 @@ function PreSeoReportView({ id, onBack, onEdit }) {
   const [rep, setRep] = useState(null);
   const [share, setShare] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [rerunning, setRerunning] = useState(false);
   const token = localStorage.getItem(PRESEO_TOKEN) || '';
   const loadShare = () => hrApi(`/projects/preseo/${id}/share`).then(setShare).catch(() => {});
-  useEffect(() => { hrApi(`/projects/preseo/${id}`).then(setRep).catch(() => {}); loadShare(); }, [id]);
+  const loadRep = () => hrApi(`/projects/preseo/${id}`).then(setRep).catch(() => {});
+  useEffect(() => { loadRep(); loadShare(); }, [id]);
   const enable = async () => { try { await hrApi(`/projects/preseo/${id}/share`, { method: 'POST' }); loadShare(); } catch (e) { toast(e.message); } };
   const disable = async () => { try { await hrApi(`/projects/preseo/${id}/share/disable`, { method: 'POST' }); loadShare(); } catch (e) { toast(e.message); } };
   const copy = () => { if (share && share.url) { try { navigator.clipboard.writeText(share.url); } catch {} setCopied(true); setTimeout(() => setCopied(false), 1500); } };
   const download = () => window.open(`${API_BASE}/api/hr/projects/preseo/${id}/download?token=${encodeURIComponent(token)}`, '_blank');
+  const rerun = async () => {
+    if (!confirm('Re-run this audit with a fresh crawl? Your uploaded screenshots are kept. The current PDF will be regenerated after you review.')) return;
+    setRerunning(true);
+    try {
+      await hrApi(`/projects/preseo/${id}/rerun`, { method: 'POST' });
+      toast('Re-running — hold on…');
+      // poll until it's ready again
+      const poll = setInterval(async () => {
+        try { const r = await hrApi(`/projects/preseo/${id}`); setRep(r); if (['ready', 'complete', 'failed'].includes(r.status)) { clearInterval(poll); setRerunning(false); if (r.status !== 'failed') onEdit(r); } } catch {}
+      }, 2500);
+    } catch (e) { toast('Re-run failed: ' + e.message); setRerunning(false); }
+  };
   if (!rep) return <div className="p-10 text-center text-slate-400 text-sm">Loading report…</div>;
   const hs = rep.data && rep.data.report && rep.data.report.healthScore;
 
@@ -288,6 +307,7 @@ function PreSeoReportView({ id, onBack, onEdit }) {
         <div className="flex gap-2 flex-wrap">
           <button onClick={onBack} className="rounded-lg border border-slate-300 px-4 py-2 text-[13px] font-bold text-slate-600 hover:border-slate-400">← Back</button>
           <button onClick={() => onEdit(rep)} className="rounded-lg border border-slate-300 px-4 py-2 text-[13px] font-bold text-slate-600 hover:border-slate-400">✎ Edit</button>
+          <button onClick={rerun} disabled={rerunning} className="rounded-lg border border-slate-300 px-4 py-2 text-[13px] font-bold text-slate-600 hover:border-slate-400" title="Fresh crawl & analysis, keeps your uploaded screenshots">{rerunning ? 'Re-running…' : '↻ Re-run'}</button>
           <button onClick={download} className="rounded-lg px-5 py-2 text-[13px] font-extrabold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>↓ Download PDF</button>
         </div>
       </div>
@@ -673,6 +693,7 @@ function ReportsTab({ id, data, onReload }) {
   const approve = async (d, ok) => { try { await hrApi(`/projects/${id}/deliverables/${d.id}/approve`, { method: 'POST', body: JSON.stringify({ approved: ok }) }); load(); } catch (e) { toast(e.message); } };
   const downloadPre = (rid) => { const t = localStorage.getItem('qtx_hr_token') || ''; window.open(`${API_BASE}/api/hr/projects/preseo/${rid}/download?token=${encodeURIComponent(t)}`, '_blank'); };
   const delPre = async (r) => { if (!confirm(`Delete the report for ${r.businessName || r.domain}?`)) return; try { await hrApi(`/projects/preseo/${r.id}`, { method: 'DELETE' }); loadPreseo(); } catch (e) { toast(e.message); } };
+  const rerunPre = async (r) => { if (!confirm(`Re-run the audit for ${r.businessName || r.domain} with a fresh crawl? Your uploaded screenshots are kept.`)) return; try { await hrApi(`/projects/preseo/${r.id}/rerun`, { method: 'POST' }); toast('Re-running — fresh crawl started.'); loadPreseo(); } catch (e) { toast('Re-run failed: ' + e.message); } };
 
   if (viewRep) return <PreSeoReportView id={viewRep} onBack={() => { setViewRep(null); loadPreseo(); }} onEdit={(rep) => { setViewRep(null); setEditRep(rep); }} />;
   if (!dels) return <div className="text-slate-400 text-sm py-6 text-center">Loading…</div>;
@@ -702,8 +723,12 @@ function ReportsTab({ id, data, onReload }) {
                         <button onClick={() => setViewRep(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>
                         <button onClick={() => downloadPre(r.id)} className="rounded-lg px-2.5 py-1 text-[11px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>PDF</button>
                         <button onClick={() => setEditRep(r)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">Edit</button>
+                        <button onClick={() => rerunPre(r)} title="Re-run with a fresh crawl (keeps screenshots)" className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-bold text-slate-600">↻</button>
                       </>}
-                      {r.status === 'ready' && <button onClick={() => setEditRep(r)} className="rounded-lg border border-orange-300 px-2.5 py-1 text-[11px] font-bold text-orange-600">Review & upload</button>}
+                      {r.status === 'ready' && <>
+                        <button onClick={() => setEditRep(r)} className="rounded-lg border border-orange-300 px-2.5 py-1 text-[11px] font-bold text-orange-600">Review & upload</button>
+                        <button onClick={() => rerunPre(r)} title="Re-run with a fresh crawl (keeps screenshots)" className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-bold text-slate-600">↻</button>
+                      </>}
                       {['capturing', 'analyzing', 'rendering'].includes(r.status) && <span className="text-[11px] text-slate-400">working…</span>}
                       {r.status === 'draft' && <button onClick={() => setEditRep(r)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">Resume</button>}
                       <button onClick={() => delPre(r)} className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] text-slate-400 hover:text-red-500">🗑</button>
@@ -808,12 +833,10 @@ function PreSeoReportWizard({ projectId, project, onClose, onDone, editReport })
 
   const uploadShot = async (slot, file, label) => {
     const fd = new FormData(); fd.append('shot', file); fd.append('slot', slot); if (label) fd.append('label', label);
-    try {
-      const res = await fetch(`${API_BASE}/api/hr/projects/preseo/${rid}/shot`, { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem(TOKEN_KEY) || ''}` }, body: fd });
-      if (!res.ok) throw new Error('Upload failed');
-      const r = await hrApi(`/projects/preseo/${rid}`); setRep(r);
-      toast('Uploaded ✓');
-    } catch (e) { toast(e.message); }
+    const res = await fetch(`${API_BASE}/api/hr/projects/preseo/${rid}/shot`, { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem(TOKEN_KEY) || ''}` }, body: fd });
+    if (!res.ok) throw new Error('Upload failed');
+    const r = await hrApi(`/projects/preseo/${rid}`); setRep(r);
+    toast('Uploaded ✓');
   };
 
   const saveEdits = async (data) => {
@@ -822,15 +845,41 @@ function PreSeoReportWizard({ projectId, project, onClose, onDone, editReport })
     catch (e) { toast('Save failed: ' + (e.message || 'error')); return false; }
   };
 
-  const generate = async () => {
+  const [verify, setVerify] = useState(null); // { checks, notes, needsReview } when the popup is open
+
+  // Step 1 of generate: run the AI verification pass. If it flags anything,
+  // open the popup so the requester decides what to show. Otherwise go straight
+  // to the actual PDF generation.
+  const startGenerate = async (dataToSave) => {
     setGen(true);
-    try { await hrApi(`/projects/preseo/${rid}/generate`, { method: 'POST' }); const r = await hrApi(`/projects/preseo/${rid}`); setRep(r); setStep('done'); if (onDone) onDone(); }
-    catch (e) { toast(e.message); }
-    setGen(false);
+    try {
+      if (dataToSave) await saveEdits(dataToSave);
+      const v = await hrApi(`/projects/preseo/${rid}/verify`, { method: 'POST' });
+      if (v && v.needsReview) { setVerify(v); setGen(false); return; }
+      await doGenerate();
+    } catch (e) { toast('Verification failed: ' + (e.message || 'error')); setGen(false); }
   };
 
-  const title = editReport ? `Edit — ${editReport.businessName || editReport.domain}` : (step === 'done' ? 'Report ready' : 'Run a Pre-SEO Report');
-  const subtitle = editReport ? 'Upload a missing screenshot or replace one, then regenerate.'
+  // Step 2: apply any resolutions from the popup, then render the PDF. Stay in
+  // the pocket on success — the review step shows Preview + Download inline.
+  const doGenerate = async (resolutions) => {
+    setGen(true);
+    try {
+      if (resolutions) await hrApi(`/projects/preseo/${rid}/apply-verification`, { method: 'POST', body: JSON.stringify({ resolutions }) });
+      await hrApi(`/projects/preseo/${rid}/generate`, { method: 'POST' });
+      const r = await hrApi(`/projects/preseo/${rid}`); setRep(r); setVerify(null);
+      if (onDone) onDone();
+      toast('Report ready ✓');
+    } catch (e) { toast(e.message); }
+    setGen(false);
+  };
+  // Back-compat alias used by ReviewStep's generate button.
+  const generate = () => startGenerate();
+
+  const isComplete = rep && rep.status === 'complete';
+  const title = editReport ? `Edit — ${editReport.businessName || editReport.domain}` : (isComplete ? 'Report ready' : 'Run a Pre-SEO Report');
+  const subtitle = isComplete ? 'Your report is generated — preview or download it below. Edit and regenerate any time.'
+    : editReport ? 'Upload a missing screenshot or replace one, then regenerate.'
     : step === 'review' ? 'Review the analysis, upload tool screenshots, then generate.'
     : 'Fill everything once — details, auto-capture and any tool screenshots.';
 
@@ -895,20 +944,12 @@ function PreSeoReportWizard({ projectId, project, onClose, onDone, editReport })
           {(step === 'review') && (!rep || !rep.data) && (
             <div className="py-12 text-center text-slate-400 text-sm">Loading report…</div>
           )}
-
-          {step === 'done' && (
-            <div className="py-10 text-center">
-              <div className="text-4xl mb-2">✅</div>
-              <div className="text-[15px] font-extrabold text-[#050A1F]">Report generated</div>
-              <div className="text-[12px] text-slate-400 mt-1 mb-4">Your branded Pre-SEO Audit PDF is ready.</div>
-              <div className="flex gap-2 justify-center">
-                <a href={`${API_BASE}/api/hr/projects/preseo/${rid}/view?token=${encodeURIComponent(localStorage.getItem(TOKEN_KEY) || '')}`} target="_blank" rel="noreferrer" className="px-4 py-2.5 rounded-xl text-[13px] font-bold text-slate-600 bg-slate-100">Preview</a>
-                <a href={`${API_BASE}/api/hr/projects/preseo/${rid}/download?token=${encodeURIComponent(localStorage.getItem(TOKEN_KEY) || '')}`} className="px-6 py-2.5 rounded-xl text-[13px] font-extrabold text-white" style={{ background: '#FF6A00' }}>Download PDF</a>
-              </div>
-              <button onClick={onClose} className="mt-4 text-[12px] font-bold text-slate-400">Close</button>
-            </div>
-          )}
         </div>
+
+        {/* Pre-download AI verification popup — the requester decides what to show. */}
+        {verify && (
+          <VerifyDialog verify={verify} busy={gen} onCancel={() => setVerify(null)} onConfirm={(resolutions) => doGenerate(resolutions)} />
+        )}
 
         {(step === 'pick' || step === 'url') && (
           <div className="px-5 py-3 border-t border-slate-100 flex justify-between items-center">
@@ -923,7 +964,18 @@ function PreSeoReportWizard({ projectId, project, onClose, onDone, editReport })
 
 function ReviewStep({ rep, rid, onUpload, onSave, onGenerate, gen, editMode }) {
   const [d, setD] = useState(rep.data);
+  const [uploadingSlot, setUploadingSlot] = useState(null); // lock other uploads while one is in flight
   useEffect(() => { setD(rep.data); }, [rep]);
+  const complete = rep.status === 'complete';
+  const token = localStorage.getItem(TOKEN_KEY) || '';
+  // Wrap the upload so only one file uploads at a time (avoids slot mix-ups).
+  const doUpload = async (slot, file, label) => {
+    if (uploadingSlot) return;
+    setUploadingSlot(slot);
+    try { await onUpload(slot, file, label); }
+    catch (e) { toast(e.message || 'Upload failed'); }
+    finally { setUploadingSlot(null); }
+  };
   const shots = rep.shots || {};
   const uploadedCount = MANUAL_SLOTS.filter((m) => shots[m.slot] && shots[m.slot].source === 'upload').length;
   const imgUrl = (u) => (!u ? '' : /^https?:\/\//i.test(u) ? u : `${API_BASE}${u}`);
@@ -956,12 +1008,16 @@ function ReviewStep({ rep, rid, onUpload, onSave, onGenerate, gen, editMode }) {
       <div className="text-[11px] font-extrabold text-slate-400 uppercase mb-1">Upload tool screenshots</div>
       <div className="text-[10.5px] text-slate-400 mb-2 leading-snug">Claude reads each screenshot you upload and writes that section from what it shows. <b>Sections you don't upload are left out of the final PDF</b> — no empty boxes.</div>
       <div className="space-y-1.5 mb-3">
-        {MANUAL_SLOTS.map((m) => { const has = shots[m.slot] && shots[m.slot].source === 'upload'; return (
-          <div key={m.slot} className="flex items-center gap-2.5 border border-slate-100 rounded-xl px-2.5 py-2">
+        {MANUAL_SLOTS.map((m) => { const has = shots[m.slot] && shots[m.slot].source === 'upload'; const thisUploading = uploadingSlot === m.slot; const locked = uploadingSlot && !thisUploading; return (
+          <div key={m.slot} className="flex items-center gap-2.5 border border-slate-100 rounded-xl px-2.5 py-2" style={{ opacity: locked ? 0.45 : 1 }}>
             <div className="w-7 h-7 rounded-lg flex items-center justify-center text-[13px] flex-none" style={has ? { background: '#ecfdf3', color: '#16a34a' } : { background: '#fff7ed', color: '#FF4500' }}>{has ? '✓' : '＋'}</div>
             <div className="flex-1 min-w-0"><div className="text-[12px] font-bold text-[#050A1F] truncate">{m.label}</div><div className="text-[10.5px] text-slate-400 truncate">{m.hint}</div></div>
             {has && <img src={imgUrl(shots[m.slot].url)} className="w-11 h-7 object-cover rounded border border-slate-200" />}
-            <label className="text-[11px] font-extrabold cursor-pointer whitespace-nowrap" style={{ color: has ? '#2563eb' : '#FF4500' }}>{has ? 'Replace' : 'Upload'}<input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files[0] && onUpload(m.slot, e.target.files[0], m.label)} /></label>
+            {thisUploading ? (
+              <span className="text-[11px] font-extrabold text-slate-400 whitespace-nowrap">Uploading…</span>
+            ) : (
+              <label className={`text-[11px] font-extrabold whitespace-nowrap ${locked ? 'cursor-not-allowed text-slate-300' : 'cursor-pointer'}`} style={locked ? {} : { color: has ? '#2563eb' : '#FF4500' }}>{has ? 'Replace' : 'Upload'}<input type="file" accept="image/*" disabled={!!uploadingSlot} className="hidden" onChange={(e) => e.target.files[0] && doUpload(m.slot, e.target.files[0], m.label)} /></label>
+            )}
           </div>
         ); })}
         {/* AI-automatic section */}
@@ -972,11 +1028,95 @@ function ReviewStep({ rep, rid, onUpload, onSave, onGenerate, gen, editMode }) {
         </div>
       </div>
 
+      {/* When the PDF is ready, show preview + download right here — the pocket
+          stays open so the user isn't bounced to a success screen. */}
+      {complete && (
+        <div className="rounded-xl border-2 border-green-200 bg-green-50 p-3 mb-3">
+          <div className="flex items-center gap-2 mb-2"><span className="text-[15px]">✅</span><b className="text-[13px] text-[#050A1F]">Report ready</b><span className="text-[11px] text-slate-500">— verified and generated.</span></div>
+          <div className="flex gap-2">
+            <a href={`${API_BASE}/api/hr/projects/preseo/${rid}/view?token=${encodeURIComponent(token)}&v=${rep.completedAt || ''}`} target="_blank" rel="noreferrer" className="flex-1 text-center px-4 py-2.5 rounded-xl text-[12.5px] font-bold text-slate-700 bg-white border border-slate-200">Preview</a>
+            <a href={`${API_BASE}/api/hr/projects/preseo/${rid}/download?token=${encodeURIComponent(token)}`} className="flex-1 text-center px-4 py-2.5 rounded-xl text-[12.5px] font-extrabold text-white" style={{ background: '#FF6A00' }}>Download PDF</a>
+          </div>
+          <div className="text-[10.5px] text-slate-400 mt-2">Changed a screenshot or a detail? Edit above and hit “Re-verify & regenerate”.</div>
+        </div>
+      )}
+
       <div className="flex justify-between items-center sticky bottom-0 bg-white pt-2 pb-1 -mx-1 px-1">
         <div className="text-[11px] text-slate-400">{uploadedCount} of {MANUAL_SLOTS.length} uploaded · rest auto-handled</div>
         <div className="flex gap-2">
-          <button onClick={() => onSave(d)} className="text-[12px] font-bold text-slate-500 px-2">Save</button>
-          <button onClick={async () => { await onSave(d); onGenerate(); }} disabled={gen} className="px-5 py-2.5 rounded-xl text-[13px] font-extrabold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)', opacity: gen ? 0.6 : 1 }}>{gen ? 'Generating…' : editMode ? 'Save & regenerate →' : 'Generate PDF →'}</button>
+          <button onClick={() => onSave(d)} disabled={!!uploadingSlot} className="text-[12px] font-bold text-slate-500 px-2 disabled:text-slate-300">Save</button>
+          <button onClick={async () => { await onSave(d); onGenerate(); }} disabled={gen || !!uploadingSlot} className="px-5 py-2.5 rounded-xl text-[13px] font-extrabold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)', opacity: (gen || uploadingSlot) ? 0.6 : 1 }}>{gen ? 'Checking & generating…' : complete ? 'Re-verify & regenerate →' : editMode ? 'Verify & regenerate →' : 'Verify & generate PDF →'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Pre-download verification popup. The requester decides, per field, what the
+// report shows: keep what was found, use the AI's suggested correction, type
+// their own, or mark "no data found" (blank). "Let AI decide" defers to the AI
+// suggestion for a field (or all fields).
+function VerifyDialog({ verify, busy, onCancel, onConfirm }) {
+  const checks = (verify && verify.checks) || [];
+  const notes = (verify && verify.notes) || [];
+  // Seed each field's mode from the AI verdict: a confident 'fix' defaults to
+  // the AI suggestion, 'uncertain' defaults to blank, 'ok' keeps what was found.
+  const seed = {};
+  for (const c of checks) {
+    seed[c.id] = c.aiVerdict === 'fix' && c.aiSuggestion ? { mode: 'ai', value: c.aiSuggestion }
+      : c.aiVerdict === 'uncertain' ? { mode: 'blank', value: '' }
+      : { mode: 'keep', value: c.current || '' };
+  }
+  const [res, setRes] = useState(seed);
+  const setMode = (id, mode) => setRes((s) => ({ ...s, [id]: { ...s[id], mode } }));
+  const setVal = (id, value) => setRes((s) => ({ ...s, [id]: { ...s[id], value, mode: 'custom' } }));
+  const aiAll = () => setRes((s) => { const n = { ...s }; for (const c of checks) n[c.id] = { mode: 'ai', value: c.aiSuggestion || '' }; return n; });
+
+  const verdictPill = (v) => v === 'fix' ? { t: 'Looks wrong', bg: '#fef2f2', c: '#dc2626' } : v === 'uncertain' ? { t: 'Not sure', bg: '#fffbeb', c: '#b45309' } : { t: 'Looks OK', bg: '#f0fdf4', c: '#16a34a' };
+  const preview = (c) => { const r = res[c.id] || {}; if (r.mode === 'blank') return '(blank)'; if (r.mode === 'ai') return c.aiSuggestion || '(blank)'; if (r.mode === 'custom') return r.value || '(blank)'; return c.current || '(blank)'; };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[260] p-4" onClick={onCancel}>
+      <div className="bg-white rounded-2xl w-full max-w-[520px] max-h-[88vh] flex flex-col shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-slate-100 flex items-start justify-between">
+          <div>
+            <div className="text-[15px] font-extrabold text-[#050A1F]">Check the details before download</div>
+            <div className="text-[11.5px] text-slate-400 mt-0.5">Our AI reviewed the contact details for mistakes. Confirm what the report should show.</div>
+          </div>
+          <button onClick={aiAll} className="text-[11px] font-extrabold text-orange-600 whitespace-nowrap border border-orange-200 rounded-lg px-2.5 py-1.5 hover:bg-orange-50">🤖 Let AI decide all</button>
+        </div>
+
+        <div className="flex-1 overflow-auto px-5 py-4 space-y-3">
+          {notes.length > 0 && (
+            <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2.5 text-[11.5px] text-amber-800">
+              <b>Schema / consistency notes</b> <span className="text-amber-600">(shown in the report)</span>
+              <ul className="list-disc pl-4 mt-1 space-y-0.5">{notes.map((t, i) => <li key={i}>{t}</li>)}</ul>
+            </div>
+          )}
+          {checks.map((c) => { const r = res[c.id] || {}; const p = verdictPill(c.aiVerdict); return (
+            <div key={c.id} className="rounded-xl border border-slate-200 p-3">
+              <div className="flex items-center justify-between mb-1.5">
+                <b className="text-[12.5px] text-[#050A1F]">{c.label}</b>
+                <span className="text-[9.5px] font-extrabold rounded-full px-2 py-0.5" style={{ background: p.bg, color: p.c }}>{p.t}{c.aiConfidence != null ? ` · ${c.aiConfidence}%` : ''}</span>
+              </div>
+              {c.note && <div className="text-[11px] text-slate-500 mb-2">{c.note}</div>}
+              <div className="space-y-1.5 text-[11.5px]">
+                <label className="flex items-start gap-2 cursor-pointer"><input type="radio" checked={r.mode === 'keep'} onChange={() => setMode(c.id, 'keep')} className="accent-orange-500 mt-0.5" /><span className="flex-1">Keep what we found: <span className="text-slate-500">{c.current || '—'}</span></span></label>
+                {c.aiSuggestion && c.aiSuggestion !== c.current && (
+                  <label className="flex items-start gap-2 cursor-pointer"><input type="radio" checked={r.mode === 'ai'} onChange={() => setMode(c.id, 'ai')} className="accent-orange-500 mt-0.5" /><span className="flex-1">🤖 Use AI suggestion: <span className="text-slate-700 font-semibold">{c.aiSuggestion}</span></span></label>
+                )}
+                <label className="flex items-start gap-2 cursor-pointer"><input type="radio" checked={r.mode === 'custom'} onChange={() => setMode(c.id, 'custom')} className="accent-orange-500 mt-0.5" /><span className="flex-1 min-w-0">Enter it myself:
+                  <input value={r.mode === 'custom' ? (r.value || '') : ''} onChange={(e) => setVal(c.id, e.target.value)} onFocus={() => setMode(c.id, 'custom')} placeholder={c.id === 'address' || c.id === 'phone' ? 'Separate multiple with  |' : 'Type the correct value'} className="mt-1 w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-[11.5px]" /></span></label>
+                <label className="flex items-center gap-2 cursor-pointer"><input type="radio" checked={r.mode === 'blank'} onChange={() => setMode(c.id, 'blank')} className="accent-orange-500" /><span>No data found — leave blank</span></label>
+              </div>
+              <div className="text-[10.5px] text-slate-400 mt-2 pt-2 border-t border-slate-100">Report will show: <b className="text-slate-600">{preview(c)}</b></div>
+            </div>
+          ); })}
+        </div>
+
+        <div className="px-5 py-3 border-t border-slate-100 flex justify-between items-center">
+          <button onClick={onCancel} disabled={busy} className="text-[12.5px] font-bold text-slate-500">Cancel</button>
+          <button onClick={() => onConfirm(res)} disabled={busy} className="px-5 py-2.5 rounded-xl text-[13px] font-extrabold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)', opacity: busy ? 0.6 : 1 }}>{busy ? 'Generating…' : 'Confirm & generate PDF →'}</button>
         </div>
       </div>
     </div>

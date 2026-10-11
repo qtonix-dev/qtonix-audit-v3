@@ -31,10 +31,12 @@ async function run(reportId) {
     const openaiKey = s && s.getKey ? s.getKey('openai') : null;
     const psKey = s && s.getKey ? s.getKey('pagespeed') : null;
 
+    // Prefer runOptions (survives re-runs); fall back to the legacy data seed.
     const seed = report.data || {};
-    const sitemapUrl = seed._sitemapUrl || '';
-    const noSitemap = !!seed._noSitemap;
-    const accessMode = seed._accessMode || 'unsure';
+    const ro = report.runOptions || {};
+    const sitemapUrl = ro.sitemapUrl || seed._sitemapUrl || '';
+    const noSitemap = ro.noSitemap != null ? !!ro.noSitemap : !!seed._noSitemap;
+    const accessMode = ro.accessMode || seed._accessMode || 'unsure';
 
     await setStatus(reportId, { status: 'capturing', progress: 10, currentStep: 'Fetching the website' });
     let crawl = {};
@@ -54,7 +56,7 @@ async function run(reportId) {
     // Gather uploaded screenshots as base64 for Claude vision.
     const screenshots = await loadUploadedImages(merged);
 
-    const seededServices = Array.isArray(seed._services) ? seed._services : [];
+    const seededServices = Array.isArray(ro.services) ? ro.services : (Array.isArray(seed._services) ? seed._services : []);
     const sm = crawl.sitemap || {};
     const totalPages = sm.urlCount && sm.urlCount > 0 ? sm.urlCount : null;
     const meta = {
@@ -217,4 +219,170 @@ async function generate(reportId) {
   return { pdfPath, htmlPath, pdfUrl, htmlUrl };
 }
 
-module.exports = { run, generate, setStatus };
+// ---------------------------------------------------------------------------
+// Pre-download AI verification. Before the PDF is offered for download, we
+// re-read the factual fields in the report (business name, address(es), phone
+// number(s), email) against the raw crawl evidence and ask Claude to catch
+// obvious mistakes (e.g. an address that is actually marketing text, a name
+// that doesn't match the site). Each field comes back as a "check" the user
+// resolves in a popup: keep what's shown, use the AI's suggestion, type their
+// own, or mark "no data found" (blank). The user can also choose, per field or
+// for all, to let the AI decide.
+//
+// Returns { checks: [ { id, label, current, aiSuggestion, aiConfidence,
+//   aiVerdict: 'ok'|'fix'|'uncertain', note, options:[...] } ], summary }.
+// ---------------------------------------------------------------------------
+async function verify(reportId) {
+  const report = await PreSeoReport.findByPk(reportId);
+  if (!report || !report.data) throw new Error('Report not analysed yet.');
+  const data = report.data;
+  const crawl = report.crawl || {};
+  const nap = (crawl.nap) || {};
+  const sc = nap.schema || {};
+
+  // Current values as shown in the report (from the NAP table in data).
+  const cur = {
+    name: nap.name || '',
+    addresses: Array.isArray(nap.addresses) ? nap.addresses : [],
+    phones: Array.isArray(nap.phones) ? nap.phones : [],
+    emails: Array.isArray(nap.emails) ? nap.emails : [],
+  };
+
+  // Evidence we give the model to judge against — straight from the crawl, so
+  // the model checks the report values against what the site actually contains.
+  const evidence = {
+    domain: crawl.domain || report.domain,
+    businessNameOnReport: report.businessName || '',
+    schemaName: sc.schemaName || null,
+    pageName: sc.pageName || null,
+    schemaAddresses: sc.schemaAddresses || [],
+    pageAddresses: sc.pageAddresses || [],
+    schemaPhones: sc.schemaPhones || [],
+    pagePhones: sc.pagePhones || [],
+    reportName: cur.name,
+    reportAddresses: cur.addresses,
+    reportPhones: cur.phones,
+    reportEmails: cur.emails,
+    // a trimmed text sample so the model can sanity-check against real copy
+    bodyTextSample: (crawl.bodyTextSample || '').slice(0, 1500),
+  };
+
+  let ai = null;
+  try {
+    const s = await Settings.findOne();
+    const anthropicKey = s && s.getKey ? s.getKey('anthropic') : null;
+    const openaiKey = s && s.getKey ? s.getKey('openai') : null;
+    if (anthropicKey || openaiKey) {
+      const { callAI } = require('./aiVisibility');
+      const sys = 'You are a meticulous QA checker for a local-SEO audit report. You are given the business contact details (NAP) that a report will show, plus the raw evidence pulled from the website. Your job is to catch mistakes BEFORE the report is sent to a client. A value is WRONG if it is marketing/review copy rather than a real detail (e.g. an "address" that reads like "7 out of 5, award-winning brand of..."), if it mixes two things together, or if it clearly contradicts the site. Output ONLY JSON.';
+      const prompt = `Evidence from the website:\n${JSON.stringify(evidence, null, 2)}\n\nFor EACH field below, judge the value the report will show:\n- name (business name)\n- address (may be multiple)\n- phone (may be multiple)\n- email (may be multiple)\n\nReturn JSON exactly:\n{\n  "checks": [\n    { "id": "name|address|phone|email", "verdict": "ok|fix|uncertain", "suggestion": "the corrected value you recommend, or empty string if there is no reliable value", "confidence": 0-100, "note": "one short plain-English reason" }\n  ]\n}\nRules:\n- "ok": the shown value is a real, clean detail. suggestion = the clean value.\n- "fix": the shown value is wrong or dirty and you are confident of the correct value. suggestion = the corrected value.\n- "uncertain": you cannot tell what the real value is from the evidence. suggestion = "" (empty).\n- Never invent an address or phone that is not supported by the evidence.\n- Keep addresses as a single clean line each; if multiple, join with " | ".`;
+      const out = await callAI({ anthropicKey, openaiKey, system: sys, messages: [{ role: 'user', content: prompt }], maxTokens: 900 });
+      try { ai = JSON.parse((out || '').replace(/```json|```/g, '').trim()); } catch { ai = null; }
+    }
+  } catch (e) { console.error('[preSeo] verify AI failed:', e.message); }
+
+  const aiByField = {};
+  if (ai && Array.isArray(ai.checks)) for (const c of ai.checks) if (c && c.id) aiByField[c.id] = c;
+
+  // Rule-based safety net — runs even when the AI call is unavailable or returns
+  // "ok" for something that is clearly dirty. Catches the classic failure where
+  // an "address" is actually marketing/review copy.
+  const JUNK = /(out of \d|award[- ]?winning|\bbrand\b|reviews?\b|\bstars?\b|rating|global leader|money[- ]back|guarantee|subscribe|newsletter)/i;
+  const looksLikeAddress = (s) => /\d/.test(s) && /(street|st\.?|road|rd\.?|avenue|ave\.?|lane|drive|dr\.?|suite|floor|blvd|boulevard|way|court|unit|place|\b[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}\b|\b\d{5}\b)/i.test(s);
+  const ruleVerdict = (id, val) => {
+    if (!val) return { verdict: 'uncertain', note: 'Nothing was found for this field.' };
+    if (id === 'address') {
+      if (JUNK.test(val)) return { verdict: 'fix', note: 'The detected address looks like marketing or review text, not a real address.' };
+      if (!looksLikeAddress(val)) return { verdict: 'uncertain', note: "This doesn't look like a complete street address — please confirm." };
+    }
+    if (id === 'name' && JUNK.test(val)) return { verdict: 'fix', note: 'The business name may contain extra marketing words.' };
+    if (id === 'phone' && !/\d{6,}/.test(val.replace(/\D/g, ''))) return { verdict: 'uncertain', note: 'The phone number looks incomplete.' };
+    return { verdict: 'ok', note: '' };
+  };
+
+  // Build the resolved check list the popup renders.
+  const mk = (id, label, currentVal) => {
+    const a = aiByField[id] || {};
+    const rule = ruleVerdict(id, currentVal);
+    // The stricter verdict wins: 'fix' > 'uncertain' > 'ok'.
+    const rank = { fix: 2, uncertain: 1, ok: 0 };
+    const aiV = a.verdict || null;
+    const verdict = (rank[rule.verdict] >= rank[aiV] || !aiV) ? rule.verdict : aiV;
+    return {
+      id, label,
+      current: currentVal,
+      aiSuggestion: a.suggestion != null ? String(a.suggestion) : '',
+      aiConfidence: a.confidence != null ? a.confidence : null,
+      aiVerdict: verdict,
+      note: a.note || rule.note || '',
+    };
+  };
+
+  const checks = [
+    mk('name', 'Business name', cur.name),
+    mk('address', 'Address', cur.addresses.join(' | ')),
+    mk('phone', 'Phone number', cur.phones.join(' | ')),
+    mk('email', 'Email', cur.emails.join(' | ')),
+  ];
+
+  // Schema/brand consistency notes (informational — surfaced in the popup too).
+  const notes = [];
+  if (!sc.hasOrgSchema) notes.push('No Organization/LocalBusiness schema found — contact details are not machine-readable.');
+  else if (!sc.napInSchema) notes.push('Schema present but it does not include the address or phone.');
+  if (sc.brandMismatch) notes.push(`Brand name mismatch: schema says "${sc.brandMismatch.schema}", the site shows "${sc.brandMismatch.page}".`);
+  if (sc.addressMismatch) notes.push('An address is shown on the site but missing from the schema.');
+  if (sc.addressValueMismatch) notes.push('The schema address does not match the address shown on the page.');
+
+  const needsReview = checks.some((c) => c.aiVerdict !== 'ok');
+  return { checks, notes, needsReview };
+}
+
+// Apply the user's resolved NAP values back onto the stored report data, then
+// (optionally) let the AI auto-fill anything the user left to "AI decide".
+// resolutions: { name:{mode,value}, address:{...}, phone:{...}, email:{...} }
+//   mode: 'keep' | 'ai' | 'custom' | 'blank'
+async function applyVerification(reportId, resolutions) {
+  const report = await PreSeoReport.findByPk(reportId);
+  if (!report || !report.data) throw new Error('Report not analysed yet.');
+  const crawl = report.crawl || {};
+  const nap = Object.assign({}, crawl.nap || {});
+  const multi = (v) => String(v || '').split('|').map((x) => x.trim()).filter(Boolean);
+
+  // Re-run verify so 'ai' / 'keep' modes have the AI suggestion + current value.
+  let v = null; try { v = await verify(reportId); } catch {}
+  const byId = {}; if (v) for (const c of v.checks) byId[c.id] = c;
+
+  const resolveField = (id) => {
+    const r = (resolutions && resolutions[id]) || { mode: 'keep' };
+    const c = byId[id] || {};
+    if (r.mode === 'blank') return '';
+    if (r.mode === 'custom') return r.value != null ? r.value : '';
+    if (r.mode === 'ai') return c.aiSuggestion || (r.value != null ? r.value : '') || c.current || '';
+    return c.current != null ? c.current : (r.value != null ? r.value : ''); // keep
+  };
+
+  nap.name = resolveField('name') || '';
+  nap.addresses = multi(resolveField('address'));
+  nap.phones = multi(resolveField('phone'));
+  nap.emails = multi(resolveField('email'));
+  nap.present = !!(nap.name || nap.addresses.length || nap.phones.length || nap.emails.length);
+
+  // Persist onto crawl.nap AND rebuild the NAP section in data so the report
+  // table/observations reflect the resolved values.
+  crawl.nap = nap;
+  report.crawl = crawl; report.changed('crawl', true);
+
+  try {
+    const { rebuildNapSection } = require('./preSeoAnalyze');
+    if (typeof rebuildNapSection === 'function') {
+      const data = JSON.parse(JSON.stringify(report.data));
+      rebuildNapSection(data, crawl);
+      report.data = data; report.changed('data', true);
+    }
+  } catch (e) { console.error('[preSeo] rebuild NAP failed:', e.message); }
+
+  await report.save();
+  return { ok: true, nap };
+}
+
+module.exports = { run, generate, setStatus, verify, applyVerification };

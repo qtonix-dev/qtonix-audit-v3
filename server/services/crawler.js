@@ -240,36 +240,97 @@ async function crawlHomepage(website) {
   const napPhones = [];
   const napEmails = [];
   const napAddresses = [];
+  // Source-tagged copies so we can compare what the SCHEMA says against what the
+  // visible PAGE (footer / contact block / tel: links) says, and flag mismatches.
+  const schemaNap = { names: [], phones: [], emails: [], addresses: [] };
+  const pageNap = { names: [], phones: [], emails: [], addresses: [] };
 
   // (1) Structured data
   for (const node of schemaNodes) {
     const types = [].concat(node['@type'] || []);
     const isOrg = types.some((t) => /organization|localbusiness|store|restaurant|corporation/i.test(String(t)));
-    if (isOrg && node.name && typeof node.name === 'string') napName.push(node.name.trim());
-    for (const key of ['telephone', 'phone']) if (node[key]) [].concat(node[key]).forEach((p) => { const v = normPhone(p); if (v) napPhones.push(v); });
-    if (node.email) [].concat(node.email).forEach((e) => napEmails.push(String(e).replace(/^mailto:/i, '').trim()));
-    if (node.address) [].concat(node.address).forEach((a) => { const v = fmtAddr(a); if (v) napAddresses.push(v); });
-    if (node.contactPoint) [].concat(node.contactPoint).forEach((cp) => { if (cp && cp.telephone) { const v = normPhone(cp.telephone); if (v) napPhones.push(v); } if (cp && cp.email) napEmails.push(String(cp.email).replace(/^mailto:/i, '').trim()); });
+    if (isOrg && node.name && typeof node.name === 'string') { napName.push(node.name.trim()); schemaNap.names.push(node.name.trim()); }
+    for (const key of ['telephone', 'phone']) if (node[key]) [].concat(node[key]).forEach((p) => { const v = normPhone(p); if (v) { napPhones.push(v); schemaNap.phones.push(v); } });
+    if (node.email) [].concat(node.email).forEach((e) => { const v = String(e).replace(/^mailto:/i, '').trim(); napEmails.push(v); schemaNap.emails.push(v); });
+    if (node.address) [].concat(node.address).forEach((a) => { const v = fmtAddr(a); if (v) { napAddresses.push(v); schemaNap.addresses.push(v); } });
+    if (node.contactPoint) [].concat(node.contactPoint).forEach((cp) => { if (cp && cp.telephone) { const v = normPhone(cp.telephone); if (v) { napPhones.push(v); schemaNap.phones.push(v); } } if (cp && cp.email) { const v = String(cp.email).replace(/^mailto:/i, '').trim(); napEmails.push(v); schemaNap.emails.push(v); } });
   }
 
   // (2) tel: / mailto: links (reliable, author-intended contact points)
-  $('a[href^="tel:"]').each((_, el) => { const v = normPhone(decodeURIComponent(($(el).attr('href') || '').replace(/^tel:/i, ''))); if (v) napPhones.push(v); });
-  $('a[href^="mailto:"]').each((_, el) => { const e = ($(el).attr('href') || '').replace(/^mailto:/i, '').split('?')[0].trim(); if (e) napEmails.push(e); });
+  $('a[href^="tel:"]').each((_, el) => { const v = normPhone(decodeURIComponent(($(el).attr('href') || '').replace(/^tel:/i, ''))); if (v) { napPhones.push(v); pageNap.phones.push(v); } });
+  $('a[href^="mailto:"]').each((_, el) => { const e = ($(el).attr('href') || '').replace(/^mailto:/i, '').split('?')[0].trim(); if (e) { napEmails.push(e); pageNap.emails.push(e); } });
 
   // (3) Footer-only fallbacks (footer is where NAP usually lives; avoids pulling
   // review text / marketing copy from the body).
-  if (!napPhones.length) { const m = footerText.match(/(\+?\d[\d\s().-]{7,}\d)/g) || []; m.forEach((p) => { const v = normPhone(p); if (v) napPhones.push(v); }); }
-  if (!napEmails.length) { const m = (footerText + ' ' + html).match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi) || []; m.forEach((e) => { if (!/example\.|sentry|wixpress|\.png|\.jpg/i.test(e)) napEmails.push(e); }); }
+  if (!napPhones.length) { const m = footerText.match(/(\+?\d[\d\s().-]{7,}\d)/g) || []; m.forEach((p) => { const v = normPhone(p); if (v) { napPhones.push(v); pageNap.phones.push(v); } }); }
+  if (!napEmails.length) { const m = (footerText + ' ' + html).match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi) || []; m.forEach((e) => { if (!/example\.|sentry|wixpress|\.png|\.jpg/i.test(e)) { napEmails.push(e); pageNap.emails.push(e); } }); }
+  // Address extraction. A real address = street-number + street word, and a
+  // postal code or country/city tail; marketing/review sentences are rejected.
+  const JUNK = /(out of 5|award[- ]?winning|\bbrand\b|reviews?\b|\bstars?\b|rating|trusted|global leader|★|money[- ]back|guarantee|subscribe|newsletter|cookie|privacy|terms|all rights reserved)/i;
+  const POSTAL = /(\b[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}\b|\b\d{5}(-\d{4})?\b|\b[A-Z]\d[A-Z]\s?\d[A-Z]\d\b)/; // UK, US ZIP, Canada
+  // Street number may be a range ("167-169") and have an optional unit prefix.
+  const STREET = /\d{1,5}(?:[-–]\d{1,5})?\s+[A-Za-z0-9][\w .,'’\-]{3,60}?\b(street|st\.?|road|rd\.?|avenue|ave\.?|lane|ln\.?|drive|dr\.?|suite|ste\.?|floor|fl\.?|blvd|boulevard|way|court|ct\.?|unit|place|pl\.?)\b/i;
+  const CITYCOUNTRY = /\b(usa|u\.s\.a|united states|uk|u\.k|united kingdom|canada|london|miami|montreal|florida|quebec|qc)\b/i;
+  const addFrom = (text) => {
+    if (!text) return;
+    const t = text.replace(/\s+/g, ' ').trim();
+    if (!t || JUNK.test(t)) return;
+    const sm = t.match(STREET);
+    if (!sm) return;
+    const start = t.indexOf(sm[0]);
+    let line = t.slice(start);
+    // Prefer cutting right AFTER a postal code (clean end of an address); else
+    // cut at the first phone number or a second street-number start.
+    const pm = line.match(POSTAL);
+    const isUsZip = pm && /^\d{5}(-\d{4})?$/.test(pm[0]);
+    if (pm && !isUsZip) {
+      // UK/Canada: postal code sits at the END — cut just after it, keeping a
+      // trailing country word ("… W1W 5PF, UK").
+      const after = line.slice(line.indexOf(pm[0]) + pm[0].length);
+      const tail = (after.match(/^[\s,]*([A-Za-z.]{2,20})/) || [])[1] || '';
+      line = line.slice(0, line.indexOf(pm[0]) + pm[0].length) + (/(usa|uk|canada|u\.s|u\.k|united)/i.test(tail) ? ', ' + tail.trim() : '');
+    } else {
+      // US ZIP comes before the city, OR no postal code — cut at the first phone
+      // number or a second street-number start so we keep the city/state/country.
+      const phoneCut = line.slice(1).search(/(\+?\d[\d().\-]{6,})/);
+      const secondStreet = line.slice(sm[0].length).search(/\b\d{1,5}\s+[A-Za-z].{0,20}\b(street|st\.?|road|rd\.?|avenue|ave\.?|drive|dr\.?|suite|floor|blvd|boulevard|way|court|unit|place)\b/i);
+      let cut = line.length;
+      if (phoneCut > 10) cut = Math.min(cut, phoneCut + 1);
+      if (secondStreet > 0) cut = Math.min(cut, sm[0].length + secondStreet);
+      line = line.slice(0, cut);
+    }
+    line = line.replace(/^[A-Za-z]{2,6}[:.]\s*/, '').replace(/[\s,·•|]+$/, '').replace(/\s{2,}/g, ' ').trim();
+    if (line.length > 120) line = line.slice(0, 120).trim();
+    if (line.length < 10) return;
+    if (!POSTAL.test(line) && !CITYCOUNTRY.test(line)) return;
+    if (JUNK.test(line)) return;
+    napAddresses.push(line);
+    pageNap.addresses.push(line);
+  };
+  // 1) semantic <address> tags, 2) tidy contact blocks, 3) footer fallback.
+  $('address, .footer-address, .address, .contact-info, .contact').each((_, el) => addFrom($(el).text()));
   if (!napAddresses.length) {
-    const m = footerText.match(/\d{1,5}\s+[A-Za-z][\w .,'\-]{5,55}?(street|st\b|road|rd\b|avenue|ave\b|lane|ln\b|drive|dr\b|suite|ste\b|floor|blvd|boulevard|way|court|ct\b|unit)\b[\w .,'\-]{0,40}/i);
-    if (m) napAddresses.push(m[0].replace(/\s{2,}/g, ' ').trim());
+    $('footer div, footer p, footer li, footer span').each((_, el) => { const t = $(el).text(); if (t && t.length <= 160) addFrom(t); });
   }
+  if (!napAddresses.length) footerText.split(/\s{2,}|·|•|\|/).forEach(addFrom);
+  // Dedupe addresses, keeping the LONGEST version when one is a prefix of another
+  // (handles the truncated-vs-full duplicate case).
+  const dedupeAddresses = (arr) => {
+    const cleaned = uniq(arr);
+    const out = [];
+    for (const a of cleaned.sort((x, y) => y.length - x.length)) {
+      const ak = a.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (out.some((b) => { const bk = b.toLowerCase().replace(/[^a-z0-9]/g, ''); return bk.includes(ak) || ak.includes(bk); })) continue;
+      out.push(a);
+    }
+    return out;
+  };
 
   const nap = {
     name: uniq(napName)[0] || (title ? (title.split(/[|\-–—]/).pop() || '').trim() : null) || null,
     phones: uniq(napPhones).slice(0, 5),
     emails: uniq(napEmails).slice(0, 5),
-    addresses: uniq(napAddresses).slice(0, 5),
+    addresses: dedupeAddresses(napAddresses).slice(0, 5),
   };
   nap.present = !!(nap.name || nap.phones.length || nap.emails.length || nap.addresses.length);
 
@@ -281,13 +342,48 @@ async function crawlHomepage(website) {
   const titleBrand = (title.split(/[|\-–—]/).pop() || '').trim();
   const footerBrandM = footerText.match(/(?:©|copyright)\s*\d{0,4}\s*([A-Za-z][A-Za-z .&'’]{2,40})/i);
   const footerBrand = footerBrandM ? footerBrandM[1].trim().replace(/\s+(all rights.*|inc\.?|ltd\.?|llc).*/i, '').trim() : '';
+  if (footerBrand) pageNap.names.push(footerBrand);
+  if (logoAlt) pageNap.names.push(logoAlt.trim());
   const brandCandidates = [titleBrand, ogSiteName, logoAlt, footerBrand].map((s) => String(s || '').trim()).filter((s) => s && s.length >= 2 && s.length <= 40);
   // Group by lowercased form; a case/spacing variant across sources is the flag.
   const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
   const byNorm = {};
   for (const b of brandCandidates) { const k = norm(b); (byNorm[k] = byNorm[k] || []).push(b); }
   const brandVariants = Object.values(byNorm).map((arr) => [...new Set(arr)]).filter((arr) => arr.length > 1);
-  const brand = { candidates: [...new Set(brandCandidates)], variants: brandVariants, primary: titleBrand || ogSiteName || footerBrand || '' };
+  const schemaBrand = uniq(schemaNap.names)[0] || '';
+
+  // ---- Schema vs page NAP mismatch detection. We compare what the structured
+  // data (JSON-LD) declares against what the human-visible page (footer, contact
+  // block, logo, title) actually shows. Three findings a report should surface:
+  //   • hasSchema      — is there any Organization/LocalBusiness schema at all?
+  //   • napInSchema    — does that schema actually carry name/phone/address?
+  //   • brandMismatch  — schema org name ≠ the brand shown in footer/logo/title
+  //   • addressMismatch— schema address absent while the page clearly shows one
+  //   • phoneMismatch  — schema phone absent while the page clearly shows one
+  const orgSchema = schemaNodes.some((n) => [].concat(n['@type'] || []).some((t) => /organization|localbusiness|store|restaurant|corporation/i.test(String(t))));
+  const soft = (s) => String(s || '').toLowerCase().replace(/\b(inc|ltd|llc|corp|co|the|company|limited)\b/g, '').replace(/[^a-z0-9]/g, '');
+  const sameName = (a, b) => { const x = soft(a), y = soft(b); return x && y && (x === y || x.includes(y) || y.includes(x)); };
+  const pageBrand = footerBrand || logoAlt || titleBrand || '';
+  let brandMismatch = null; // { schema, page } when they disagree
+  if (schemaBrand && pageBrand && !sameName(schemaBrand, pageBrand)) brandMismatch = { schema: schemaBrand, page: pageBrand };
+  const napSchemaFlags = {
+    hasOrgSchema: orgSchema,
+    napInSchema: !!(schemaNap.names.length || schemaNap.phones.length || schemaNap.addresses.length),
+    schemaName: schemaBrand || null,
+    pageName: pageBrand || null,
+    schemaAddresses: dedupeAddresses(schemaNap.addresses).slice(0, 5),
+    pageAddresses: dedupeAddresses(pageNap.addresses).slice(0, 5),
+    schemaPhones: uniq(schemaNap.phones).slice(0, 5),
+    pagePhones: uniq(pageNap.phones).slice(0, 5),
+    brandMismatch,
+    addressMismatch: !schemaNap.addresses.length && !!pageNap.addresses.length,
+    phoneMismatch: !schemaNap.phones.length && !!pageNap.phones.length,
+    // Address value mismatch: schema HAS an address but it doesn't match any page address.
+    addressValueMismatch: !!(schemaNap.addresses.length && pageNap.addresses.length) &&
+      !schemaNap.addresses.some((sa) => pageNap.addresses.some((pa) => { const x = soft(sa), y = soft(pa); return x && y && (x.includes(y) || y.includes(x)); })),
+  };
+  nap.schema = napSchemaFlags;
+  const brand = { candidates: [...new Set(brandCandidates)], variants: brandVariants, primary: titleBrand || ogSiteName || footerBrand || '', schemaName: schemaBrand || null, pageName: pageBrand || null, mismatch: brandMismatch };
 
   const ogImage = $('meta[property="og:image"]').attr('content') || '';
 

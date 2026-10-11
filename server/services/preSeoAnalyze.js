@@ -461,16 +461,63 @@ function napSection(f, meta) {
   }
   if (emails.length) rows.push([{ text: emails.length > 1 ? 'Emails' : 'Email', bold: true }, { text: emails.join(', ') }]);
 
+  // Schema vs page consistency flags (from crawler). These drive the
+  // "missing schema" / "mismatch" findings the report must highlight.
+  const sc = nap.schema || {};
+  const brand = f.brand || {};
+
   const missing = [!nap.name && 'business name', !addresses.length && 'address', !phones.length && 'phone number'].filter(Boolean);
-  const bullets = missing.length
-    ? [{ kind: 'high', title: 'Current Observation', badge: 'HIGH', list: [
-        `The following contact details are not clearly published on the site: ${missing.join(', ')}.`,
-        'Consistent name, address and phone (NAP) across the site and listings is an important local-SEO and trust signal — our team will add and standardise it.',
-      ] }]
-    : [{ kind: 'good', title: 'Current Observation', badge: 'GOOD', list: [
-        'Name, address and phone are published on the site.',
-        'We will make sure they match exactly across the site, Google Business Profile and all directory listings.',
-      ] }];
+
+  const bullets = [];
+
+  // 1) Core NAP presence.
+  if (missing.length) {
+    bullets.push({ kind: 'high', title: 'Current Observation', badge: 'HIGH', list: [
+      `The following contact details are not clearly published on the site: ${missing.join(', ')}.`,
+      'Consistent name, address and phone (NAP) across the site and listings is an important local-SEO and trust signal — our team will add and standardise it.',
+    ] });
+  } else {
+    bullets.push({ kind: 'good', title: 'Current Observation', badge: 'GOOD', list: [
+      'Name, address and phone are published on the site.',
+      'We will make sure they match exactly across the site, Google Business Profile and all directory listings.',
+    ] });
+  }
+
+  // 2) Structured-data (schema) NAP — missing or incomplete.
+  if (!sc.hasOrgSchema) {
+    bullets.push({ kind: 'high', title: 'Structured data (schema)', badge: 'HIGH', list: [
+      'No Organization / LocalBusiness schema was found on the site, so the business name, address and phone are not given to search engines in a machine-readable form.',
+      'Our team will add LocalBusiness / Organization schema carrying the exact name, address and phone so Google, Bing and AI tools read the contact details reliably.',
+    ] });
+  } else if (!sc.napInSchema) {
+    bullets.push({ kind: 'med', title: 'Structured data (schema)', badge: 'MEDIUM', list: [
+      'Schema markup is present, but it does not include the business address or phone — only partial contact information is given to search engines.',
+      'We will complete the schema with the full name, address and phone so the contact details are machine-readable.',
+    ] });
+  }
+
+  // 3) Schema address vs the address shown on the page (missing or mismatched).
+  if (sc.hasOrgSchema && sc.addressMismatch) {
+    bullets.push({ kind: 'high', title: 'Address not in schema', badge: 'HIGH', list: [
+      `An address is shown on the site${sc.pageAddresses && sc.pageAddresses.length ? ` (e.g. "${sc.pageAddresses[0]}")` : ''}, but it is missing from the structured data (schema).`,
+      'Search engines rely on schema for the official address — we will add it so the on-page address and the schema address match exactly.',
+    ] });
+  } else if (sc.addressValueMismatch) {
+    bullets.push({ kind: 'high', title: 'Address mismatch', badge: 'HIGH', list: [
+      `The address in the schema does not match the address shown on the page. Schema: "${(sc.schemaAddresses || [])[0] || '—'}". On page: "${(sc.pageAddresses || [])[0] || '—'}".`,
+      'A mismatch between the visible address and the schema address confuses search engines and hurts local trust — we will make them identical.',
+    ] });
+  }
+
+  // 4) Brand-name mismatch between the schema org name and the name shown
+  //    in the footer / logo / title (e.g. footer "Oil Chef" vs schema "Eco Friendly Chef Corp").
+  const bm = brand.mismatch || (sc.brandMismatch);
+  if (bm && bm.schema && bm.page) {
+    bullets.push({ kind: 'high', title: 'Brand name mismatch (schema vs site)', badge: 'HIGH', list: [
+      `The business name in the schema ("${bm.schema}") is different from the brand name shown on the site ("${bm.page}").`,
+      'Search engines and AI tools treat these as two different businesses. We will set one official name and use it identically in the schema, footer, logo and page titles.',
+    ] });
+  }
 
   return { num: '5.2', heading: 'Business Contact (NAP)', src: 'Name · Address · Phone', table: { cols: [{ label: 'Field', width: '26%' }, { label: 'Found on site' }], rows }, bullets };
 }
@@ -659,4 +706,20 @@ function findSection(data, num) {
   return null;
 }
 
-module.exports = { buildReportData, facts, refreshUploads };
+// Rebuild the Business Contact (NAP) section (5.2) in an existing report `data`
+// from a (possibly user-corrected) crawl object. Used by the pre-download
+// verification step so the resolved name/address/phone/email are reflected in
+// the report table and observations without re-running the whole analysis.
+function rebuildNapSection(data, crawl) {
+  const f = facts(crawl);
+  const fresh = napSection(f, {});
+  for (const ch of (data.chapters || [])) {
+    const sections = ch.sections || [];
+    for (let i = 0; i < sections.length; i++) {
+      if (sections[i] && sections[i].num === '5.2') { sections[i] = fresh; return data; }
+    }
+  }
+  return data;
+}
+
+module.exports = { buildReportData, facts, refreshUploads, rebuildNapSection };

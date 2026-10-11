@@ -388,13 +388,15 @@ router.post('/:id/preseo', guard, requireHrAdmin, async (req, res, next) => {
       projectId: project ? project.id : null, kind: String(b.reportType || 'pre_seo'), website: website.startsWith('http') ? website : 'https://' + website,
       domain, businessName: b.businessName || (project && project.customerName) || domain,
       createdById: act.id, createdByName: act.name || 'Qtonix', status: 'capturing', progress: 5,
-      // seed carries run options the runner reads before overwriting data.
-      data: {
-        _services: services,
-        _sitemapUrl: (b.sitemapUrl && String(b.sitemapUrl).trim()) || '',
-        _noSitemap: !!b.noSitemap,
-        _accessMode: ['share', 'coordinate', 'unsure'].includes(b.accessMode) ? b.accessMode : 'unsure',
+      // runOptions persists across re-runs (data gets overwritten by analysis).
+      runOptions: {
+        services,
+        sitemapUrl: (b.sitemapUrl && String(b.sitemapUrl).trim()) || '',
+        noSitemap: !!b.noSitemap,
+        accessMode: ['share', 'coordinate', 'unsure'].includes(b.accessMode) ? b.accessMode : 'unsure',
       },
+      // legacy seed (still read as a fallback by older runner paths)
+      data: { _services: services },
     });
     // fire-and-forget
     preSeoRunner.run(report.id).catch((e) => console.error('[preseo] run error:', e.message));
@@ -563,7 +565,46 @@ router.put('/preseo/:rid', guard, requireHrAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Re-run the audit: fresh crawl + analysis, KEEPING every screenshot already
+// uploaded (run() merges uploads over auto-captures). Run options (sitemap,
+// access mode) are preserved via runOptions.
+router.post('/preseo/:rid/rerun', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    // Keep uploaded shots; drop the auto-captured ones so they regenerate fresh.
+    const keptShots = {};
+    for (const [k, v] of Object.entries(r.shots || {})) if (v && v.source === 'upload') keptShots[k] = v;
+    r.shots = keptShots; r.changed('shots', true);
+    r.status = 'capturing'; r.progress = 5; r.currentStep = 'Re-running the audit'; r.error = null;
+    await r.save();
+    preSeoRunner.run(r.id).catch((e) => console.error('[preseo] rerun error:', e.message));
+    res.json({ ok: true, status: 'capturing' });
+  } catch (e) { next(e); }
+});
+
 // Generate the PDF from the current data.
+// Pre-download AI verification: catch mistakes (wrong address, dirty NAP, etc.)
+// and return per-field checks for the user to resolve in a popup.
+router.post('/preseo/:rid/verify', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    const result = await preSeoRunner.verify(r.id);
+    res.json(result);
+  } catch (e) { next(e); }
+});
+
+// Apply the user's resolutions from the verification popup to the stored data.
+router.post('/preseo/:rid/apply-verification', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    const out = await preSeoRunner.applyVerification(r.id, (req.body && req.body.resolutions) || {});
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
 router.post('/preseo/:rid/generate', guard, requireHrAdmin, async (req, res, next) => {
   try {
     const r = await PreSeoReport.findByPk(req.params.rid);
