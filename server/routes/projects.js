@@ -666,6 +666,7 @@ router.post('/:id/brandguide', guard, requireHrAdmin, async (req, res, next) => 
       createdById: act.id, createdByName: act.name || 'Qtonix', status: 'capturing', progress: 5,
       runOptions: {
         industry: String(b.industry || '').slice(0, 300),
+        whatTheySell: String(b.whatTheySell || '').slice(0, 1500),
         audiences: arr(b.audiences).slice(0, 6),
         postsPerMonth: Math.max(1, Math.min(60, Number(b.postsPerMonth) || 10)),
         platforms: arr(b.platforms).slice(0, 8),
@@ -768,8 +769,9 @@ router.post('/brandguide/:rid/image', guard, requireHrAdmin, shotUpload.single('
   } catch (e) { next(e); }
 });
 
-// Remove a previously-uploaded extra image by URL (only user uploads, not
-// site-pulled ones).
+// Remove an image by URL — works for BOTH user uploads and the photos the AI
+// pulled from the website. An uploaded photo is dropped from extraImages; a
+// site-pulled one is recorded in removedImages so a re-run keeps it out too.
 router.post('/brandguide/:rid/image/remove', guard, requireHrAdmin, async (req, res, next) => {
   try {
     const r = await PreSeoReport.findByPk(req.params.rid);
@@ -777,14 +779,21 @@ router.post('/brandguide/:rid/image/remove', guard, requireHrAdmin, async (req, 
     const url = String((req.body && req.body.url) || '');
     if (!url) return res.status(400).json({ error: 'url required.' });
     const ro = { ...(r.runOptions || {}) };
+    const wasUpload = (Array.isArray(ro.extraImages) ? ro.extraImages : []).some((i) => i.url === url);
     ro.extraImages = (Array.isArray(ro.extraImages) ? ro.extraImages : []).filter((i) => i.url !== url);
+    // Site-pulled photo → remember the removal so it stays out on re-run.
+    if (!wasUpload) {
+      ro.removedImages = Array.isArray(ro.removedImages) ? ro.removedImages : [];
+      if (!ro.removedImages.includes(url)) ro.removedImages.push(url);
+    }
     r.runOptions = ro; r.changed('runOptions', true);
     if (r.data && r.data.images) {
       const d = JSON.parse(JSON.stringify(r.data));
-      const strip = (arr) => (Array.isArray(arr) ? arr.filter((i) => !(i && i.uploaded && i.url === url)) : arr);
+      const strip = (arr) => (Array.isArray(arr) ? arr.filter((i) => !(i && i.url === url)) : arr);
       d.images.all = strip(d.images.all);
       d.images.lifestyle = strip(d.images.lifestyle);
       d.images.product = strip(d.images.product);
+      if (d.images.hero === url) d.images.hero = '';
       r.data = d; r.changed('data', true);
     }
     await r.save();
@@ -897,6 +906,47 @@ router.get('/brandguide/:rid/view', guard, requireHrAdmin, async (req, res, next
     if (r.htmlPath && fsSync.existsSync(r.htmlPath)) return res.sendFile(path.resolve(r.htmlPath));
     if (r.htmlUrl) return res.redirect(302, r.htmlUrl);
     return res.status(404).json({ error: 'Not ready.' });
+  } catch (e) { next(e); }
+});
+
+// --- Brand-guideline public share link (landscape viewer at /bg/:slug) -------
+function bgSlug(name) { return String(name || 'brand').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 40) || 'brand'; }
+router.post('/brandguide/:rid/share', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r || r.kind !== BG_KIND) return res.status(404).json({ error: 'Guideline not found.' });
+    if (!r.publicSlug) {
+      let slug = bgSlug(r.businessName || r.domain);
+      const exists = await PreSeoReport.findOne({ where: { publicSlug: slug } });
+      if (exists && exists.id !== r.id) slug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
+      r.publicSlug = slug;
+    }
+    r.publicEnabled = true; await r.save();
+    const base = await publicUrl.baseFor('reports', req);
+    res.json({ slug: r.publicSlug, url: `${base}/bg/${r.publicSlug}`, enabled: true });
+  } catch (e) { next(e); }
+});
+router.post('/brandguide/:rid/share/disable', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r || r.kind !== BG_KIND) return res.status(404).json({ error: 'Guideline not found.' });
+    r.publicEnabled = false; await r.save();
+    res.json({ enabled: false });
+  } catch (e) { next(e); }
+});
+router.get('/brandguide/:rid/share', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r || r.kind !== BG_KIND) return res.status(404).json({ error: 'Guideline not found.' });
+    const base = await publicUrl.baseFor('reports', req);
+    const views = Array.isArray(r.publicViews) ? r.publicViews : [];
+    res.json({
+      slug: r.publicSlug, enabled: !!r.publicEnabled,
+      url: r.publicSlug ? `${base}/bg/${r.publicSlug}` : null,
+      views, viewCount: views.filter((v) => v.type === 'view').length,
+      downloadCount: views.filter((v) => v.type === 'download').length,
+      lastViewedAt: views.length ? views[views.length - 1].at : null,
+    });
   } catch (e) { next(e); }
 });
 

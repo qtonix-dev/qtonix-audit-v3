@@ -99,9 +99,11 @@ h1.title{ font-size:34pt; font-weight:900; letter-spacing:-.5px; line-height:1.0
 .two .l{ width:4.3in; }
 .two .l img, .two .l .simg{ width:100%; height:3.3in; object-fit:cover; border-radius:8px; display:block; }
 .two .l .cap{ font-size:12pt; font-weight:700; margin-top:18px; line-height:1.45; color:var(--heading); }
-.two .r{ flex:1; display:flex; flex-direction:column; }
+/* plain block flow — WeasyPrint's flex-column + margin-top:auto caused the
+   positioning text to overlap the signature block, so we avoid it here */
+.two .r{ flex:1; }
 .two .r .lead2{ font-size:13pt; color:var(--heading); line-height:1.55; }
-.two .r .sig{ margin-top:18px; border-left:4px solid var(--brand); padding-left:16px; }
+.two .r .sig{ margin-top:22px; border-left:4px solid var(--brand); padding-left:16px; }
 .two .r .sig .k{ font-size:8.5pt; letter-spacing:2px; font-weight:800; color:var(--muted2); text-transform:uppercase; }
 .two .r .sig .v{ font-size:15pt; font-weight:900; color:var(--heading); margin-top:4px; }
 /* timeline (when the site gives history) */
@@ -114,7 +116,7 @@ h1.title{ font-size:34pt; font-weight:900; letter-spacing:-.5px; line-height:1.0
 .sbuild .k{ font-size:8.5pt; letter-spacing:2px; font-weight:800; color:var(--muted2); text-transform:uppercase; margin-bottom:10px; }
 .chips{ display:flex; flex-wrap:wrap; gap:8px; }
 .chips .chip2{ font-size:10.5pt; font-weight:700; color:var(--heading); background:var(--panel); border:1px solid var(--line); border-radius:999px; padding:7px 14px; }
-.sfacts{ display:flex; gap:14px; margin-top:auto; padding-top:22px; }
+.sfacts{ display:flex; gap:14px; margin-top:26px; }
 .sfact{ flex:1; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
 .sfact b{ display:block; font-size:19pt; font-weight:900; color:var(--brand); line-height:1; }
 .sfact span{ display:block; font-size:9.5pt; color:var(--muted); margin-top:6px; line-height:1.35; }
@@ -307,15 +309,18 @@ h1.title{ font-size:34pt; font-weight:900; letter-spacing:-.5px; line-height:1.0
 .rhythm b{ font-size:26pt; font-weight:900; color:var(--brand); white-space:nowrap; }
 .rhythm span{ font-size:11pt; color:rgba(255,255,255,.85); line-height:1.5; }
 
-/* seasonal calendar */
-.cal{ display:flex; gap:12px; margin-top:28px; }
-.cal .ph{ flex:1; background:#fff; border:1px solid var(--line); border-radius:8px; padding:16px; }
-.cal .ph .lab{ font-size:12pt; font-weight:800; color:var(--brand); }
-.cal .ph .per{ font-size:9pt; letter-spacing:1px; font-weight:700; color:var(--muted2); text-transform:uppercase; margin-top:2px; }
-.cal .ph p{ font-size:10pt; color:var(--muted); margin-top:8px; line-height:1.45; }
-.calrule{ background:var(--ink); color:#fff; border-radius:8px; padding:16px 22px; margin-top:18px; }
-.calrule .k{ font-size:10pt; letter-spacing:1px; font-weight:800; color:var(--brand); text-transform:uppercase; }
-.calrule p{ font-size:11pt; color:rgba(255,255,255,.85); margin-top:6px; line-height:1.5; }
+/* seasonal calendar — matches the reference: even cards, a brand top-rule, the
+   period as a brand-coloured eyebrow, a bold phase title, then the focus text */
+.cal{ display:flex; gap:18px; margin-top:30px; align-items:stretch; }
+.cal .ph{ flex:1; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+.cal .ph .bar{ height:4px; background:var(--brand); }
+.cal .ph .inner{ padding:18px 18px 20px; }
+.cal .ph .per{ font-size:8.5pt; letter-spacing:2px; font-weight:800; color:var(--brand); text-transform:uppercase; }
+.cal .ph .lab{ font-size:13pt; font-weight:800; color:var(--heading); margin-top:7px; }
+.cal .ph p{ font-size:10pt; color:var(--muted); margin-top:9px; line-height:1.5; }
+.calrule{ background:var(--ink); color:var(--onDark); border-radius:10px; padding:16px 22px; margin-top:22px; display:flex; align-items:center; gap:18px; }
+.calrule .k{ font-size:9pt; letter-spacing:2px; font-weight:800; color:var(--brand); text-transform:uppercase; white-space:nowrap; }
+.calrule p{ font-size:11pt; color:rgba(255,255,255,.88); line-height:1.5; margin:0; }
 
 /* checklist */
 .check{ display:flex; gap:40px; margin-top:24px; }
@@ -675,7 +680,7 @@ h1.title{ font-size:34pt; font-weight:900; letter-spacing:-.5px; line-height:1.0
   <div class="eyebrow">The content year</div>
   <h1 class="title">Plan ahead by season</h1>
   <div class="cal">
-    {{#each social.calendar}}<div class="ph"><div class="per">{{this.period}}</div><div class="lab">{{this.label}}</div><p>{{this.focus}}</p></div>{{/each}}
+    {{#each social.calendar}}<div class="ph"><div class="bar"></div><div class="inner"><div class="per">{{this.period}}</div><div class="lab">{{this.label}}</div><p>{{this.focus}}</p></div></div>{{/each}}
   </div>
   {{#if social.calendarRule}}<div class="calrule"><div class="k">Rule of thumb</div><p>{{social.calendarRule}}</p></div>{{/if}}
   <div class="foot"><span>{{report.business}} · Brand Guidelines · {{report.monthYear}}</span><span class="pb">Prepared by <b>Qtonix</b> · <span class="pg"></span></span></div>

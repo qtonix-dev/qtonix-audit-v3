@@ -1199,6 +1199,7 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, onStarted, choo
   const [projectList, setProjectList] = useState([]);
   useEffect(() => { if (chooseProject) hrApi('/projects').then((r) => setProjectList(r.projects || [])).catch(() => {}); }, [chooseProject]);
   const [industry, setIndustry] = useState('');
+  const [whatTheySell, setWhatTheySell] = useState('');
   const [audiences, setAudiences] = useState('');
   const [postsPerMonth, setPostsPerMonth] = useState(10);
   const [platforms, setPlatforms] = useState(['Instagram', 'Facebook', 'YouTube']);
@@ -1214,7 +1215,15 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, onStarted, choo
   const [rep, setRep] = useState(null);
   const [busy, setBusy] = useState(false);
   const [gen, setGen] = useState(false);
+  const [share, setShare] = useState(null);      // { url, enabled, viewCount, downloadCount }
+  const [shareCopied, setShareCopied] = useState(false);
   const token = localStorage.getItem(TOKEN_KEY) || '';
+
+  // Public share link for the finished guideline (landscape /bg/:slug viewer).
+  const loadShare = () => { if (rid) hrApi(`/projects/brandguide/${rid}/share`).then(setShare).catch(() => {}); };
+  const enableShare = async () => { try { const s = await hrApi(`/projects/brandguide/${rid}/share`, { method: 'POST' }); setShare((p) => ({ ...(p || {}), ...s })); } catch (e) { toast(e.message); } };
+  const disableShare = async () => { try { await hrApi(`/projects/brandguide/${rid}/share/disable`, { method: 'POST' }); setShare((p) => ({ ...(p || {}), enabled: false })); } catch (e) { toast(e.message); } };
+  const copyShare = () => { if (share && share.url) { try { navigator.clipboard.writeText(share.url); } catch {} setShareCopied(true); setTimeout(() => setShareCopied(false), 1500); } };
 
   useEffect(() => {
     if (!editReport) return;
@@ -1229,7 +1238,7 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, onStarted, choo
     try {
       const pid = projectSel || projectId || 'none';
       const r = await hrApi(`/projects/${pid}/brandguide`, { method: 'POST', body: JSON.stringify({
-        website: website.trim(), businessName: bizName, industry, audiences,
+        website: website.trim(), businessName: bizName, industry, whatTheySell, audiences,
         postsPerMonth: Number(postsPerMonth) || 10, platforms, cadence, peakSeason, tone, logoUrl: logoUrl.trim(),
       }) });
       // If the user picked a logo / cover file, upload it now the report exists.
@@ -1365,8 +1374,25 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, onStarted, choo
               )}
               <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Website URL *</label><input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://brand.com" className={fld} /><div className="text-[10.5px] text-slate-400 mt-1">We crawl this for the logo, real photos, colours and copy.</div></div>
               <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Brand / business name</label><input value={bizName} onChange={(e) => setBizName(e.target.value)} placeholder="Shown on the cover" className={fld} /></div>
-              <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Industry / what they sell</label><input value={industry} onChange={(e) => setIndustry(e.target.value)} placeholder="e.g. ultra-light hunting gear" className={fld} /></div>
-              <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Target audiences <span className="font-medium text-slate-300">· optional, comma-separated</span></label><input value={audiences} onChange={(e) => setAudiences(e.target.value)} placeholder="e.g. backcountry hunters, guides" className={fld} /></div>
+              {/* Key brand details — each in its own clear box so they're easy to fill */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 space-y-3">
+                <div className="text-[10.5px] font-extrabold text-slate-400 uppercase tracking-wide">Tell us about the brand <span className="font-medium normal-case tracking-normal text-slate-400">· the more you share, the more accurate the guideline</span></div>
+                <div className="rounded-lg border border-slate-200 bg-white p-3">
+                  <label className="block text-[11.5px] font-extrabold text-[#050A1F] mb-1">Industry</label>
+                  <div className="text-[10.5px] text-slate-400 mb-1.5">What field is the business in?</div>
+                  <input value={industry} onChange={(e) => setIndustry(e.target.value)} placeholder="e.g. Outdoor / hunting equipment" className={fld} />
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-white p-3">
+                  <label className="block text-[11.5px] font-extrabold text-[#050A1F] mb-1">What the customer sells <span className="font-medium text-slate-300">· products / services</span></label>
+                  <div className="text-[10.5px] text-slate-400 mb-1.5">List the main products or services, one idea per line is fine.</div>
+                  <textarea rows={3} value={whatTheySell} onChange={(e) => setWhatTheySell(e.target.value)} placeholder={"e.g.\nMotorized & non-motorized hauling carts\nWeather covers, panniers, RotoPax mounts\nHunting accessories & merch"} className={fld + ' resize-none leading-relaxed'} />
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-white p-3">
+                  <label className="block text-[11.5px] font-extrabold text-[#050A1F] mb-1">Target audience</label>
+                  <div className="text-[10.5px] text-slate-400 mb-1.5">Who buys from them? One per line or comma-separated.</div>
+                  <textarea rows={2} value={audiences} onChange={(e) => setAudiences(e.target.value)} placeholder={"e.g.\nBig-game hunters, guides & outfitters\nMilitary / veterans, backcountry adventurers"} className={fld + ' resize-none leading-relaxed'} />
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Posts per month</label><input type="number" min="1" max="60" value={postsPerMonth} onChange={(e) => setPostsPerMonth(e.target.value)} className={fld} /></div>
                 <div><label className="block text-[11.5px] font-extrabold text-slate-600 mb-1.5">Tone <span className="font-medium text-slate-300">· optional</span></label><input value={tone} onChange={(e) => setTone(e.target.value)} placeholder="e.g. rugged, honest" className={fld} /></div>
@@ -1416,13 +1442,7 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, onStarted, choo
           {step === 'review' && (!rep || !rep.data || !rep.data.report) && <div className="py-12 text-center text-slate-400 text-sm">Loading guideline…</div>}
 
           {isComplete && (
-            <div className="rounded-xl border-2 border-green-200 bg-green-50 p-3 mt-3">
-              <div className="flex items-center gap-2 mb-2"><span className="text-[15px]">✅</span><b className="text-[13px] text-[#050A1F]">Guideline generated</b></div>
-              <div className="flex gap-2">
-                <a href={`${API_BASE}/api/hr/projects/brandguide/${rid}/view?token=${encodeURIComponent(token)}&v=${rep.completedAt || ''}`} target="_blank" rel="noreferrer" className="flex-1 text-center px-4 py-2.5 rounded-xl text-[12.5px] font-bold text-slate-700 bg-white border border-slate-200">Preview</a>
-                <a href={`${API_BASE}/api/hr/projects/brandguide/${rid}/download?token=${encodeURIComponent(token)}`} className="flex-1 text-center px-4 py-2.5 rounded-xl text-[12.5px] font-extrabold text-white" style={{ background: '#FF6A00' }}>Download PDF</a>
-              </div>
-            </div>
+            <BGComplete rid={rid} rep={rep} token={token} share={share} loadShare={loadShare} onEnable={enableShare} onDisable={disableShare} onCopy={copyShare} copied={shareCopied} />
           )}
         </div>
 
@@ -1442,6 +1462,43 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, onStarted, choo
 }
 
 // Review step: shows key AI-written text + palette/logo, editable before generate.
+// The "guideline generated" panel: Preview + Download + a public shareable
+// link (landscape /bg/:slug viewer), mirroring the Pre-SEO report share flow.
+function BGComplete({ rid, rep, token, share, loadShare, onEnable, onDisable, onCopy, copied }) {
+  useEffect(() => { loadShare(); }, [rid]);
+  return (
+    <div className="rounded-xl border-2 border-green-200 bg-green-50 p-3 mt-3">
+      <div className="flex items-center gap-2 mb-2"><span className="text-[15px]">✅</span><b className="text-[13px] text-[#050A1F]">Guideline generated</b></div>
+      <div className="flex gap-2 mb-3">
+        <a href={`${API_BASE}/api/hr/projects/brandguide/${rid}/view?token=${encodeURIComponent(token)}&v=${rep.completedAt || ''}`} target="_blank" rel="noreferrer" className="flex-1 text-center px-4 py-2.5 rounded-xl text-[12.5px] font-bold text-slate-700 bg-white border border-slate-200">Preview</a>
+        <a href={`${API_BASE}/api/hr/projects/brandguide/${rid}/download?token=${encodeURIComponent(token)}`} className="flex-1 text-center px-4 py-2.5 rounded-xl text-[12.5px] font-extrabold text-white" style={{ background: '#FF6A00' }}>Download PDF</a>
+      </div>
+      {/* Shareable public link */}
+      <div className="rounded-lg bg-white border border-slate-200 p-3">
+        <div className="flex items-center justify-between mb-1.5">
+          <div className="text-[11.5px] font-extrabold text-slate-600">🔗 Shareable link <span className="font-medium text-slate-400">· for the client, no login</span></div>
+          {share && share.enabled && (share.viewCount != null) && <div className="text-[10.5px] text-slate-400">{share.viewCount} views · {share.downloadCount} downloads</div>}
+        </div>
+        {!(share && share.enabled) ? (
+          <button onClick={onEnable} className="w-full px-4 py-2.5 rounded-xl text-[12.5px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#E55B2A)' }}>Create shareable link</button>
+        ) : (
+          <>
+            <div className="flex gap-2">
+              <input readOnly value={share.url || ''} onFocus={(e) => e.target.select()} className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-[12px] text-slate-600 bg-slate-50" />
+              <button onClick={onCopy} className="px-3 py-2 rounded-lg text-[12px] font-bold text-white" style={{ background: copied ? '#16a34a' : '#FF6A00' }}>{copied ? 'Copied ✓' : 'Copy'}</button>
+            </div>
+            <div className="flex items-center justify-between mt-1.5">
+              <a href={share.url} target="_blank" rel="noreferrer" className="text-[11px] font-bold text-orange-600 hover:underline">Open link ↗</a>
+              <button onClick={onDisable} className="text-[11px] font-bold text-slate-400 hover:text-red-500">Disable link</button>
+            </div>
+            <div className="text-[10.5px] text-slate-400 mt-1.5">The link shows the deck fit-to-width (no distortion) with a Download button.</div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function BrandGuideReview({ rep, rid, onSave, onReplaceLogo, logoBusy, onReplaceCover, coverBusy, onAddImages, onRemoveImage, imgBusy }) {
   const [d, setD] = useState(rep.data);
   useEffect(() => { setD(rep.data); }, [rep]);
@@ -1478,7 +1535,8 @@ function BrandGuideReview({ rep, rid, onSave, onReplaceLogo, logoBusy, onReplace
           <div className="relative w-16 h-16 rounded-lg border border-slate-200 overflow-hidden flex-none group">
             <img src={imgUrl(it.url)} className="w-full h-full object-cover" />
             {it.uploaded && <span className="absolute top-0.5 left-0.5 text-[8px] font-extrabold bg-orange-600 text-white rounded px-1">YOURS</span>}
-            {it.uploaded && <button onClick={() => onRemoveImage(it.url)} className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/60 text-white text-[10px] leading-none opacity-0 group-hover:opacity-100" title="Remove">×</button>}
+            {/* any photo can be removed — uploaded ones and the ones AI found on the site */}
+            <button onClick={() => onRemoveImage(it.url)} className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/70 text-white text-[11px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100" title="Delete this photo">×</button>
           </div>
         );
         return (

@@ -782,4 +782,115 @@ function firstFromSrcset(srcset) {
   return String(srcset).split(',')[0].trim().split(/\s+/)[0] || '';
 }
 
-module.exports = { runTechnicalAudit, crawlHomepage, getPageSpeed, checkRobots, normaliseUrl, harvestBrandAssets };
+/**
+ * Multi-page crawl for the Brand Guideline: the homepage alone rarely has the
+ * real product photos or the full "what we sell / who we serve" story, so we
+ * also visit a handful of KEY pages (About, Products/Shop, Services, and a few
+ * individual product pages found in the nav + sitemap), harvest each page's
+ * images and text, and merge them. Product pages contribute PRODUCT-tagged
+ * images so the product slide uses genuine product shots.
+ *
+ * @param {string} website   site URL
+ * @param {object} home      the result of crawlHomepage(website)
+ * @returns {{ pages, mergedText, mergedH1s, mergedH2s, serviceSignals, images, productImages }}
+ */
+async function crawlKeyPages(website, home) {
+  const base = normaliseUrl(website);
+  const origin = base.origin;
+  const hostOf = (u) => { try { return new URL(u, origin).hostname; } catch { return ''; } };
+  const abs = (u) => { try { return new URL(u, origin).href.split('#')[0]; } catch { return ''; } };
+
+  // Classify a path so we know what a page is likely to contain.
+  const RX = {
+    product: /(product|shop|store|collection|catalog|item|buy|gear|equipment)/i,
+    about: /(about|our-story|story|who-we-are|company|mission)/i,
+    service: /(service|solution|what-we-do|offerings|features)/i,
+  };
+  const kindOfUrl = (u) => {
+    const p = (() => { try { return new URL(u, origin).pathname.toLowerCase(); } catch { return ''; } })();
+    if (RX.product.test(p)) return 'product';
+    if (RX.about.test(p)) return 'about';
+    if (RX.service.test(p)) return 'service';
+    return 'other';
+  };
+
+  // 1) Candidate URLs from the homepage's own links.
+  const $home = cheerio.load(home.html || '');
+  const candidates = new Map(); // url -> kind
+  $home('a[href]').each((_, el) => {
+    const href = $home(el).attr('href');
+    if (!href || /^(#|mailto:|tel:|javascript:)/i.test(href)) return;
+    const u = abs(href);
+    if (!u || hostOf(u) !== base.hostname) return;
+    if (u.replace(/\/$/, '') === base.href.replace(/\/$/, '') || u === origin + '/') return; // skip homepage
+    const k = kindOfUrl(u);
+    if (k === 'other') return;
+    if (!candidates.has(u)) candidates.set(u, k);
+  });
+
+  // 2) Add product/about/service URLs from the sitemap (covers nav gaps).
+  try {
+    const robots = await checkRobots(website).catch(() => ({ sitemapUrls: [] }));
+    const sm = await checkSitemap(website, robots || { sitemapUrls: [] });
+    for (const u of (sm.pageUrls || [])) {
+      const k = kindOfUrl(u);
+      if (k === 'other') continue;
+      if (hostOf(u) !== base.hostname) continue;
+      if (!candidates.has(u)) candidates.set(u, k);
+      if (candidates.size > 60) break;
+    }
+  } catch { /* sitemap optional */ }
+
+  // 3) Prioritise: a couple of about/service pages, then as many product pages
+  //    as the budget allows (products carry the images we care about most).
+  const byKind = (k) => [...candidates.entries()].filter(([, v]) => v === k).map(([u]) => u);
+  const pick = [
+    ...byKind('about').slice(0, 1),
+    ...byKind('service').slice(0, 2),
+    ...byKind('product').slice(0, 6),
+  ].slice(0, 8);
+
+  // 4) Fetch the chosen pages (bounded concurrency), harvest assets + text.
+  const pages = [];
+  const productImages = [];
+  const otherImages = [];
+  const textChunks = [];
+  const h1s = [];
+  const h2s = [];
+  const seenImg = new Set((home.ogImage ? [home.ogImage] : []));
+  await Promise.all(pick.map(async (u) => {
+    try {
+      const res = await fetchWithTimeout(u, 15000);
+      if (!res.ok) return;
+      const html = await res.text();
+      const $ = cheerio.load(html);
+      const kind = candidates.get(u) || 'other';
+      // text + headings for the AI
+      const $b = $('body').clone(); $b.find('script,style,noscript,nav,header,footer,svg').remove();
+      const txt = $b.text().replace(/\s+/g, ' ').trim();
+      if (txt) textChunks.push(`[${kind.toUpperCase()} — ${u}]\n${txt.slice(0, 1500)}`);
+      $('h1').each((_, el) => { const t = $(el).text().trim(); if (t) h1s.push(t); });
+      $('h2').each((_, el) => { const t = $(el).text().trim(); if (t) h2s.push(t); });
+      // images via the shared harvester, tagged product/lifestyle by page kind
+      const assets = harvestBrandAssets(html, res.url || u);
+      for (const img of (assets.images || [])) {
+        if (!img || !img.url || seenImg.has(img.url)) continue;
+        seenImg.add(img.url);
+        const tagged = { ...img, kind: kind === 'product' ? 'product' : (img.kind || 'lifestyle'), fromPage: u };
+        (kind === 'product' ? productImages : otherImages).push(tagged);
+      }
+      pages.push({ url: u, kind, title: $('title').first().text().trim() });
+    } catch { /* skip a failed page */ }
+  }));
+
+  return {
+    pages,
+    mergedText: textChunks.join('\n\n').slice(0, 6000),
+    mergedH1s: [...new Set(h1s)].slice(0, 20),
+    mergedH2s: [...new Set(h2s)].slice(0, 30),
+    images: [...productImages, ...otherImages],   // product first
+    productImages,
+  };
+}
+
+module.exports = { runTechnicalAudit, crawlHomepage, getPageSpeed, checkRobots, normaliseUrl, harvestBrandAssets, crawlKeyPages };

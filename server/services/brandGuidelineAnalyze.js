@@ -78,7 +78,10 @@ function pickImages(assets) {
  */
 async function buildGuidelineData(crawl, assets, meta, keys) {
   const business = meta.businessName || crawl.domain || 'the brand';
-  const siteText = (crawl.bodyTextSample || '').slice(0, 2500);
+  // Homepage text plus the extra text harvested from the key/product pages, so
+  // the AI writes from the WHOLE site (accurate products, audiences, story),
+  // not just the homepage.
+  const siteText = ((crawl.bodyTextSample || '') + '\n\n' + (crawl.multiPageText || '')).slice(0, 6000);
   const palette = buildPalette(assets, meta.colorOverrides);
   const images = pickImages(assets);
   const fonts = (meta.fontOverride && [meta.fontOverride]) || (assets.fonts && assets.fonts.length ? assets.fonts : ['Raleway']);
@@ -116,7 +119,8 @@ async function buildGuidelineData(crawl, assets, meta, keys) {
   // Shared context block for every prompt so the AI stays grounded.
   const ctx = `BRAND: ${business}
 WEBSITE: ${meta.website || crawl.domain}
-INDUSTRY / WHAT THEY SELL: ${meta.industry || 'infer from the site text'}
+INDUSTRY: ${meta.industry || 'infer from the site text'}
+WHAT THEY SELL (products/services, as described by the team): ${meta.whatTheySell || 'infer from the site'}
 TARGET AUDIENCES (if given): ${(meta.audiences || []).join('; ') || 'infer from the site'}
 TONE PREFERENCE: ${meta.tone || 'infer a fitting tone from the site'}
 PRODUCT / BRAND NAME AS WRITTEN: ${(crawl.brand && crawl.brand.primary) || business}

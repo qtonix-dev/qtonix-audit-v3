@@ -55,14 +55,39 @@ async function run(reportId) {
     try { crawl = await crawler.crawlHomepage(report.website); } catch (e) { console.error('[brandGuide] crawl failed:', e.message); }
     crawl.website = report.website; crawl.domain = report.domain;
 
-    await setStatus(reportId, { crawl, status: 'analyzing', progress: 45, currentStep: 'Harvesting images, colours and fonts' });
+    await setStatus(reportId, { crawl, status: 'analyzing', progress: 40, currentStep: 'Harvesting images, colours and fonts' });
     const assets = crawler.harvestBrandAssets(crawl.html || '', crawl.finalUrl || report.website);
+
+    // Multi-page crawl: visit About / Products / Services / product pages so the
+    // guideline has REAL product photos and accurate "what we sell / who we
+    // serve" copy, not just the homepage. Product-page images are tagged
+    // 'product' and lead the product pool; everything merges into the asset set.
+    let keyPages = { images: [], productImages: [], mergedText: '', mergedH1s: [], mergedH2s: [], pages: [] };
+    try {
+      await setStatus(reportId, { progress: 48, currentStep: 'Reading product & key pages' });
+      keyPages = await crawler.crawlKeyPages(report.website, crawl);
+    } catch (e) { console.error('[brandGuide] key-page crawl failed:', e.message); }
+    if (keyPages.images && keyPages.images.length) {
+      // Dedup against what the homepage already gave us.
+      const have = new Set((assets.images || []).map((i) => i.url));
+      const add = keyPages.images.filter((i) => i && i.url && !have.has(i.url));
+      assets.images = [...(assets.images || []), ...add];
+    }
+    // Feed the richer, multi-page text + headings to the AI writer.
+    crawl.multiPageText = keyPages.mergedText || '';
+    crawl.h1s = [...new Set([...(crawl.h1s || []), ...(keyPages.mergedH1s || [])])];
+    crawl.h2s = [...new Set([...(crawl.h2s || []), ...(keyPages.mergedH2s || [])])];
+    crawl.serviceSignals = [...new Set([...(crawl.serviceSignals || []), ...(keyPages.mergedH2s || [])])].slice(0, 80);
+
     // Merge any images the user uploaded on the review step — they take priority
     // (prepended) so the user's own photos lead the pool, over the site-pulled ones.
     const extraImages = Array.isArray(ro.extraImages) ? ro.extraImages.filter((i) => i && i.url) : [];
     if (extraImages.length) {
       assets.images = [...extraImages.map((i) => ({ url: i.url, alt: i.alt || '', kind: i.kind || 'lifestyle', uploaded: true })), ...(assets.images || [])];
     }
+    // Honour deletions: photos the user removed on the review step stay out.
+    const removedUrls = new Set(Array.isArray(ro.removedImages) ? ro.removedImages : []);
+    if (removedUrls.size) assets.images = (assets.images || []).filter((i) => !removedUrls.has(i.url));
 
     // User overrides from the wizard (optional).
     const colorOverrides = Array.isArray(ro.colorOverrides) && ro.colorOverrides.length ? ro.colorOverrides : null;
@@ -87,6 +112,7 @@ async function run(reportId) {
       businessName: report.businessName || report.domain,
       website: report.website,
       industry: ro.industry || '',
+      whatTheySell: ro.whatTheySell || '',
       audiences: Array.isArray(ro.audiences) ? ro.audiences : (ro.audiences ? String(ro.audiences).split(/[,;]/).map((x) => x.trim()).filter(Boolean) : []),
       postsPerMonth: Number(ro.postsPerMonth) || 10,
       platforms: Array.isArray(ro.platforms) && ro.platforms.length ? ro.platforms : ['Instagram', 'Facebook', 'YouTube'],

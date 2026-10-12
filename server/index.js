@@ -72,7 +72,7 @@ app.use(express.json({ limit: '20mb' }));
 const PATH_SURFACE = [
   { surface: 'careers', prefixes: ['/careers', '/jobs', '/task', '/onboarding', '/schedule'] },
   { surface: 'hrms', prefixes: ['/hr'] },
-  { surface: 'reports', prefixes: ['/r/', '/pr/'] },
+  { surface: 'reports', prefixes: ['/r/', '/pr/', '/bg/'] },
   // 'crm' owns everything else (the CRM SPA: /, /dashboard, /leads, /admin, …)
 ];
 function surfaceOfPath(p) {
@@ -94,7 +94,7 @@ app.use(async (req, res, next) => {
     // Candidate + report paths always belong to their own surfaces, on ANY host.
     const careersPrefixes = ['/careers', '/jobs', '/task', '/onboarding', '/schedule'];
     const isCareersPath = careersPrefixes.some((pre) => p === pre || p.startsWith(pre + '/'));
-    const isReportPath = p.startsWith('/r/') || p.startsWith('/pr/');
+    const isReportPath = p.startsWith('/r/') || p.startsWith('/pr/') || p.startsWith('/bg/');
 
     // Careers domain: its root serves the listing directly; a careers path stays;
     // anything else (an HRMS/CRM path) is redirected to where it belongs.
@@ -469,6 +469,8 @@ app.get('/careers/:token', (req, res) => servePublicCareersOrJob(req, res, '/car
 app.use('/', require('./routes/publicReports'));
 // Public shareable Pre-SEO report links (/pr/:slug), same trackable pattern.
 app.use('/', require('./routes/publicPreSeo'));
+// Public shareable Brand-Guideline links (/bg/:slug) — landscape PDF viewer.
+app.use('/', require('./routes/publicBrandGuide'));
 
 // Lightweight liveness probe — never touches the DB, so the platform can tell
 // the process is up even during a database blip and won't kill the container.

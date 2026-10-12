@@ -56,6 +56,20 @@ router.get('/pr/:slug/view', async (req, res) => {
   return res.status(404).send('Report not ready yet.');
 });
 
+// Inline PDF for the fit-to-width viewer (not counted as a download).
+router.get('/pr/:slug/pdf', async (req, res) => {
+  const r = await findShared(req.params.slug);
+  if (!r) return res.status(404).send('Report not available.');
+  res.set('Cache-Control', 'no-store');
+  if (r.pdfPath && fs.existsSync(r.pdfPath)) {
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', 'inline');
+    return res.sendFile(path.resolve(r.pdfPath));
+  }
+  if (r.pdfUrl) return res.redirect(302, r.pdfUrl);
+  return res.status(404).send('The report is not ready yet.');
+});
+
 router.get('/pr/:slug/download', async (req, res) => {
   const r = await findShared(req.params.slug);
   if (!r) return res.status(404).send('Report not available.');
@@ -84,14 +98,21 @@ function wrapperHtml(r) {
   .brand{font-weight:800;font-size:17px}.brand span{color:#FF6A00}
   .ttl{font-size:13px;color:#C9D8FF;font-weight:600}
   .dl{background:linear-gradient(90deg,#FF6A00,#FF4500);color:#fff;border:0;border-radius:9px;padding:10px 18px;font-weight:700;font-size:13px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
-  .frame{flex:1;background:#fff}
-  iframe{width:100%;height:100%;border:0;display:block}
+  .frame{flex:1;background:#525659;min-height:0}
+  iframe,object{width:100%;height:100%;border:0;display:block}
 </style></head><body>
 <header>
   <div><div class="brand">Qtonix<span>.</span></div><div class="ttl">${esc(r.businessName || r.domain)} — Pre-SEO Audit Report</div></div>
   <a class="dl" href="/pr/${esc(r.publicSlug)}/download">&#8595; Download PDF</a>
 </header>
-<div class="frame"><iframe title="report" src="/pr/${esc(r.publicSlug)}/view"></iframe></div>
+<div class="frame">
+  <!-- Embed the PDF fit-to-width so the fixed-size report scales to the screen
+       (the raw HTML is Letter-width and looked squashed on narrow screens). The
+       HTML view stays available as a fallback if the PDF can't be shown. -->
+  <object data="/pr/${esc(r.publicSlug)}/pdf#view=FitH&toolbar=1" type="application/pdf">
+    <iframe title="report" src="/pr/${esc(r.publicSlug)}/view"></iframe>
+  </object>
+</div>
 </body></html>`;
 }
 
