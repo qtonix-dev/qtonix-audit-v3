@@ -638,8 +638,10 @@ function bgViewModel(data) {
     }
     return out;
   };
-  const allLife = uniq([...(imgs.lifestyle || []), ...(imgs.all || [])]);
-  const allProd = uniq(imgs.product || []);
+  // User-uploaded photos lead the pool so the user's own choices are used first.
+  const uploadFirst = (arr) => [...arr].sort((a, b) => (b && b.uploaded ? 1 : 0) - (a && a.uploaded ? 1 : 0));
+  const allLife = uploadFirst(uniq([...(imgs.lifestyle || []), ...(imgs.all || [])]));
+  const allProd = uploadFirst(uniq(imgs.product || []));
   // Photos that are safe for the cover / grids (no baked-in promo text).
   const cleanLife = allLife.filter((i) => !looksLikeBanner(i));
   const banner = (imgs.all || []).concat(imgs.lifestyle || []).find(looksLikeBanner)

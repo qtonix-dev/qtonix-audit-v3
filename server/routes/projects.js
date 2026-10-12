@@ -733,6 +733,65 @@ router.post('/brandguide/:rid/cover', guard, requireHrAdmin, shotUpload.single('
   } catch (e) { next(e); }
 });
 
+// Add an extra IMAGE to a guideline's photo pool (on top of the ones pulled
+// from the site). `kind`: 'lifestyle' (general gallery/cover pool) or 'product'
+// (product page). Appended into data.images so it's used on the next render and
+// shown immediately in the review panel. Also remembered in runOptions so a
+// re-run keeps the user's uploads.
+router.post('/brandguide/:rid/image', guard, requireHrAdmin, shotUpload.single('image'), async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r || r.kind !== BG_KIND) return res.status(404).json({ error: 'Guideline not found.' });
+    if (!req.file) return res.status(400).json({ error: 'Image required.' });
+    const kind = String(req.body.kind || 'lifestyle').toLowerCase() === 'product' ? 'product' : 'lifestyle';
+    const { promoteLocal } = require('../services/preSeoStore');
+    const stored = await promoteLocal(`/uploads/${req.file.filename}`, `brandguide-${r.id}-img-${kind}-${req.file.filename}`);
+    const item = { url: stored.url, alt: String(req.body.alt || '').slice(0, 140), kind, uploaded: true };
+    // Persist the upload list on runOptions (survives a re-run).
+    const ro = { ...(r.runOptions || {}) };
+    ro.extraImages = Array.isArray(ro.extraImages) ? ro.extraImages : [];
+    ro.extraImages.push(item);
+    r.runOptions = ro; r.changed('runOptions', true);
+    // Reflect in the live data immediately so the preview/render picks it up.
+    if (r.data) {
+      const d = JSON.parse(JSON.stringify(r.data));
+      d.images = d.images || {};
+      d.images.all = Array.isArray(d.images.all) ? d.images.all : [];
+      d.images.lifestyle = Array.isArray(d.images.lifestyle) ? d.images.lifestyle : [];
+      d.images.product = Array.isArray(d.images.product) ? d.images.product : [];
+      d.images.all.push(item);
+      if (kind === 'product') d.images.product.push(item); else d.images.lifestyle.push(item);
+      r.data = d; r.changed('data', true);
+    }
+    await r.save();
+    res.json({ ok: true, url: stored.url, kind, item });
+  } catch (e) { next(e); }
+});
+
+// Remove a previously-uploaded extra image by URL (only user uploads, not
+// site-pulled ones).
+router.post('/brandguide/:rid/image/remove', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r || r.kind !== BG_KIND) return res.status(404).json({ error: 'Guideline not found.' });
+    const url = String((req.body && req.body.url) || '');
+    if (!url) return res.status(400).json({ error: 'url required.' });
+    const ro = { ...(r.runOptions || {}) };
+    ro.extraImages = (Array.isArray(ro.extraImages) ? ro.extraImages : []).filter((i) => i.url !== url);
+    r.runOptions = ro; r.changed('runOptions', true);
+    if (r.data && r.data.images) {
+      const d = JSON.parse(JSON.stringify(r.data));
+      const strip = (arr) => (Array.isArray(arr) ? arr.filter((i) => !(i && i.uploaded && i.url === url)) : arr);
+      d.images.all = strip(d.images.all);
+      d.images.lifestyle = strip(d.images.lifestyle);
+      d.images.product = strip(d.images.product);
+      r.data = d; r.changed('data', true);
+    }
+    await r.save();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 // Poll one guideline.
 router.get('/brandguide/:rid', guard, requireHrAdmin, async (req, res, next) => {
   try {

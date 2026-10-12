@@ -1274,6 +1274,28 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, onStarted, choo
     catch (e) { toast(e.message); }
     setLogoBusy(false);
   };
+  // Add extra photos to the image pool (kind: 'lifestyle' | 'product').
+  const [imgBusy, setImgBusy] = useState(false);
+  const addImages = async (files, kind = 'lifestyle') => {
+    if (!rid || !files || !files.length) return;
+    setImgBusy(true);
+    try {
+      for (const file of Array.from(files)) {
+        const fd = new FormData(); fd.append('image', file); fd.append('kind', kind);
+        const res = await fetch(`${API_BASE}/api/hr/projects/brandguide/${rid}/image`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd });
+        if (!res.ok) throw new Error('Upload failed');
+      }
+      const r = await hrApi(`/projects/brandguide/${rid}`); setRep(r); toast(`${files.length} photo${files.length > 1 ? 's' : ''} added ✓`);
+    } catch (e) { toast(e.message); }
+    setImgBusy(false);
+  };
+  const removeImage = async (url) => {
+    if (!rid || !url) return;
+    setImgBusy(true);
+    try { await hrApi(`/projects/brandguide/${rid}/image/remove`, { method: 'POST', body: JSON.stringify({ url }) }); const r = await hrApi(`/projects/brandguide/${rid}`); setRep(r); }
+    catch (e) { toast(e.message); }
+    setImgBusy(false);
+  };
 
   // poll while running
   useEffect(() => {
@@ -1389,7 +1411,7 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, onStarted, choo
           )}
 
           {step === 'review' && rep && rep.data && rep.data.report && (
-            <BrandGuideReview rep={rep} rid={rid} onReplaceLogo={replaceLogo} logoBusy={logoBusy} onReplaceCover={replaceCover} coverBusy={coverBusy} onSave={async (d) => { try { await hrApi(`/projects/brandguide/${rid}`, { method: 'PUT', body: JSON.stringify({ data: d }) }); toast('Saved ✓'); } catch (e) { toast(e.message); } }} />
+            <BrandGuideReview rep={rep} rid={rid} onReplaceLogo={replaceLogo} logoBusy={logoBusy} onReplaceCover={replaceCover} coverBusy={coverBusy} onAddImages={addImages} onRemoveImage={removeImage} imgBusy={imgBusy} onSave={async (d) => { try { await hrApi(`/projects/brandguide/${rid}`, { method: 'PUT', body: JSON.stringify({ data: d }) }); toast('Saved ✓'); } catch (e) { toast(e.message); } }} />
           )}
           {step === 'review' && (!rep || !rep.data || !rep.data.report) && <div className="py-12 text-center text-slate-400 text-sm">Loading guideline…</div>}
 
@@ -1420,7 +1442,7 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, onStarted, choo
 }
 
 // Review step: shows key AI-written text + palette/logo, editable before generate.
-function BrandGuideReview({ rep, rid, onSave, onReplaceLogo, logoBusy, onReplaceCover, coverBusy }) {
+function BrandGuideReview({ rep, rid, onSave, onReplaceLogo, logoBusy, onReplaceCover, coverBusy, onAddImages, onRemoveImage, imgBusy }) {
   const [d, setD] = useState(rep.data);
   useEffect(() => { setD(rep.data); }, [rep]);
   const f = d.foundation || {}; const pal = d.palette || []; const imgs = d.images || {};
@@ -1445,6 +1467,44 @@ function BrandGuideReview({ rep, rid, onSave, onReplaceLogo, logoBusy, onReplace
           <div className="text-[10.5px] text-slate-400 mt-1">Fills the whole cover &amp; thank-you page. Wide, high-res photo works best.</div>
         </div>
       </div>
+
+      {/* ---- Photo pool: site-pulled images + user uploads ---- */}
+      {(() => {
+        const life = [...(imgs.lifestyle || []), ...((imgs.all || []).filter((a) => a && a.kind !== 'product'))];
+        const seen = new Set(); const lifeU = [];
+        for (const i of life) { if (i && i.url && !seen.has(i.url)) { seen.add(i.url); lifeU.push(i); } }
+        const prod = (imgs.product || []).filter((i) => i && i.url);
+        const Thumb = ({ it }) => (
+          <div className="relative w-16 h-16 rounded-lg border border-slate-200 overflow-hidden flex-none group">
+            <img src={imgUrl(it.url)} className="w-full h-full object-cover" />
+            {it.uploaded && <span className="absolute top-0.5 left-0.5 text-[8px] font-extrabold bg-orange-600 text-white rounded px-1">YOURS</span>}
+            {it.uploaded && <button onClick={() => onRemoveImage(it.url)} className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/60 text-white text-[10px] leading-none opacity-0 group-hover:opacity-100" title="Remove">×</button>}
+          </div>
+        );
+        return (
+          <>
+            <div className="text-[11px] font-extrabold text-slate-400 uppercase mb-1.5">Photos <span className="font-normal normal-case text-slate-400">· pulled from the site — add your own too</span></div>
+            <div className="flex flex-wrap gap-2 mb-2">
+              {lifeU.map((it, i) => <Thumb key={i} it={it} />)}
+              <label className="w-16 h-16 rounded-lg border-2 border-dashed border-orange-200 flex flex-col items-center justify-center text-orange-500 cursor-pointer hover:bg-orange-50 flex-none">
+                <span className="text-lg leading-none">＋</span><span className="text-[8px] font-bold">{imgBusy ? '…' : 'Add'}</span>
+                <input type="file" accept="image/*" multiple disabled={imgBusy} className="hidden" onChange={(e) => { if (e.target.files.length) onAddImages(e.target.files, 'lifestyle'); e.target.value = ''; }} />
+              </label>
+            </div>
+            <div className="text-[10.5px] text-slate-400 mb-3">Used across the cover, contents, pillars, audiences and lifestyle pages. Your uploads are used first.</div>
+
+            <div className="text-[11px] font-extrabold text-slate-400 uppercase mb-1.5">Product photos <span className="font-normal normal-case text-slate-400">· optional — for the “What we offer” page</span></div>
+            <div className="flex flex-wrap gap-2 mb-2">
+              {prod.map((it, i) => <Thumb key={i} it={it} />)}
+              <label className="w-16 h-16 rounded-lg border-2 border-dashed border-orange-200 flex flex-col items-center justify-center text-orange-500 cursor-pointer hover:bg-orange-50 flex-none">
+                <span className="text-lg leading-none">＋</span><span className="text-[8px] font-bold">{imgBusy ? '…' : 'Add'}</span>
+                <input type="file" accept="image/*" multiple disabled={imgBusy} className="hidden" onChange={(e) => { if (e.target.files.length) onAddImages(e.target.files, 'product'); e.target.value = ''; }} />
+              </label>
+            </div>
+            <div className="text-[10.5px] text-slate-400 mb-3">{prod.length ? 'One photo is matched to each product.' : 'Optional — if left empty, product cards reuse the best site photo.'}</div>
+          </>
+        );
+      })()}
 
       {d.needsLogo && (
         <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-3 mb-3 text-[12px] text-amber-800">

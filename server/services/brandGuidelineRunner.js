@@ -57,6 +57,12 @@ async function run(reportId) {
 
     await setStatus(reportId, { crawl, status: 'analyzing', progress: 45, currentStep: 'Harvesting images, colours and fonts' });
     const assets = crawler.harvestBrandAssets(crawl.html || '', crawl.finalUrl || report.website);
+    // Merge any images the user uploaded on the review step — they take priority
+    // (prepended) so the user's own photos lead the pool, over the site-pulled ones.
+    const extraImages = Array.isArray(ro.extraImages) ? ro.extraImages.filter((i) => i && i.url) : [];
+    if (extraImages.length) {
+      assets.images = [...extraImages.map((i) => ({ url: i.url, alt: i.alt || '', kind: i.kind || 'lifestyle', uploaded: true })), ...(assets.images || [])];
+    }
 
     // User overrides from the wizard (optional).
     const colorOverrides = Array.isArray(ro.colorOverrides) && ro.colorOverrides.length ? ro.colorOverrides : null;
