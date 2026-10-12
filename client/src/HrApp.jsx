@@ -12363,35 +12363,79 @@ function ShiftsManager({ shifts, reload, setErr }) {
 }
 
 // Holidays manager (per-branch; '' = all branches).
+// Supports add, EDIT (click a holiday to load it into the form) and delete.
+// Changes here flow straight to the attendance calendar and the "Upcoming
+// holidays" widget, which both read the same /holidays list.
 function HolidaysManager({ holidays, branches, reload, setErr }) {
   const [f, setF] = useState({ name: '', date: '', branch: '' });
+  const [editId, setEditId] = useState(null); // holiday _id being edited, or null to add
+  const [busy, setBusy] = useState(false);
   const set = (o) => setF((s) => ({ ...s, ...o }));
+  const resetForm = () => { setF({ name: '', date: '', branch: '' }); setEditId(null); };
+
   const submit = async () => {
     if (!f.name.trim() || !f.date) { setErr('Holiday name and date are required.'); return; }
-    try { await hrApi('/holidays', { method: 'POST', body: JSON.stringify(f) }); setF({ name: '', date: '', branch: '' }); reload(); } catch (e) { setErr(e.message); }
+    setBusy(true);
+    try {
+      const body = JSON.stringify({ name: f.name.trim(), date: f.date, branch: f.branch });
+      if (editId) await hrApi(`/holidays/${editId}`, { method: 'PUT', body });
+      else await hrApi('/holidays', { method: 'POST', body });
+      resetForm(); reload();
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
   };
-  const del = async (h) => { if (!(await confirmDialog({ title: `Delete "${h.name}"?` }))) return; try { await hrApi(`/holidays/${h._id}`, { method: 'DELETE' }); reload(); } catch (e) { setErr(e.message); } };
+  const startEdit = (h) => { setEditId(h._id); setF({ name: h.name || '', date: String(h.date || '').slice(0, 10), branch: h.branch || '' }); };
+  const del = async (h) => {
+    if (!(await confirmDialog({ title: `Delete "${h.name}"?` }))) return;
+    try { await hrApi(`/holidays/${h._id}`, { method: 'DELETE' }); if (editId === h._id) resetForm(); reload(); } catch (e) { setErr(e.message); }
+  };
+
+  // Show the list ordered by date, split into upcoming and past so it reads
+  // "based on dates" at a glance.
+  const todayStr = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  const sorted = [...(holidays || [])].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const up = sorted.filter((h) => String(h.date) >= todayStr);
+  const past = sorted.filter((h) => String(h.date) < todayStr).reverse();
+  const fmt = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }); } catch { return d; } };
+
+  const Row = ({ h, dim }) => (
+    <div className={`flex items-center justify-between border rounded-lg px-3 py-2 group ${editId === h._id ? 'border-orange-300 bg-orange-50' : 'border-slate-100'}`}>
+      <button className="text-left flex-1" onClick={() => startEdit(h)} title="Click to edit">
+        <div className={`text-sm font-bold ${dim ? 'text-slate-400' : 'text-[#050A1F]'}`}>{h.emoji ? h.emoji + ' ' : ''}{h.name}</div>
+        <div className="text-[11px] text-slate-400">{fmt(h.date)} · {h.branch || 'All branches'}</div>
+      </button>
+      <span className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+        <IconBtn title="Edit" onClick={() => startEdit(h)}><Icon.Pencil size={14} /></IconBtn>
+        <IconBtn title="Delete" danger onClick={() => del(h)}><Icon.Trash size={14} /></IconBtn>
+      </span>
+    </div>
+  );
+
   return (
     <div className="grid md:grid-cols-2 gap-4">
       <div className="bg-white rounded-xl border border-slate-200 p-5">
-        <div className="text-sm font-bold text-[#050A1F] mb-3">Holiday list</div>
+        <div className="text-sm font-bold text-[#050A1F] mb-3">Holiday list <span className="text-[11px] font-normal text-slate-400">· click a holiday to edit</span></div>
         <div className="space-y-2">
-          {holidays.map((h) => (
-            <div key={h._id} className="flex items-center justify-between border border-slate-100 rounded-lg px-3 py-2 group">
-              <div><div className="text-sm font-bold text-[#050A1F]">{h.name}</div><div className="text-[11px] text-slate-400">{h.date} · {h.branch || 'All branches'}</div></div>
-              <span className="opacity-0 group-hover:opacity-100 transition"><IconBtn title="Delete" danger onClick={() => del(h)}><Icon.Trash size={14} /></IconBtn></span>
-            </div>
-          ))}
+          {up.length > 0 && <div className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wide mt-1 mb-1">Upcoming</div>}
+          {up.map((h) => <Row key={h._id} h={h} />)}
+          {past.length > 0 && <div className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wide mt-3 mb-1">Past</div>}
+          {past.map((h) => <Row key={h._id} h={h} dim />)}
           {holidays.length === 0 && <div className="text-slate-400 text-sm py-4 text-center">No holidays yet.</div>}
         </div>
       </div>
       <div className="bg-white rounded-xl border border-slate-200 p-5">
-        <div className="text-sm font-bold text-[#050A1F] mb-3">Add holiday</div>
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm font-bold text-[#050A1F]">{editId ? 'Edit holiday' : 'Add holiday'}</div>
+          {editId && <button onClick={resetForm} className="text-[11px] font-bold text-slate-400 hover:text-slate-600">+ Add new instead</button>}
+        </div>
         <div className="space-y-3">
           <SharedField label="Holiday name"><input className={inputCls} value={f.name} onChange={(e) => set({ name: e.target.value })} placeholder="e.g. Diwali" /></SharedField>
           <SharedField label="Date"><input type="date" className={inputCls} value={f.date} onChange={(e) => set({ date: e.target.value })} /></SharedField>
           <SharedField label="Applies to"><select className={inputCls} value={f.branch} onChange={(e) => set({ branch: e.target.value })}><option value="">All branches</option>{branches.map((b) => <option key={b._id} value={b.name}>{b.name}</option>)}</select></SharedField>
-          <div className="flex justify-end"><button onClick={submit} className="rounded-lg px-5 py-2.5 text-sm font-bold text-white" style={{ background: ORANGE }}>Add holiday</button></div>
+          <div className="flex justify-end gap-2">
+            {editId && <button onClick={resetForm} className="rounded-lg px-4 py-2.5 text-sm font-bold text-slate-500 border border-slate-200 hover:bg-slate-50">Cancel</button>}
+            <button onClick={submit} disabled={busy} className="rounded-lg px-5 py-2.5 text-sm font-bold text-white disabled:opacity-60" style={{ background: ORANGE }}>{busy ? 'Saving…' : (editId ? 'Save changes' : 'Add holiday')}</button>
+          </div>
         </div>
       </div>
     </div>
