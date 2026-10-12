@@ -4042,6 +4042,13 @@ router.post('/me/claims', requireHrAccess, async (req, res, next) => {
       .filter((a) => a && a.url).map((a) => ({ url: String(a.url), name: String(a.name || 'invoice'), ...(/^\d{4}-\d{2}-\d{2}$/.test(String(a.date || '')) ? { date: a.date } : {}) }))
       .slice(0, 20) : [];
     const firstAtt = attachments[0] || null;
+    // Two-step approval: a regular employee's claim is HR-reviewed first, then
+    // admin-approved. But an HR manager / admin raising their OWN claim can't
+    // sensibly HR-review themselves, so we auto-mark it HR-reviewed (reimbursable
+    // = claimed) and send it straight to the admin's approval queue. This is why
+    // an HR-raised claim no longer gets stuck at "Only an HR-reviewed claim can
+    // be approved".
+    const selfIsReviewer = canManagePeople(req);
     const row = await HrExpense.create({
       title, category: 'Reimbursement', amount, currency: 'INR',
       expenseDate: b.expenseDate || (firstAtt && firstAtt.date) || istDateStr(), branch: me.branch || 'Bhubaneswar',
@@ -4053,10 +4060,15 @@ router.post('/me/claims', requireHrAccess, async (req, res, next) => {
       invoiceName: (firstAtt && firstAtt.name) || String(b.invoiceName || '').trim() || null,
       attachments: attachments.length ? attachments : null,
       lineItems: lineItems && lineItems.length ? lineItems : null,
-      status: 'submitted', isClaim: true, claimedAmount: amount,
+      status: selfIsReviewer ? 'hr_approved' : 'submitted', isClaim: true, claimedAmount: amount,
+      ...(selfIsReviewer ? {
+        approvedAmount: amount,
+        hrReviewedById: me.id, hrReviewedByName: me.name, hrReviewedAt: new Date(),
+        hrReviewNotes: 'Auto-reviewed: raised by HR/Admin — sent directly for admin approval.',
+      } : {}),
       raisedById: me.id, raisedByKind: 'hr', raisedByName: me.name,
     });
-    hrLog(req, 'claim.raise', title);
+    hrLog(req, selfIsReviewer ? 'claim.raise_self_reviewed' : 'claim.raise', title);
     res.status(201).json(row.toJSON());
   } catch (e) { next(e); }
 });
