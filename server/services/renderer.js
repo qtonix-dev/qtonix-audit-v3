@@ -607,10 +607,17 @@ function bgViewModel(data) {
   // slightly brand-tinted charcoal (brand hue mixed into near-black).
   let dark = darkRaw;
   if (!dark || lum(dark) > 0.25) dark = mix('#1b1b1e', brand, 0.08); // tint charcoal with brand
-  // Light anchor / page background: the site's light colour if it's light
-  // enough, else a very soft tint of the brand (Pack-Wheel-style off-white).
+  // Light anchor / "sand" SWATCH colour — this is a BRAND colour pulled from the
+  // site and is NEVER altered here. The site's light colour if it's light enough,
+  // else a soft tint of the brand (Pack-Wheel-style off-white).
   let light = lightRaw;
   if (!light || lum(light) < 0.80) light = mix('#ffffff', brand, 0.05); // ~5% brand tint on white
+  // PAGE BACKGROUND only: a SUBTLE tone-down of the light colour — a hint darker
+  // and slightly warm-grey — so the deck surface sits a step below the light
+  // swatch/panels and they're distinguishable. The swatch itself (--sand) is
+  // untouched; we only nudge the surface behind it. Kept gentle so the swatch
+  // reads as a soft step up, never as a bright white block.
+  const pageBg = mix(light, '#9a958a', 0.10); // ~10% toward a warm grey = quiet background
   // Headings: a dark, brand-tinted ink that stays readable on the light bg.
   const heading = lum(brand) < 0.5 ? mix(dark, brand, 0.22) : dark;
   // Sub-headings / body-strong: slightly lighter than headings.
@@ -714,7 +721,7 @@ function bgViewModel(data) {
     size: (aiSpecs[i] && (aiSpecs[i].size || aiSpecs[i].ratio)) || d.size,
   }));
 
-  const creativeRulesList = (Array.isArray(social.creativeRules) && social.creativeRules.length)
+  let creativeRulesList = (Array.isArray(social.creativeRules) && social.creativeRules.length)
     ? social.creativeRules
     : [
         'Logo on every asset, in a corner, 8–10% of width.',
@@ -752,6 +759,62 @@ function bgViewModel(data) {
     ];
   }
 
+  // ---- HARD OVERFLOW SAFETY -------------------------------------------------
+  // The richer multi-page crawl made the AI write longer copy, which overran the
+  // fixed-size slides. Cap item counts and truncate over-long strings so every
+  // dense page fits inside its slide, above the footer, no matter what the AI
+  // returns. (The AI prompts also ask for shorter copy; this is the backstop.)
+  const clip = (s, n) => { s = String(s || '').trim(); return s.length > n ? s.slice(0, n - 1).replace(/[\s,;:.–—-]+$/, '') + '…' : s; };
+  // Content pillars: at most 4 cards; short desc + example.
+  pillarsList = pillarsList.slice(0, 4).map((p) => ({ ...p, title: clip(p.title, 46), desc: clip(p.desc, 150), example: p.example ? clip(p.example, 130) : '' }));
+  // Pre-publish checklist: at most 8 one-liners.
+  checklistList = checklistList.slice(0, 8).map((c) => clip(c, 150));
+  // Creative rules: at most 6 short bullets.
+  creativeRulesList = creativeRulesList.slice(0, 6).map((c) => clip(c, 130));
+  // Seasonal calendar: at most 5 cards; short focus text.
+  if (data.social && Array.isArray(data.social.calendar)) {
+    data = { ...data, social: { ...data.social,
+      calendar: data.social.calendar.slice(0, 5).map((c) => ({ period: clip(c.period, 28), label: clip(c.label, 34), focus: clip(c.focus, 240) })),
+      calendarRule: data.social.calendarRule ? clip(data.social.calendarRule, 170) : data.social.calendarRule,
+    } };
+  }
+  // Voice table: at most 5 rows; concise cells.
+  if (data.voice && Array.isArray(data.voice.voiceTable)) {
+    data = { ...data, voice: { ...data.voice,
+      voiceTable: data.voice.voiceTable.slice(0, 5).map((r) => ({ trait: clip(r.trait, 26), are: clip(r.are, 150), areNot: clip(r.areNot, 150) })),
+      voiceIntro: data.voice.voiceIntro ? clip(data.voice.voiceIntro, 200) : data.voice.voiceIntro,
+    } };
+  }
+  // Names & claims: cap the side lists so the narrow column can't run off-page.
+  if (data.voice && data.voice.namesClaims) {
+    const nc = data.voice.namesClaims;
+    data = { ...data, voice: { ...data.voice, namesClaims: { ...nc,
+      write: Array.isArray(nc.write) ? nc.write.slice(0, 6).map((w) => ({ write: clip(w.write, 48), never: clip(w.never, 70) })) : nc.write,
+      approvedClaims: Array.isArray(nc.approvedClaims) ? nc.approvedClaims.slice(0, 5).map((c) => clip(c, 70)) : nc.approvedClaims,
+      checkFirst: Array.isArray(nc.checkFirst) ? nc.checkFirst.slice(0, 5).map((c) => clip(c, 70)) : nc.checkFirst,
+    } } };
+  }
+  // Products: at most 3 cards, each at most 3 short bullets.
+  if (data.foundation && Array.isArray(data.foundation.products)) {
+    data = { ...data, foundation: { ...data.foundation,
+      products: data.foundation.products.slice(0, 3).map((p) => ({ ...p,
+        name: clip(p.name, 40), tag: clip(p.tag, 44),
+        points: Array.isArray(p.points) ? p.points.slice(0, 3).map((b) => clip(b, 95)) : p.points,
+      })),
+    } };
+  }
+  // Audiences / pillars on the foundation pages: keep descriptions tight too.
+  if (data.foundation && Array.isArray(data.foundation.audiences)) {
+    data = { ...data, foundation: { ...data.foundation,
+      audiences: data.foundation.audiences.slice(0, 4).map((a) => ({ ...a, name: clip(a.name, 48), desc: clip(a.desc, 150), line: a.line ? clip(a.line, 70) : a.line })),
+    } };
+  }
+  if (data.foundation && Array.isArray(data.foundation.pillars)) {
+    data = { ...data, foundation: { ...data.foundation,
+      pillars: data.foundation.pillars.slice(0, 4).map((p) => ({ ...p, title: clip(p.title, 40), text: clip(p.text, 130) })),
+    } };
+  }
+
   return {
     ...data,
     palette: pal,
@@ -759,6 +822,7 @@ function bgViewModel(data) {
     poolCount,
     specs, creativeRulesList, pillarsList, rhythmText, checklistList,
     brandCss: brand, brandDeep: shade(brand), darkCss: dark, lightCss: light, oliveCss: olive,
+    pageBgCss: pageBg,
     // brand-driven theme tokens consumed by the template :root
     headingCss: heading, subheadCss: subhead, accentCss: accent,
     panelCss: panel, mutedCss: muted, lineCss: line,

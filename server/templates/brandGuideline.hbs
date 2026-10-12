@@ -23,7 +23,7 @@
   --brand:{{brandCss}};
   --brand2:{{brandDeep}};
   --accent:{{accentCss}};
-  --ink:{{darkCss}}; --sand:{{lightCss}};
+  --ink:{{darkCss}}; --sand:{{lightCss}}; --bg:{{pageBgCss}};
   --heading:{{headingCss}}; --subhead:{{subheadCss}};
   --panel:{{panelCss}};
   --muted:{{mutedCss}}; --muted2:#9aa0a8; --line:{{lineCss}}; --line2:#efece4;
@@ -36,7 +36,7 @@ body{ font-family:'Raleway', Arial, sans-serif; color:var(--heading); font-size:
 @page{ size: 13.333in 7.5in; margin:0; }  /* 16:9 landscape slide */
 
 body{ counter-reset:slide; }
-.slide{ position:relative; width:13.333in; height:7.5in; padding:0.7in 0.85in; overflow:hidden; page-break-after:always; background:var(--sand); counter-increment:slide; }
+.slide{ position:relative; width:13.333in; height:7.5in; padding:0.7in 0.85in; overflow:hidden; page-break-after:always; background:var(--bg); counter-increment:slide; }
 /* auto page number in the footer — correct even when optional sections are skipped */
 .foot .pb .pg::before{ content:counter(slide); }
 .slide:last-child{ page-break-after:auto; }
@@ -153,13 +153,13 @@ h1.title{ font-size:34pt; font-weight:900; letter-spacing:-.5px; line-height:1.0
 .prod{ width:3.5in; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
 /* image sits in a fixed-size frame so it can never make the card wider than its
    border-box (a WeasyPrint quirk with width:100% raster images on bordered cards) */
-.prod .frame{ width:100%; height:2.0in; overflow:hidden; background:var(--line2); }
+.prod .frame{ width:100%; height:1.75in; overflow:hidden; background:var(--line2); }
 .prod .frame img, .prod .frame .pimg{ width:100%; height:100%; object-fit:cover; display:block; }
-.prod .pc{ padding:18px 20px 20px; width:100%; background:#fff; }
-.prod .pc h3{ font-size:14.5pt; font-weight:800; color:var(--brand); }
-.prod .pc .tag{ font-size:10pt; font-weight:700; color:var(--heading); margin:3px 0 12px; }
+.prod .pc{ padding:16px 18px 18px; width:100%; background:#fff; }
+.prod .pc h3{ font-size:13.5pt; font-weight:800; color:var(--brand); line-height:1.15; }
+.prod .pc .tag{ font-size:9.5pt; font-weight:700; color:var(--heading); margin:3px 0 10px; }
 .prod .pc ul{ list-style:none; }
-.prod .pc li{ font-size:10pt; color:var(--muted); padding-left:14px; position:relative; margin-bottom:6px; line-height:1.4; }
+.prod .pc li{ font-size:9.5pt; color:var(--muted); padding-left:13px; position:relative; margin-bottom:5px; line-height:1.35; }
 .prod .pc li:before{ content:"•"; position:absolute; left:0; color:var(--brand); font-weight:900; }
 .accnote{ margin-top:18px; font-size:10pt; color:var(--muted); }
 
@@ -198,8 +198,10 @@ h1.title{ font-size:34pt; font-weight:900; letter-spacing:-.5px; line-height:1.0
 /* ---------- colour in use ---------- */
 .ciu{ display:flex; gap:40px; margin-top:26px; }
 .ciu .l{ flex:1; }
-.ratio{ display:flex; height:1.5in; border-radius:6px; overflow:hidden; font-weight:800; }
-.ratio .a{ background:var(--sand); color:var(--ink); flex:6; display:flex; align-items:center; padding-left:20px; }
+.ratio{ display:flex; height:1.5in; border-radius:6px; overflow:hidden; font-weight:800; border:1px solid var(--line); }
+/* 60% light-neutral block — a border + slightly deeper sand so it never blends
+   into the (now toned-down) page background */
+.ratio .a{ background:var(--sand); color:var(--ink); flex:6; display:flex; align-items:center; padding-left:20px; border-right:1px solid var(--line); }
 .ratio .b{ background:var(--ink); color:#fff; flex:3; display:flex; align-items:center; padding-left:20px; }
 .ratio .c{ background:var(--brand); color:#fff; flex:1; display:flex; align-items:center; justify-content:center; }
 .ciu p{ font-size:11pt; color:var(--muted); margin-top:16px; line-height:1.5; }
@@ -255,9 +257,9 @@ h1.title{ font-size:34pt; font-weight:900; letter-spacing:-.5px; line-height:1.0
 .ppn div{ flex:1; } .ppn h4{ font-size:12pt; font-weight:800; } .ppn p{ font-size:10pt; color:var(--muted); margin-top:5px; line-height:1.45; }
 
 /* ---------- voice table ---------- */
-.vt{ width:100%; border-collapse:collapse; margin-top:22px; font-size:11pt; }
-.vt th{ background:var(--line2); text-align:left; padding:11px 13px; font-weight:800; border:1px solid var(--line); }
-.vt td{ padding:11px 13px; border:1px solid var(--line); vertical-align:top; }
+.vt{ width:100%; border-collapse:collapse; margin-top:18px; font-size:10pt; }
+.vt th{ background:var(--line2); text-align:left; padding:8px 12px; font-weight:800; border:1px solid var(--line); font-size:9.5pt; }
+.vt td{ padding:8px 12px; border:1px solid var(--line); vertical-align:top; line-height:1.35; }
 .vt td:first-child{ font-weight:700; width:18%; }
 
 /* before/after */
@@ -277,34 +279,34 @@ h1.title{ font-size:34pt; font-weight:900; letter-spacing:-.5px; line-height:1.0
 .nc th{ background:var(--line2); text-align:left; padding:9px 11px; font-weight:800; border:1px solid var(--line); }
 .nc td{ padding:9px 11px; border:1px solid var(--line); }
 .nc .side{ flex:1; }
-.nc .side .box{ background:#fff; border:1px solid var(--line); border-radius:8px; padding:16px 18px; margin-bottom:14px; }
-.nc .side .box .k{ font-size:10pt; letter-spacing:1px; font-weight:800; text-transform:uppercase; }
+.nc .side .box{ background:#fff; border:1px solid var(--line); border-radius:8px; padding:13px 15px; margin-bottom:12px; }
+.nc .side .box .k{ font-size:9pt; letter-spacing:1px; font-weight:800; text-transform:uppercase; }
 .nc .side .box.a .k{ color:var(--green); } .nc .side .box.b .k{ color:var(--brand2); }
-.nc .side .box p{ font-size:10.5pt; color:var(--ink); margin-top:7px; line-height:1.5; }
+.nc .side .box p{ font-size:9pt; color:var(--ink); margin-top:6px; line-height:1.4; }
 
 /* ---------- creative specs ----------
    Four aspect-ratio cards, evenly spaced on a shared baseline. Each frame is a
    fixed box inside its own column, centred, so they never overlap. */
-.cs{ display:flex; gap:26px; margin-top:34px; align-items:flex-end; }
+.cs{ display:flex; gap:26px; margin-top:26px; align-items:flex-end; }
 .cs .f{ flex:1; display:flex; flex-direction:column; align-items:center; text-align:center; }
 .cs .fr{ border:2px solid var(--ink); border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:17pt; font-weight:900; color:var(--ink); }
 .cs .f.orange .fr{ background:var(--brand); border-color:var(--brand); color:#fff; }
 .cs .f.sand .fr{ background:#fff; }
 .cs .f.dark .fr{ background:var(--ink); border-color:var(--ink); color:#fff; }
-.cs .f h4{ font-size:11.5pt; font-weight:800; margin-top:14px; }
-.cs .f p{ font-size:9.5pt; color:var(--muted); margin-top:3px; }
-.csrules{ display:flex; gap:40px; margin-top:34px; padding-top:20px; border-top:1px solid var(--line); font-size:10.5pt; color:var(--ink); }
-.csrules div{ flex:1; line-height:1.9; }
-.csrules .rc{ padding-left:16px; position:relative; }
+.cs .f h4{ font-size:10.5pt; font-weight:800; margin-top:14px; line-height:1.2; }
+.cs .f p{ font-size:9pt; color:var(--muted); margin-top:3px; }
+.csrules{ display:flex; gap:40px; margin-top:24px; padding-top:18px; border-top:1px solid var(--line); font-size:9.5pt; color:var(--ink); }
+.csrules div{ flex:1; }
+.csrules .rc{ padding-left:15px; position:relative; margin-bottom:9px; line-height:1.35; }
 .csrules .rc:before{ content:"•"; position:absolute; left:0; color:var(--brand); font-weight:900; }
 
 /* content pillars */
-.pillars{ display:flex; gap:14px; margin-top:28px; }
-.pil{ flex:1; background:#fff; border:1px solid var(--line); border-radius:8px; padding:18px; }
-.pil .pct{ font-size:28pt; font-weight:900; color:var(--brand); line-height:1; }
-.pil h4{ font-size:12pt; font-weight:800; margin-top:6px; }
-.pil p{ font-size:9.5pt; color:var(--muted); margin-top:5px; line-height:1.4; }
-.pil .eg{ font-size:9pt; color:var(--muted2); font-style:italic; margin-top:8px; }
+.pillars{ display:flex; gap:14px; margin-top:24px; align-items:stretch; }
+.pil{ flex:1; background:#fff; border:1px solid var(--line); border-radius:8px; padding:15px; }
+.pil .pct{ font-size:24pt; font-weight:900; color:var(--brand); line-height:1; }
+.pil h4{ font-size:11pt; font-weight:800; margin-top:6px; line-height:1.2; }
+.pil p{ font-size:9pt; color:var(--muted); margin-top:5px; line-height:1.38; }
+.pil .eg{ font-size:8.5pt; color:var(--muted2); font-style:italic; margin-top:7px; line-height:1.35; }
 .rhythm{ background:var(--ink); color:#fff; border-radius:8px; padding:18px 22px; margin-top:20px; display:flex; align-items:center; gap:24px; }
 .rhythm b{ font-size:26pt; font-weight:900; color:var(--brand); white-space:nowrap; }
 .rhythm span{ font-size:11pt; color:rgba(255,255,255,.85); line-height:1.5; }
@@ -314,20 +316,21 @@ h1.title{ font-size:34pt; font-weight:900; letter-spacing:-.5px; line-height:1.0
 .cal{ display:flex; gap:18px; margin-top:30px; align-items:stretch; }
 .cal .ph{ flex:1; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
 .cal .ph .bar{ height:4px; background:var(--brand); }
-.cal .ph .inner{ padding:18px 18px 20px; }
-.cal .ph .per{ font-size:8.5pt; letter-spacing:2px; font-weight:800; color:var(--brand); text-transform:uppercase; }
-.cal .ph .lab{ font-size:13pt; font-weight:800; color:var(--heading); margin-top:7px; }
-.cal .ph p{ font-size:10pt; color:var(--muted); margin-top:9px; line-height:1.5; }
-.calrule{ background:var(--ink); color:var(--onDark); border-radius:10px; padding:16px 22px; margin-top:22px; display:flex; align-items:center; gap:18px; }
-.calrule .k{ font-size:9pt; letter-spacing:2px; font-weight:800; color:var(--brand); text-transform:uppercase; white-space:nowrap; }
-.calrule p{ font-size:11pt; color:rgba(255,255,255,.88); line-height:1.5; margin:0; }
+.cal .ph .inner{ padding:14px 15px 16px; }
+.cal .ph .per{ font-size:8pt; letter-spacing:1.5px; font-weight:800; color:var(--brand); text-transform:uppercase; }
+.cal .ph .lab{ font-size:11.5pt; font-weight:800; color:var(--heading); margin-top:6px; line-height:1.2; }
+.cal .ph p{ font-size:8.5pt; color:var(--muted); margin-top:7px; line-height:1.4; }
+.calrule{ background:var(--ink); color:var(--onDark); border-radius:10px; padding:13px 20px; margin-top:18px; display:flex; align-items:center; gap:18px; }
+.calrule .k{ font-size:8.5pt; letter-spacing:1.5px; font-weight:800; color:var(--brand); text-transform:uppercase; white-space:nowrap; }
+.calrule p{ font-size:9.5pt; color:rgba(255,255,255,.88); line-height:1.4; margin:0; }
 
 /* checklist */
 .check{ display:flex; gap:40px; margin-top:24px; }
-.check .im{ width:3.2in; } .check .im img, .check .im .cimg{ width:100%; height:4.6in; object-fit:cover; border-radius:6px; background:var(--line2); display:block; }
+.check{ display:flex; gap:34px; margin-top:22px; }
+.check .im{ width:2.9in; } .check .im img, .check .im .cimg{ width:100%; height:4.6in; object-fit:cover; border-radius:6px; background:var(--line2); display:block; }
 .check .ls{ flex:1; }
-.check .ci{ display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--line); font-size:11.5pt; }
-.check .ci .tick{ width:22px; height:22px; border-radius:50%; border:2px solid var(--brand); color:var(--brand); display:flex; align-items:center; justify-content:center; font-size:11pt; font-weight:800; flex:none; }
+.check .ci{ display:flex; align-items:flex-start; gap:11px; padding:7px 0; border-bottom:1px solid var(--line); font-size:9.5pt; line-height:1.35; }
+.check .ci .tick{ width:18px; height:18px; border-radius:50%; border:2px solid var(--brand); color:var(--brand); display:flex; align-items:center; justify-content:center; font-size:9pt; font-weight:800; flex:none; margin-top:1px; }
 
 /* thank you */
 .ty{ background:var(--ink); color:#F5F1E8; padding:0; }
@@ -651,10 +654,10 @@ h1.title{ font-size:34pt; font-weight:900; letter-spacing:-.5px; line-height:1.0
   <div class="eyebrow">04 · Social Media</div>
   <h1 class="title">Creative specs</h1>
   <div class="cs">
-    <div class="f orange"><div class="fr" style="width:1.5in;height:1.88in">4:5</div>{{#with (lookup specs 0)}}<h4>{{this.name}}</h4><p>{{this.size}}</p>{{/with}}</div>
-    <div class="f sand"><div class="fr" style="width:1.7in;height:1.7in">1:1</div>{{#with (lookup specs 1)}}<h4>{{this.name}}</h4><p>{{this.size}}</p>{{/with}}</div>
-    <div class="f dark"><div class="fr" style="width:1.1in;height:1.96in">9:16</div>{{#with (lookup specs 2)}}<h4>{{this.name}}</h4><p>{{this.size}}</p>{{/with}}</div>
-    <div class="f sand"><div class="fr" style="width:2.6in;height:1.46in">16:9</div>{{#with (lookup specs 3)}}<h4>{{this.name}}</h4><p>{{this.size}}</p>{{/with}}</div>
+    <div class="f orange"><div class="fr" style="width:1.3in;height:1.63in">4:5</div>{{#with (lookup specs 0)}}<h4>{{this.name}}</h4><p>{{this.size}}</p>{{/with}}</div>
+    <div class="f sand"><div class="fr" style="width:1.5in;height:1.5in">1:1</div>{{#with (lookup specs 1)}}<h4>{{this.name}}</h4><p>{{this.size}}</p>{{/with}}</div>
+    <div class="f dark"><div class="fr" style="width:0.95in;height:1.69in">9:16</div>{{#with (lookup specs 2)}}<h4>{{this.name}}</h4><p>{{this.size}}</p>{{/with}}</div>
+    <div class="f sand"><div class="fr" style="width:2.3in;height:1.29in">16:9</div>{{#with (lookup specs 3)}}<h4>{{this.name}}</h4><p>{{this.size}}</p>{{/with}}</div>
   </div>
   <div class="csrules">
     <div>{{#each (half creativeRulesList 0)}}<div class="rc">{{this}}</div>{{/each}}</div>

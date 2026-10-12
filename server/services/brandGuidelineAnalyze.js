@@ -132,7 +132,7 @@ KEY HEADINGS ON THE SITE: ${headings || '(none captured)'}
 SERVICE / PRODUCT TERMS DETECTED: ${services || '(none captured)'}
 HOMEPAGE TEXT (excerpt): ${siteText}`;
 
-  const sys = 'You are a senior brand strategist writing a detailed, client-ready brand guideline. Write in clear, concrete, confident plain English in the BRAND\'S OWN voice, grounded ONLY in the brand context given — never invent facts, prices or stats not supported by the site. Match the brand\'s exact wording for product names. Make every section substantive and specific to THIS brand (no filler, no generic placeholders). Output ONLY valid JSON, no markdown fences, no commentary.';
+  const sys = 'You are a senior brand strategist writing a client-ready brand guideline that fits on fixed-size landscape slides. Write in clear, concrete, confident plain English in the BRAND\'S OWN voice, grounded ONLY in the brand context given — never invent facts, prices or stats not supported by the site. Match the brand\'s exact wording for product names. BE CONCISE: this is a slide deck, not a document. Every bullet, cell, pillar and checklist item must be SHORT (one line each) or it will overflow the slide. Prefer punchy fragments over full paragraphs. No filler, no generic placeholders. Output ONLY valid JSON, no markdown fences, no commentary.';
 
   // --- Call 1: Brand foundation -------------------------------------------
   const foundationPrompt = `${ctx}
@@ -146,10 +146,10 @@ Write the BRAND FOUNDATION. Return JSON exactly:
   "positioning": "one clear positioning sentence (what they do, for whom)",
   "signatureLine": "the one line to repeat everywhere",
   "standForHeadline": "a bold 1-sentence statement of what the brand stands for",
-  "pillars": [ {"title":"2-4 word pillar","text":"1 sentence"} x4 — the four things the brand always says ],
+  "pillars": [ {"title":"2-4 word pillar","text":"1 short sentence (<=18 words)"} EXACTLY 4 — the four things the brand always says ],
   "proofPoints": [ {"stat":"a SHORT metric or value, 1-3 words max, e.g. '<20 lb', 'Lifetime', '200 lb', '10-30 mi' — NOT a product name or a phrase","label":"what it means, one short line"} x3-6 — ONLY hard facts/numbers supported by the site. If the site has no real numbers, return [] rather than inventing or using product names as stats ],
-  "products": [ {"name":"product/service name","tag":"short qualifier","points":["bullet", ...]} x1-3 — the product or service family ],
-  "audiences": [ {"name":"audience","desc":"1 sentence","line":"a short rallying line in quotes"} x3-4 — who they build/sell for ]
+  "products": [ {"name":"product/service name (<=5 words)","tag":"short qualifier (<=6 words)","points":["bullet — ONE short line, <=12 words", ...EXACTLY 3]} EXACTLY 3 — the product or service family ],
+  "audiences": [ {"name":"audience (<=5 words)","desc":"1 short sentence (<=20 words)","line":"a short rallying line in quotes (<=9 words)"} EXACTLY 4 — who they build/sell for ]
 }`;
 
   // --- Call 2: Voice & messaging ------------------------------------------
@@ -157,12 +157,12 @@ Write the BRAND FOUNDATION. Return JSON exactly:
 
 Write VOICE & MESSAGING. Return JSON exactly:
 {
-  "voiceIntro": "1 sentence describing how the brand sounds",
-  "voiceTable": [ {"trait":"word","are":"what we are — 1 sentence","areNot":"what we are not — 1 sentence"} x4-5 ],
-  "beforeAfter": [ {"context":"Website | Social caption","before":"an off-brand example","after":"the on-brand rewrite"} x2 ],
+  "voiceIntro": "1 short sentence describing how the brand sounds (<=24 words)",
+  "voiceTable": [ {"trait":"word","are":"what we are — ONE short sentence (<=18 words)","areNot":"what we are not — ONE short sentence (<=18 words)"} EXACTLY 5 ],
+  "beforeAfter": [ {"context":"Website | Social caption","before":"an off-brand example (<=20 words)","after":"the on-brand rewrite (<=24 words)"} x2 ],
   "wordsWeUse": ["word", ... 6-10],
   "wordsWeAvoid": ["word", ... 6-10],
-  "namesClaims": { "write": [ {"write":"correct form","never":"wrong form"} x4-6 ], "approvedClaims": ["claim", ...], "checkFirst": ["thing to verify before using", ...] },
+  "namesClaims": { "write": [ {"write":"correct form","never":"wrong form (<=9 words)"} EXACTLY 6 ], "approvedClaims": ["claim — SHORT, <=10 words", ...MAX 5], "checkFirst": ["thing to verify — SHORT, <=10 words", ...MAX 5] },
   "photoShow": ["what to show in photos", ... 4],
   "photoAvoid": ["what to avoid", ... 4],
   "photoProduct": { "background":"rule", "framing":"rule", "quality":"rule" }
@@ -179,12 +179,12 @@ PEAK SEASON (if given): ${meta.peakSeason || 'infer any seasonality from the ind
 Write the SOCIAL MEDIA playbook. Return JSON exactly:
 {
   "creativeSpecs": [ {"ratio":"4:5","name":"Feed post","size":"1080 x 1350","note":"short note"}, {"ratio":"1:1",...}, {"ratio":"9:16",...}, {"ratio":"16:9",...} ],
-  "creativeRules": ["short rule", ... 4-6],
-  "contentPillars": [ {"pct":"30%","title":"pillar","desc":"what goes here","example":"e.g. a sample post idea"} x4-5 — percentages must sum to 100 ],
-  "rhythm": "1-2 sentences describing the posting rhythm for ~${base.postsPerMonth} posts/month across the chosen platforms, with any pre-season ramp",
-  "calendar": [ {"period":"month range or season","label":"phase name","focus":"what to post then"} x3-5 — the content year ],
-  "calendarRule": "1 sentence rule of thumb for the year",
-  "checklist": ["pre-publish check item", ... 8 — the 8-point check before anything goes live]
+  "creativeRules": ["short rule — ONE line, <=14 words", ...EXACTLY 6],
+  "contentPillars": [ {"pct":"30%","title":"pillar (<=6 words)","desc":"what goes here — SHORT, <=22 words","example":"a sample post idea — SHORT, <=18 words"} EXACTLY 4 — percentages must sum to 100 ],
+  "rhythm": "1 short sentence on the posting rhythm for ~${base.postsPerMonth} posts/month (<=28 words)",
+  "calendar": [ {"period":"month range or season","label":"phase name (<=4 words)","focus":"what to post then — SHORT, <=30 words"} EXACTLY 4 — the content year ],
+  "calendarRule": "1 short rule of thumb for the year (<=26 words)",
+  "checklist": ["pre-publish check item — ONE line, <=16 words", ...EXACTLY 8 — the pre-publish check before anything goes live]
 }`;
 
   // Run a prompt, parse JSON, and retry once if the result is empty or missing
