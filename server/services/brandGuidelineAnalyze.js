@@ -94,6 +94,9 @@ async function buildGuidelineData(crawl, assets, meta, keys) {
     contactEmail: meta.contactEmail || 'adam@qtonix.com',
     contactPhone: meta.contactPhone || '+91-8249016547',
     logo: meta.logo || '',
+    logos: meta.logos || { full: meta.logo || '', reverse: '', one: '', icon: '' },
+    hasRealLogo: meta.hasRealLogo !== false && !!(meta.logo),
+    needsLogo: !(meta.hasRealLogo),  // UI prompts for the 4 logo versions when true
     cover: { heroImage },
     needsCoverPhoto: !heroImage,  // UI prompts for an upload when true
     palette,
@@ -180,15 +183,33 @@ Write the SOCIAL MEDIA playbook. Return JSON exactly:
   "checklist": ["pre-publish check item", ... 8 — the 8-point check before anything goes live]
 }`;
 
-  const run = async (prompt, max) => {
-    try { const out = await callAI({ ...keys, system: sys, messages: [{ role: 'user', content: prompt }], maxTokens: max }); return parseJson(out); }
-    catch (e) { console.error('[brandGuideline] AI call failed:', e.message); return {}; }
+  // Run a prompt, parse JSON, and retry once if the result is empty or missing
+  // the keys we require (the social call in particular used to come back empty
+  // or truncated, leaving the pillars / checklist slides blank).
+  const run = async (prompt, max, required) => {
+    const attempt = async (tokens) => {
+      const out = await callAI({ ...keys, system: sys, messages: [{ role: 'user', content: prompt }], maxTokens: tokens });
+      return parseJson(out);
+    };
+    try {
+      let res = await attempt(max);
+      const ok = (r) => r && typeof r === 'object' && (!required || required.every((k) => {
+        const v = r[k]; return Array.isArray(v) ? v.length > 0 : v != null && v !== '';
+      }));
+      if (!ok(res)) {
+        console.warn('[brandGuideline] retrying AI call (missing:', (required || []).filter((k) => !res || !res[k] || (Array.isArray(res[k]) && !res[k].length)).join(',') || 'empty', ')');
+        const retry = await attempt(Math.min(max + 1200, 4096));
+        if (ok(retry)) res = retry;
+        else res = { ...retry, ...res }; // keep whatever partial content we got
+      }
+      return res || {};
+    } catch (e) { console.error('[brandGuideline] AI call failed:', e.message); return {}; }
   };
 
   const [foundation, voice, social] = await Promise.all([
-    run(foundationPrompt, 2200),
-    run(voicePrompt, 2200),
-    run(socialPrompt, 2200),
+    run(foundationPrompt, 2600, ['pillars', 'positioning', 'audiences']),
+    run(voicePrompt, 2600, ['voiceTable', 'wordsWeUse']),
+    run(socialPrompt, 3000, ['contentPillars', 'checklist', 'creativeRules']),
   ]);
 
   return { ...base, foundation, voice, social };

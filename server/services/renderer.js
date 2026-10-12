@@ -41,6 +41,12 @@ Handlebars.registerHelper('lower', (s) => String(s || '').toLowerCase().replace(
 Handlebars.registerHelper('inc', (i) => Number(i) + 1);
 Handlebars.registerHelper('firstLetter', (s) => String(s || '?').trim().charAt(0).toUpperCase());
 Handlebars.registerHelper('join', (arr, sep) => Array.isArray(arr) ? arr.join(typeof sep === 'string' ? sep : ', ') : '');
+// Split an array into two halves; side 0 = first half, side 1 = second half.
+Handlebars.registerHelper('half', (arr, side) => {
+  const a = Array.isArray(arr) ? arr : [];
+  const mid = Math.ceil(a.length / 2);
+  return Number(side) === 0 ? a.slice(0, mid) : a.slice(mid);
+});
 Handlebars.registerHelper('seconds', (ms) => ((Number(ms) || 0) / 1000).toFixed(1));
 
 /** Colour a stat by thresholds: below `bad` is red, above `good` is green. */
@@ -81,6 +87,7 @@ Handlebars.registerHelper('severityClass', (s) =>
 Handlebars.registerHelper('between', (v, lo, hi) => Number(v) >= Number(lo) && Number(v) <= Number(hi));
 Handlebars.registerHelper('eq', (a, b) => a === b);
 Handlebars.registerHelper('gt', (a, b) => Number(a) > Number(b));
+Handlebars.registerHelper('lt', (a, b) => Number(a) < Number(b));
 Handlebars.registerHelper('bandColor', (band) => (band === 'strong' ? '#16A34A' : band === 'partial' ? '#E58A24' : '#E5484D'));
 Handlebars.registerHelper('ringDash', (pct, radius) => {
   const c = 2 * Math.PI * Number(radius);
@@ -555,29 +562,205 @@ function shade(hex, factor = 0.78) {
   return '#' + [r, g, b].map((n) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, '0')).join('');
 }
 
+// ---- Small colour toolkit for brand-driven theming (keeps text readable) ----
+const _rgb = (hex) => { const h = String(hex || '').replace('#', ''); if (h.length !== 6) return null; return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)); };
+const _hex = (rgb) => '#' + rgb.map((n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0')).join('');
+// Relative luminance 0..1 (perceptual-ish).
+function lum(hex) { const c = _rgb(hex); if (!c) return 0; const [r, g, b] = c.map((v) => v / 255); return 0.2126 * r + 0.7152 * g + 0.0722 * b; }
+// Mix two hex colours by t (0 = a, 1 = b).
+function mix(a, b, t) { const A = _rgb(a) || [0, 0, 0], B = _rgb(b) || [255, 255, 255]; return _hex(A.map((v, i) => v + (B[i] - v) * t)); }
+// Lighten / darken toward white / black.
+const lighten = (hex, t) => mix(hex, '#ffffff', t);
+const darken = (hex, t) => mix(hex, '#000000', t);
+// Pick black or white text for best contrast on a background.
+const textOn = (bg) => (lum(bg) > 0.55 ? '#1a1a1a' : '#ffffff');
+// Saturation 0..1.
+function sat(hex) { const c = _rgb(hex); if (!c) return 0; const [r, g, b] = c.map((v) => v / 255); const mx = Math.max(r, g, b), mn = Math.min(r, g, b); return mx === 0 ? 0 : (mx - mn) / mx; }
+
+// A promo/marketing banner (text baked into the image, e.g. "ONE TRIP OUT" over
+// a product) reads badly as a full-bleed cover — the baked text fights the
+// headline. Heuristic: og:image is very often the marketing banner. We keep it
+// for the captioned "stand for" slide but keep it OUT of the cover/grids.
+function looksLikeBanner(img) {
+  if (!img) return false;
+  const a = String(img.alt || '').toLowerCase();
+  const u = String(img.url || '').toLowerCase();
+  return img.kind === 'og'
+    || /banner|promo|ad[-_]|hero[-_]?banner|cover|marketing|offer|sale/.test(u)
+    || /\b(sale|off|% off|shop now|buy|offer|free shipping)\b/.test(a);
+}
+
 // Prepare the view model: attach CSS-safe colour vars + per-swatch hexCss.
 function bgViewModel(data) {
   const pal = (data.palette || []).map((c) => ({ ...c, hexCss: c.hex }));
   const brand = (pal.find((c) => c.role === 'brand') || pal[0] || {}).hex || '#E55B2A';
-  const dark = (pal.find((c) => c.role === 'dark') || {}).hex || '#242424';
-  const light = (pal.find((c) => c.role === 'light') || {}).hex || '#F5F1E8';
+  const darkRaw = (pal.find((c) => c.role === 'dark') || {}).hex || '';
+  const lightRaw = (pal.find((c) => c.role === 'light') || {}).hex || '';
   const olive = (pal.find((c) => c.role === 'neutral') || {}).hex || '#4A5233';
-  // Flatten the image arrays to simple named URLs — Handlebars can't take a
-  // numeric index (images.lifestyle.0) in {{#if}}/{{src}} positions.
+
+  // ---- FULL BRAND-DRIVEN THEME ----------------------------------------------
+  // Every surface colour is derived from the brand so each website's document
+  // looks on-brand, not always cream/charcoal. We keep contrast safe: text is
+  // always dark-on-light / light-on-dark, and the background is a soft tint.
+  //
+  // Dark anchor: the site's dark colour if it's genuinely dark, else a deep,
+  // slightly brand-tinted charcoal (brand hue mixed into near-black).
+  let dark = darkRaw;
+  if (!dark || lum(dark) > 0.25) dark = mix('#1b1b1e', brand, 0.08); // tint charcoal with brand
+  // Light anchor / page background: the site's light colour if it's light
+  // enough, else a very soft tint of the brand (Pack-Wheel-style off-white).
+  let light = lightRaw;
+  if (!light || lum(light) < 0.80) light = mix('#ffffff', brand, 0.05); // ~5% brand tint on white
+  // Headings: a dark, brand-tinted ink that stays readable on the light bg.
+  const heading = lum(brand) < 0.5 ? mix(dark, brand, 0.22) : dark;
+  // Sub-headings / body-strong: slightly lighter than headings.
+  const subhead = lighten(heading, 0.18);
+  // Eyebrow / accents: the brand colour, but ensure it reads on the light bg;
+  // if the brand is too pale, deepen it.
+  const accent = lum(brand) > 0.72 ? darken(brand, 0.22) : brand;
+  // Panels / cards on the light background: white, or a hair of brand tint.
+  const panel = mix('#ffffff', brand, 0.02);
+  // Muted text, tinted toward the brand hue so it feels cohesive.
+  const muted = mix('#6b7280', brand, 0.10);
+  const line = mix('#e5e1d8', brand, 0.06);
+
+  // ---- Build ONE clean, de-duplicated pool of usable photos. Every image slot
+  // in the deck is then filled by cycling this pool, so a blank or blown-out
+  // slot never appears: if the site gave us 3 good photos, we reuse them rather
+  // than leaving the 4th card white (the old "missing image" bug).
   const imgs = data.images || {};
-  const life = imgs.lifestyle || [];
-  const prod = imgs.product || [];
+  const uniq = (arr) => {
+    const seen = new Set(); const out = [];
+    for (const i of (arr || [])) {
+      const url = i && i.url;
+      if (!url || seen.has(url)) continue;
+      seen.add(url); out.push(i);
+    }
+    return out;
+  };
+  const allLife = uniq([...(imgs.lifestyle || []), ...(imgs.all || [])]);
+  const allProd = uniq(imgs.product || []);
+  // Photos that are safe for the cover / grids (no baked-in promo text).
+  const cleanLife = allLife.filter((i) => !looksLikeBanner(i));
+  const banner = (imgs.all || []).concat(imgs.lifestyle || []).find(looksLikeBanner)
+    || (data.cover && data.cover.heroImage ? { url: data.cover.heroImage } : null);
+
+  // Cover hero: an explicit uploaded cover wins; else a CLEAN action photo
+  // (never the promo banner); else the banner; else the og hero.
+  const uploadedCover = (data.cover && data.cover.heroImage) || '';
+  const coverHero = uploadedCover
+    || (cleanLife[0] && cleanLife[0].url)
+    || (banner && banner.url)
+    || imgs.hero || '';
+
+  // Ordered pool for the 4-up grids & galleries: clean photos first, then
+  // anything else we have, so cards fill left-to-right with real photos.
+  const gridPool = uniq([...cleanLife, ...allLife, ...allProd])
+    .map((i) => i.url).filter(Boolean)
+    .filter((u) => u !== coverHero || cleanLife.length <= 1); // keep cover distinct when possible
+  const pool = gridPool.length ? gridPool : [coverHero].filter(Boolean);
+  const at = (i) => pool.length ? pool[i % pool.length] : '';
+
   const flat = {};
-  for (let i = 0; i < 6; i++) flat['life' + i] = (life[i] && life[i].url) || '';
-  for (let i = 0; i < 4; i++) flat['prod' + i] = (prod[i] && prod[i].url) || '';
-  flat.heroImg = (imgs.hero) || (data.cover && data.cover.heroImage) || '';
-  // Thank-you page: prefer a different lifestyle photo than the cover; else reuse hero.
-  flat.tyImg = (life.find((x) => x && x.url && x.url !== flat.heroImg) || {}).url || flat.heroImg || '';
+  // life0..5 and prod0..3 always resolve to SOME real photo (cycled).
+  for (let i = 0; i < 6; i++) flat['life' + i] = at(i);
+  // product slots prefer real product shots, else continue cycling the pool.
+  const prodPool = (allProd.map((i) => i.url).filter(Boolean));
+  for (let i = 0; i < 4; i++) flat['prod' + i] = prodPool[i] || at(i + 2);
+  flat.heroImg = coverHero;
+  // Flat ordered list for {{#each}} grids via (lookup imgLife @index) — always
+  // the same cycled pool, so every pillar/audience card gets a real photo.
+  flat.imgLife = []; for (let i = 0; i < 6; i++) flat.imgLife.push(at(i));
+  // One photo per product, "AI pick best per product": prefer real product
+  // shots, then fall back to cycling the clean pool so every card has an image.
+  const prodImgPool = prodPool.length ? prodPool : pool;
+  flat.imgProd = []; for (let i = 0; i < 4; i++) flat.imgProd.push(prodImgPool.length ? prodImgPool[i % prodImgPool.length] : at(i));
+  // "Stand for" slide shows the captioned marketing banner when we have one.
+  flat.standImg = (banner && banner.url) || coverHero || at(1);
+  // Thank-you page: a different clean photo than the cover; else reuse hero.
+  flat.tyImg = pool.find((u) => u && u !== coverHero) || coverHero || '';
+  // Pre-publish check image: a clean product/portrait-ish photo, distinct from cover.
+  flat.checkImg = prodPool[0] || pool.find((u) => u && u !== coverHero) || coverHero || '';
+
+  // How many usable photos we actually have — the template uses this to decide
+  // whether to show image-heavy layouts or fall back to a text layout.
+  const poolCount = pool.filter(Boolean).length;
+  // Lifestyle gallery: feature photo + up to 4 more tiles, showing ALL the
+  // distinct photos we have rather than a fixed 5-cell layout.
+  const galAll = uniq(pool.map((u) => ({ url: u }))).map((x) => x.url);
+  flat.galFeature = galAll[0] || '';
+  flat.galTiles = galAll.slice(1, 5);   // up to 4 tiles beside the feature
+  flat.galFew = galAll.length <= 3;      // layout hint for 2-3 photos
+
+  // ---- SOCIAL fallbacks: the AI social call can fail / truncate, which left
+  // pages 19-21 nearly empty. Guarantee substantive content for every social
+  // slide, using AI output when it's there and sensible defaults when it isn't.
+  const social = data.social || {};
+  const platforms = (data.platforms && data.platforms.length ? data.platforms : ['Instagram', 'Facebook', 'YouTube']);
+  const ppm = data.postsPerMonth || 10;
+  const biz = (data.report && data.report.business) || 'the brand';
+
+  const defSpecs = [
+    { ratio: '4:5', name: 'Feed post', size: '1080 × 1350' },
+    { ratio: '1:1', name: 'Grid / carousel', size: '1080 × 1080' },
+    { ratio: '9:16', name: 'Story / Reel', size: '1080 × 1920' },
+    { ratio: '16:9', name: 'YouTube / web', size: '1920 × 1080' },
+  ];
+  const aiSpecs = Array.isArray(social.creativeSpecs) ? social.creativeSpecs : [];
+  const specs = defSpecs.map((d, i) => ({
+    name: (aiSpecs[i] && aiSpecs[i].name) || d.name,
+    size: (aiSpecs[i] && (aiSpecs[i].size || aiSpecs[i].ratio)) || d.size,
+  }));
+
+  const creativeRulesList = (Array.isArray(social.creativeRules) && social.creativeRules.length)
+    ? social.creativeRules
+    : [
+        'Logo on every asset, in a corner, 8–10% of width.',
+        'Brand colour for one thing only — the thing people should notice.',
+        'Real photography over stock; show the product in genuine use.',
+        'Headlines bold and tight; keep captions short and specific.',
+        'Leave safe margins — nothing important near the edges.',
+        'One clear message per post; never crowd the frame.',
+      ];
+
+  let pillarsList = Array.isArray(social.contentPillars) ? social.contentPillars.filter((p) => p && (p.title || p.desc)) : [];
+  if (pillarsList.length < 3) {
+    pillarsList = [
+      { pct: '35%', title: 'Product in action', desc: 'Real use in real context — the product doing its job.', example: 'A short clip or photo of the product being used on location.' },
+      { pct: '25%', title: 'Education & how-to', desc: 'Tips, guides and answers to the questions buyers actually ask.', example: 'A carousel breaking down one feature or decision.' },
+      { pct: '20%', title: 'Social proof', desc: 'Customers, reviews and results that build trust.', example: 'A customer quote over a photo of their result.' },
+      { pct: '20%', title: 'Brand & behind-the-scenes', desc: 'Who we are, what we stand for, the people behind it.', example: 'A founder note or a look behind the build.' },
+    ];
+  }
+
+  const rhythmText = social.rhythm
+    || `About ${ppm} posts a month across ${platforms.join(', ')} — a steady weekly cadence of ${Math.max(1, Math.round(ppm / 4))}–${Math.max(2, Math.round(ppm / 4) + 1)} posts, mixing the pillars so the feed never looks one-note.`;
+
+  let checklistList = Array.isArray(social.checklist) ? social.checklist.filter(Boolean) : [];
+  if (checklistList.length < 6) {
+    checklistList = [
+      'Logo present, correct version, with clear space.',
+      'Brand colour used for emphasis only — not everywhere.',
+      'Headline in the brand typeface, bold and tight.',
+      `Brand name written correctly (“${biz}”), no typos.`,
+      'Only approved claims — nothing unverified or exaggerated.',
+      'Photo is on-brand: real, in-context, high resolution.',
+      'Caption in the brand voice; words-we-avoid are gone.',
+      'Correct size and safe margins for the platform.',
+    ];
+  }
+
   return {
     ...data,
     palette: pal,
     img: flat,
+    poolCount,
+    specs, creativeRulesList, pillarsList, rhythmText, checklistList,
     brandCss: brand, brandDeep: shade(brand), darkCss: dark, lightCss: light, oliveCss: olive,
+    // brand-driven theme tokens consumed by the template :root
+    headingCss: heading, subheadCss: subhead, accentCss: accent,
+    panelCss: panel, mutedCss: muted, lineCss: line,
+    darkTextCss: textOn(dark), lightTextCss: textOn(light),
   };
 }
 

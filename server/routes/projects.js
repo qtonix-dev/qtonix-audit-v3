@@ -685,19 +685,35 @@ router.post('/:id/brandguide', guard, requireHrAdmin, async (req, res, next) => 
 });
 
 // Upload a logo image for a guideline (stored on ImageKit, saved to runOptions).
+// Supports a `variant` field: full (primary) | reverse | one | icon. The
+// primary ("full") also sets logoUrl/logo for backward compatibility and for
+// every place that still uses the single logo.
+const LOGO_VARIANTS = { full: 'logoFull', reverse: 'logoReverse', one: 'logoOne', icon: 'logoIcon' };
 router.post('/brandguide/:rid/logo', guard, requireHrAdmin, shotUpload.single('logo'), async (req, res, next) => {
   try {
     const r = await PreSeoReport.findByPk(req.params.rid);
     if (!r || r.kind !== BG_KIND) return res.status(404).json({ error: 'Guideline not found.' });
     if (!req.file) return res.status(400).json({ error: 'Image required.' });
+    const variant = String(req.body.variant || 'full').toLowerCase();
+    const key = LOGO_VARIANTS[variant] || 'logoFull';
     const { promoteLocal } = require('../services/preSeoStore');
-    const stored = await promoteLocal(`/uploads/${req.file.filename}`, `brandguide-${r.id}-logo-${req.file.filename}`);
-    const ro = { ...(r.runOptions || {}), logoUrl: stored.url };
+    const stored = await promoteLocal(`/uploads/${req.file.filename}`, `brandguide-${r.id}-logo-${variant}-${req.file.filename}`);
+    const ro = { ...(r.runOptions || {}), [key]: stored.url };
+    // The primary logo also drives the single logoUrl used elsewhere.
+    if (variant === 'full') ro.logoUrl = stored.url;
+    // If no primary set yet, the first uploaded variant becomes the default logo.
+    if (!ro.logoUrl) ro.logoUrl = stored.url;
     r.runOptions = ro; r.changed('runOptions', true);
-    // If the guideline is already analysed, reflect the new logo in data immediately.
-    if (r.data && r.data.report) { const d = JSON.parse(JSON.stringify(r.data)); d.logo = stored.url; r.data = d; r.changed('data', true); }
+    // Reflect in the live data immediately so the preview updates without a re-run.
+    if (r.data && r.data.report) {
+      const d = JSON.parse(JSON.stringify(r.data));
+      d.logos = d.logos || {};
+      d.logos[variant] = stored.url;
+      if (variant === 'full' || !d.logo) d.logo = stored.url;
+      r.data = d; r.changed('data', true);
+    }
     await r.save();
-    res.json({ ok: true, url: stored.url });
+    res.json({ ok: true, url: stored.url, variant });
   } catch (e) { next(e); }
 });
 

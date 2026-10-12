@@ -63,7 +63,19 @@ async function run(reportId) {
     // Logo priority: user-uploaded/URL override → the REAL site wordmark the
     // harvester found → logoFor() (which may fall back to a favicon). Never use
     // the tiny Google-favicon fallback when a proper logo was harvested.
-    const logo = ro.logoUrl || assets.logo || logoFor(crawl, report.domain);
+    const harvestedLogo = assets.logo || '';
+    const logo = ro.logoUrl || ro.logoFull || harvestedLogo || logoFor(crawl, report.domain);
+    // Whether we have a GENUINE logo (user-uploaded or harvested from the site),
+    // as opposed to only a favicon fallback. When false, the UI prompts the user
+    // to upload the four logo versions, since AI can't reproduce a logo reliably.
+    const hasRealLogo = !!(ro.logoUrl || ro.logoFull || harvestedLogo);
+    // The four explicit versions (user-uploaded); each falls back to the primary.
+    const logos = {
+      full: ro.logoFull || ro.logoUrl || harvestedLogo || '',
+      reverse: ro.logoReverse || '',
+      one: ro.logoOne || '',
+      icon: ro.logoIcon || '',
+    };
 
     const meta = {
       businessName: report.businessName || report.domain,
@@ -76,6 +88,8 @@ async function run(reportId) {
       peakSeason: ro.peakSeason || '',
       tone: ro.tone || '',
       logo,
+      logos,
+      hasRealLogo,
       coverImageUrl: ro.coverImageUrl || '',
       colorOverrides,
       fontOverride: ro.fontOverride || '',

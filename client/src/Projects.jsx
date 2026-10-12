@@ -1244,8 +1244,9 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, onStarted, choo
   };
 
   // Upload a logo image to a guideline (used on the input step and review step).
-  const uploadLogo = async (reportId, file) => {
-    const fd = new FormData(); fd.append('logo', file);
+  // `variant`: full | reverse | one | icon (defaults to the primary 'full').
+  const uploadLogo = async (reportId, file, variant = 'full') => {
+    const fd = new FormData(); fd.append('logo', file); fd.append('variant', variant);
     const res = await fetch(`${API_BASE}/api/hr/projects/brandguide/${reportId}/logo`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd });
     if (!res.ok) throw new Error('Upload failed');
     const j = await res.json();
@@ -1265,11 +1266,11 @@ function BrandGuideWizard({ projectId, project, onClose, onDone, onStarted, choo
     catch (e) { toast(e.message); }
     setCoverBusy(false);
   };
-  // Review-step logo replacement (report already exists).
-  const replaceLogo = async (file) => {
+  // Review-step logo replacement (report already exists). Supports variants.
+  const replaceLogo = async (file, variant = 'full') => {
     if (!rid || !file) return;
     setLogoBusy(true);
-    try { await uploadLogo(rid, file); const r = await hrApi(`/projects/brandguide/${rid}`); setRep(r); toast('Logo updated ✓'); }
+    try { await uploadLogo(rid, file, variant); const r = await hrApi(`/projects/brandguide/${rid}`); setRep(r); toast(`Logo (${variant}) updated ✓`); }
     catch (e) { toast(e.message); }
     setLogoBusy(false);
   };
@@ -1445,13 +1446,31 @@ function BrandGuideReview({ rep, rid, onSave, onReplaceLogo, logoBusy, onReplace
         </div>
       </div>
 
-      <div className="text-[11px] font-extrabold text-slate-400 uppercase mb-1.5">Logo</div>
-      <div className="flex items-center gap-3 mb-3">
-        <div className="w-16 h-16 rounded-lg border border-slate-200 bg-white flex items-center justify-center overflow-hidden flex-none">{d.logo ? <img src={imgUrl(d.logo)} className="max-w-full max-h-full object-contain" /> : <span className="text-[10px] text-slate-400 text-center px-1">No logo</span>}</div>
-        <div>
-          <label className="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-orange-600 border border-orange-200 rounded-lg px-3 py-1.5 cursor-pointer hover:bg-orange-50">{logoBusy ? 'Uploading…' : '⬆ Upload / replace logo'}<input type="file" accept="image/*" disabled={logoBusy} className="hidden" onChange={(e) => e.target.files[0] && onReplaceLogo(e.target.files[0])} /></label>
-          <div className="text-[10.5px] text-slate-400 mt-1">PNG or SVG works best. Appears on the cover and logo pages.</div>
+      {d.needsLogo && (
+        <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-3 mb-3 text-[12px] text-amber-800">
+          <b>No clear logo was found on the site.</b> Please upload the logo versions below — a logo can't be recreated reliably by AI. At minimum upload <b>Full colour</b>; the others improve the Logo page.
         </div>
+      )}
+      <div className="text-[11px] font-extrabold text-slate-400 uppercase mb-1.5">Logo versions</div>
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        {[
+          { key: 'full', label: 'Full colour', bg: 'bg-white', hint: 'Primary — white / light backgrounds', required: true },
+          { key: 'reverse', label: 'Reverse', bg: 'bg-[#242424]', hint: 'For dark backgrounds & photos' },
+          { key: 'one', label: 'One colour', bg: 'bg-[#F5F1E8]', hint: 'Engraving, embroidery, stamps' },
+          { key: 'icon', label: 'Icon / mark', bg: 'bg-white', hint: 'Profile pics, favicons' },
+        ].map((v) => {
+          const url = (d.logos && d.logos[v.key]) || (v.key === 'full' ? d.logo : '') || '';
+          return (
+            <div key={v.key} className="flex items-center gap-2 border border-slate-200 rounded-lg p-2">
+              <div className={`w-12 h-12 rounded border border-slate-200 ${v.bg} flex items-center justify-center overflow-hidden flex-none`}>{url ? <img src={imgUrl(url)} className="max-w-full max-h-full object-contain" /> : <span className="text-[8px] text-slate-400 text-center px-0.5">none</span>}</div>
+              <div className="min-w-0">
+                <div className="text-[11.5px] font-bold text-[#050A1F] flex items-center gap-1">{v.label}{v.required && <span className="text-[9px] text-orange-600 font-extrabold">• required</span>}</div>
+                <label className="inline-flex items-center gap-1 text-[10.5px] font-bold text-orange-600 cursor-pointer hover:underline">{logoBusy ? 'Uploading…' : (url ? '⬆ Replace' : '⬆ Upload')}<input type="file" accept="image/*" disabled={logoBusy} className="hidden" onChange={(e) => e.target.files[0] && onReplaceLogo(e.target.files[0], v.key)} /></label>
+                <div className="text-[9.5px] text-slate-400 truncate">{v.hint}</div>
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       <div className="text-[11px] font-extrabold text-slate-400 uppercase mb-1">Tagline / signature line</div>
