@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Oil Chef — Pre-SEO Audit Report</title>
+<style>
+/* ===========================================================================
+   Qtonix Pre-SEO Audit Report — matches the reference design.
+   Plus Jakarta Sans, orange #FF6A00, dark chapter bands, WeasyPrint @page.
+   =========================================================================== */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;700;800&display=swap');
+
+:root{
+  --ink:#0B1020; --navy:#0B1020; --orange:#FF6A00; --orange-deep:#FF4500;
+  --muted:#64748b; --muted2:#94a3b8; --line:#e2e8f0; --line2:#f1f5f9;
+  --red:#dc2626; --amber:#b45309; --green:#16a34a; --violet:#7c3aed; --blue:#2563eb;
+  --tint:#f8fafc; --tint-orange:#FFF7ED;
+}
+*{ margin:0; padding:0; box-sizing:border-box; }
+body{ font-family:'Plus Jakarta Sans', sans-serif; color:var(--ink); font-size:9.5pt; line-height:1.5; }
+
+@page{ size: Letter; margin: 0; }
+@page interior{
+  size: Letter; margin: 0.62in 0.62in 0.72in 0.62in;
+  @bottom-left{ content: "Pre-SEO Audit Report  ·  oilchef.com"; font-family:'Plus Jakarta Sans',sans-serif; font-size:7pt; color:#94a3b8; }
+  @bottom-right{ content: "Page " counter(page); font-family:'Plus Jakarta Sans',sans-serif; font-size:7pt; color:#94a3b8; font-weight:700; }
+}
+
+/* ---------------- COVER ---------------- */
+.cover{ width:8.5in; height:11in; padding:0.9in 0.75in; background:linear-gradient(145deg,#0B1020 0%,#161B33 60%,#0B1020 100%); color:#fff; position:relative; page-break-after:always; overflow:hidden; }
+.cover .orb{ position:absolute; right:-2in; top:1in; width:6in; height:6in; border-radius:50%; border:1px solid rgba(255,106,0,.18); }
+.cover .orb2{ position:absolute; right:-1in; top:2in; width:4in; height:4in; border-radius:50%; background:radial-gradient(circle,rgba(255,106,0,.08),transparent 70%); }
+.cover-top{ display:flex; justify-content:space-between; align-items:flex-start; position:relative; }
+.logo-text{ font-size:21pt; font-weight:800; letter-spacing:-.5px; }
+.logo-text .dot{ color:var(--orange); }
+.cover-series{ text-align:right; font-size:7pt; letter-spacing:2.5px; font-weight:700; color:var(--muted2); line-height:1.6; }
+.eyebrow{ margin-top:1.5in; font-size:8pt; letter-spacing:3px; font-weight:700; color:var(--orange); }
+.eyebrow .dash{ display:inline-block; width:26px; height:2px; background:var(--orange); vertical-align:middle; margin-right:10px; }
+.cover h1{ font-size:42pt; line-height:1.02; letter-spacing:-1.5px; font-weight:800; margin-top:16px; }
+.cover h1 .o{ color:var(--orange); }
+.cover-sub{ margin-top:18px; font-size:11pt; line-height:1.55; color:rgba(255,255,255,.75); max-width:5.2in; }
+.prepared{ margin-top:34px; display:inline-flex; align-items:center; gap:14px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); border-radius:12px; padding:14px 18px; }
+.prepared .lg{ width:48px; height:48px; border-radius:10px; background:rgba(255,255,255,.12); display:flex; align-items:center; justify-content:center; overflow:hidden; position:relative; }
+.prepared .lg .lgfallback{ font-size:14pt; font-weight:800; color:#fff; }
+.prepared .lg img{ position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:#fff; padding:4px; border-radius:10px; }
+.prepared .pl{ font-size:7.5pt; letter-spacing:2px; font-weight:700; color:var(--muted2); }
+.prepared .pn{ font-size:14pt; font-weight:800; margin-top:2px; }
+.prepared .pu{ font-size:9pt; color:var(--orange); font-weight:600; margin-top:1px; }
+.cover-stats{ margin-top:30px; display:flex; gap:26px; }
+.cover-stat{ border-left:3px solid var(--orange); padding-left:14px; }
+.cover-stat b{ font-size:28pt; font-weight:800; line-height:1; }
+.cover-stat span{ display:block; font-size:8pt; color:var(--muted2); margin-top:6px; line-height:1.45; max-width:1.7in; }
+.cover-foot{ position:absolute; left:0.75in; right:0.75in; bottom:0.7in; display:flex; justify-content:space-between; border-top:1px solid rgba(255,255,255,.14); padding-top:14px; }
+.cover-foot .cf{ font-size:7pt; letter-spacing:1.5px; font-weight:700; color:var(--orange); }
+.cover-foot .cfv{ font-size:8.5pt; color:#fff; font-weight:700; margin-top:4px; }
+.cover-foot .cfv .lt{ color:var(--muted2); font-weight:500; }
+.cover-bar{ position:absolute; left:0; right:0; bottom:0; height:10px; background:linear-gradient(90deg,var(--orange),var(--orange-deep)); }
+
+/* ---------------- TOC ---------------- */
+.toc-page{ width:8.5in; height:11in; display:flex; page-break-after:always; }
+.toc-side{ width:2.5in; background:#0B1020; color:#fff; padding:0.75in 0.4in; }
+.toc-side .logo-text{ font-size:17pt; }
+.toc-side .eyebrow{ margin-top:2.6in; color:var(--orange); font-size:7.5pt; }
+.toc-side h2{ font-size:26pt; font-weight:800; line-height:1.05; margin-top:10px; letter-spacing:-.8px; }
+.toc-side .uline{ width:38px; height:3px; background:var(--orange); margin:14px 0; }
+.toc-side p{ font-size:8.5pt; color:var(--muted2); line-height:1.6; }
+.toc-side .foot{ position:absolute; bottom:0.6in; font-size:7.5pt; color:var(--muted2); }
+.toc-main{ flex:1; padding:0.75in 0.6in; }
+.toc-row{ display:flex; gap:16px; padding:9px 0; border-bottom:1px solid var(--line); align-items:baseline; }
+.toc-row:last-child{ border-bottom:0; }
+.toc-n{ color:var(--orange); font-weight:800; font-size:13pt; width:30px; flex:none; }
+.toc-t{ font-weight:800; font-size:11pt; }
+.toc-d{ font-size:8pt; color:var(--muted); margin-top:2px; }
+
+/* ---------------- INTERIOR ---------------- */
+.page{ page:interior; }
+.page-break-before{ break-before:page; }
+.rhead{ display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
+.rhead .l{ font-size:7.5pt; color:var(--muted); font-weight:600; }
+.rhead .r{ font-size:11pt; font-weight:800; }
+.rhead .r .dot{ color:var(--orange); }
+
+.band{ background:#0B1020; color:#fff; border-radius:8px; padding:16px 20px; position:relative; margin-bottom:16px; overflow:hidden; }
+.band.light{ background:#0B1020; }
+.band .ch{ font-size:7.5pt; letter-spacing:3px; font-weight:700; color:var(--orange); }
+.band h2{ font-size:19pt; font-weight:800; margin-top:3px; letter-spacing:-.5px; }
+.band .sub{ font-size:8.5pt; color:rgba(255,255,255,.7); margin-top:4px; max-width:5in; }
+.band .no{ position:absolute; right:20px; top:10px; font-size:34pt; font-weight:800; color:var(--orange); }
+.band::after{ content:''; position:absolute; left:0; right:0; bottom:0; height:4px; background:linear-gradient(90deg,var(--orange),var(--orange-deep)); }
+
+/* orange sub-section heading */
+.sub-h{ font-size:11.5pt; font-weight:800; margin:16px 0 10px; break-after:avoid; page-break-after:avoid; }
+.sub-h .n{ color:var(--orange); margin-right:7px; }
+.sub-h .src{ font-size:8.5pt; font-weight:600; color:var(--muted); margin-left:7px; }
+.sub-h.first{ margin-top:4px; }
+
+/* ---- page-break control: keep headings with their content, don't split
+   screenshots, callouts, tables rows, week rows or cols across pages ---- */
+.band{ break-after:avoid; page-break-after:avoid; }
+.shot, .shotimg, .callout, .willdo, .cols, .weekrow, .health, .serp{ break-inside:avoid; page-break-inside:avoid; }
+tr, thead, .toc-row{ break-inside:avoid; page-break-inside:avoid; }
+table{ break-inside:auto; }
+img{ break-inside:avoid; }
+/* a section groups its heading + body so a lone heading never ends a page */
+.section{ break-inside:avoid-page; }
+p.lead{ margin-bottom:8px; }
+p.lead:last-child{ margin-bottom:0; }
+
+/* stat tiles */
+.stats{ display:flex; gap:10px; margin:10px 0 4px; }
+.stat{ flex:1; border:1px solid var(--line); border-radius:8px; padding:11px 13px; }
+.stat b{ font-size:19pt; font-weight:800; color:var(--orange); line-height:1; }
+.stat span{ display:block; font-size:7.5pt; color:var(--muted); margin-top:5px; line-height:1.4; }
+
+/* screenshot placeholder */
+.shot{ border:1.5px dashed var(--orange); border-radius:8px; background:var(--tint-orange); padding:22px 14px; text-align:center; margin:10px 0; }
+.shot .t{ font-size:9.5pt; font-weight:800; color:var(--orange); letter-spacing:1px; }
+.shot .d{ font-size:8.5pt; font-weight:700; margin-top:7px; }
+.shot .n{ font-size:8pt; font-style:italic; color:var(--muted); margin-top:4px; }
+.shot img{ max-width:100%; border-radius:6px; }
+.shotimg{ border:1px solid var(--line); border-radius:8px; padding:6px; margin:10px 0; text-align:center; }
+.shotimg img{ max-width:100%; max-height:3.4in; width:auto; border-radius:4px; object-fit:contain; }
+.shotimg .cap{ font-size:7.5pt; color:var(--muted); margin-top:5px; }
+/* tall device/mobile screenshots: keep them small and centred, not full-page */
+.shotimg.device img{ max-height:3.6in; }
+.shotimg.wide img{ max-height:3.0in; }
+
+/* callouts */
+.callout{ border-left:4px solid var(--violet); background:#f5f3ff; border-radius:0 8px 8px 0; padding:12px 15px; margin:10px 0; }
+.callout.info{ border-color:var(--blue); background:#eff6ff; }
+.callout.crit{ border-color:var(--red); background:#fef2f2; }
+.callout.good{ border-color:var(--green); background:#f0fdf4; }
+.callout .ct{ display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; }
+.callout .cn{ font-size:10pt; font-weight:800; }
+.callout p{ font-size:9pt; line-height:1.55; margin:0; }
+.callout ul{ margin:4px 0 0 16px; }
+.callout li{ font-size:9pt; margin-bottom:3px; }
+.willdo{ border-left:4px solid var(--orange); background:var(--tint-orange); border-radius:0 8px 8px 0; padding:12px 15px; margin:10px 0; }
+.willdo .cn{ font-size:9.5pt; font-weight:800; margin-bottom:4px; }
+.willdo p{ font-size:9pt; margin:0; }
+.willdo ul{ margin:4px 0 0 16px; }
+.willdo li{ font-size:9pt; margin-bottom:3px; }
+
+/* badges */
+.badge{ font-size:7.5pt; font-weight:800; letter-spacing:.5px; }
+.b-crit{ color:var(--red); } .b-high{ color:var(--amber); } .b-med{ color:var(--muted); }
+.b-good{ color:var(--green); } .b-info{ color:var(--blue); } .b-pass{ color:var(--green); }
+.b-fail{ color:var(--red); } .b-pending{ color:var(--blue); } .b-missing{ color:var(--red); }
+.b-optional{ color:var(--muted); } .b-opt{ color:var(--muted); }
+.b-yes{ color:var(--green); } .b-no{ color:var(--red); }
+.b-unknown{ color:var(--muted); } .b-none{ color:var(--red); }
+/* keyword-difficulty badges: GOOD green, MODERATE orange, HARD / VERY HARD red */
+.b-moderate{ color:var(--orange); } .b-hard{ color:var(--red); } .b-veryhard{ color:var(--red); }
+
+/* tables */
+table{ width:100%; border-collapse:collapse; margin:8px 0; font-size:8.5pt; }
+thead th{ background:#0B1020; color:#fff; text-align:left; padding:7px 9px; font-weight:700; font-size:8pt; }
+thead th.c{ text-align:center; } thead th.r{ text-align:right; }
+tbody td{ padding:6px 9px; border-bottom:1px solid var(--line2); vertical-align:top; }
+tbody tr:nth-child(even){ background:#fafbfc; }
+td.c{ text-align:center; } td.r{ text-align:right; }
+td b{ font-weight:800; }
+.miss{ color:var(--red); font-weight:600; }
+
+/* two-column compare */
+.cols{ display:flex; gap:12px; margin:10px 0; }
+.col{ flex:1; border-radius:8px; padding:12px 14px; }
+.col.good{ background:#f0fdf4; border:1px solid #bbf7d0; }
+.col.bad{ background:#fef2f2; border:1px solid #fecaca; }
+.col.neu{ background:var(--tint); border:1px solid var(--line); }
+.col h4{ font-size:10pt; font-weight:800; margin-bottom:7px; }
+.col.good h4{ color:var(--green); } .col.bad h4{ color:var(--red); } .col.neu h4{ color:var(--orange); }
+.col ul{ margin-left:15px; } .col li{ font-size:8.5pt; margin-bottom:4px; line-height:1.4; }
+
+/* health dial */
+.health{ display:flex; gap:20px; align-items:center; border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin:8px 0; }
+.dial{ width:110px; height:110px; border-radius:50%; flex:none; position:relative;
+  background:conic-gradient(var(--orange) 0 130deg, #e9edf3 130deg 360deg); }
+.dial .hole{ position:absolute; inset:14px; border-radius:50%; background:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+.dial .hv{ font-size:24pt; font-weight:800; line-height:1; }
+.dial .hl{ font-size:7.5pt; color:var(--muted); margin-top:3px; }
+.health .bars{ flex:1; }
+.hbar{ display:flex; align-items:center; gap:8px; margin-bottom:4px; font-size:8pt; }
+.hbar .hn{ width:1.5in; color:#334155; font-weight:600; }
+.hbar .ht{ flex:1; height:8px; border-radius:4px; background:#eef2f7; overflow:hidden; }
+.hbar .ht i{ display:block; height:100%; border-radius:4px; }
+.hbar .hs{ width:34px; text-align:right; font-weight:800; color:var(--muted); }
+
+.keyline{ font-size:9pt; color:#374151; margin:8px 0; }
+.keyline b{ color:var(--orange); }
+
+/* Google SERP preview (section 5.1) */
+.serp{ border:1px solid var(--line); border-radius:10px; padding:12px 16px; margin:10px 0; background:#fff; max-width:5.6in; }
+.serp .serp-lbl{ font-size:7pt; letter-spacing:1px; font-weight:700; color:var(--muted2); text-transform:uppercase; margin-bottom:6px; }
+.serp .serp-url{ font-size:8pt; color:#202124; }
+.serp .serp-title{ font-size:12pt; color:#1a0dab; font-weight:500; margin:2px 0 2px; line-height:1.25; }
+.serp .serp-desc{ font-size:8.5pt; color:#4d5156; line-height:1.4; }
+
+/* back cover */
+.back{ width:8.5in; height:11in; padding:0.9in 0.75in; background:linear-gradient(145deg,#0B1020,#161B33 70%,#0B1020); color:#fff; position:relative; page-break-before:always; overflow:hidden; }
+.back .eyebrow{ margin-top:1.4in; }
+.back h1{ font-size:40pt; line-height:1.03; font-weight:800; letter-spacing:-1.4px; margin-top:14px; }
+.back h1 .o{ color:var(--orange); }
+.back .sub{ margin-top:16px; font-size:11pt; color:rgba(255,255,255,.75); max-width:5in; }
+.back .ns{ margin-top:34px; font-size:7.5pt; letter-spacing:2.5px; font-weight:700; color:var(--muted2); }
+.back .steps{ display:flex; gap:12px; margin-top:12px; }
+.back .step{ flex:1; border:1px solid rgba(255,255,255,.12); border-radius:10px; padding:14px; }
+.back .step .sn{ font-size:16pt; font-weight:800; color:var(--orange); }
+.back .step .st{ font-size:10pt; font-weight:800; margin-top:6px; }
+.back .step .sd{ font-size:8pt; color:var(--muted2); margin-top:5px; line-height:1.5; }
+.back .contact{ position:absolute; left:0.75in; right:0.75in; bottom:0.9in; border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:16px 20px; display:flex; gap:40px; }
+.back .contact .cl{ font-size:7pt; letter-spacing:2px; font-weight:700; color:var(--muted2); }
+.back .contact .cv{ font-size:10pt; font-weight:800; margin-top:4px; }
+.back .contact .cv .lt{ font-weight:500; color:var(--muted2); font-size:8.5pt; }
+.back-bar{ position:absolute; left:0; right:0; bottom:0; height:10px; background:linear-gradient(90deg,var(--orange),var(--orange-deep)); }
+
+.wk{ display:flex; gap:0; margin:10px 0; border-radius:8px; overflow:hidden; }
+.weekrow{ display:flex; margin-bottom:6px; }
+.weekrow .wl{ width:1.3in; flex:none; background:#0B1020; color:#fff; border-radius:8px 0 0 8px; padding:10px 12px; }
+.weekrow .wl b{ font-size:10pt; font-weight:800; display:block; }
+.weekrow .wl span{ font-size:7.5pt; color:var(--muted2); }
+.weekrow .wb{ flex:1; background:var(--tint); border-radius:0 8px 8px 0; padding:10px 14px; position:relative; }
+.weekrow .wb ul{ margin-left:15px; } .weekrow .wb li{ font-size:8.5pt; margin-bottom:2px; }
+.weekrow .wb .who{ position:absolute; right:14px; top:10px; font-size:8pt; font-weight:800; color:var(--orange); }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="orb"></div><div class="orb2"></div>
+  <div class="cover-top">
+    <div class="logo-text">Qtonix<span class="dot">.</span></div>
+    <div class="cover-series">SEO AUDIT SERIES<br>OCT</div>
+  </div>
+  <div class="eyebrow"><span class="dash"></span>PRE-SEO AUDIT REPORT</div>
+  <h1>Website Health &amp;<br>Search Visibility <span class="o">Audit</span></h1>
+  <div class="cover-sub">An in-depth review of technical SEO, on-page content, backlinks, competitors and AI search visibility, with a clear 30-day action plan.</div>
+  <div class="prepared">
+    <div class="lg"><span class="lgfallback">OC</span></div>
+    <div>
+      <div class="pl">PREPARED FOR</div>
+      <div class="pn">Oil Chef</div>
+      <div class="pu">oilchef.com</div>
+    </div>
+  </div>
+  <div class="cover-stats">
+    <div class="cover-stat"><b>13</b><span>chapters covering technical, on-page, off-page &amp; AI search</span></div>
+    <div class="cover-stat"><b>14</b><span>pages found in the sitemap</span></div>
+    <div class="cover-stat"><b>10</b><span>health areas scored from 0 to 100</span></div>
+  </div>
+  <div class="cover-foot">
+    <div><div class="cf">PREPARED BY</div><div class="cfv">Sandeep<span class="lt"> · Qtonix Software Pvt. Ltd.</span></div></div>
+    <div><div class="cf">SCOPE</div><div class="cfv">Technical · On-Page · Off-Page<span class="lt"> · Competitors · AI</span></div></div>
+    <div><div class="cf">AUDIT DATE</div><div class="cfv">11 Oct 2026<span class="lt"> · v1.0</span></div></div>
+  </div>
+  <div class="cover-bar"></div>
+</div>
+
+<div class="toc-page">
+  <div class="toc-side" style="position:relative">
+    <div class="logo-text">Qtonix<span class="dot">.</span></div>
+    <div class="eyebrow">INSIDE THIS REPORT</div>
+    <h2>Table of<br>Contents</h2>
+    <div class="uline"></div>
+    <p>Each chapter shows what we checked, what we found and what we recommend. Screenshots are taken from the tools we use for every audit.</p>
+    <div class="foot">Pre-SEO Audit Report<br>oilchef.com</div>
+  </div>
+  <div class="toc-main">
+    <div class="toc-row"><div class="toc-n">01</div><div><div class="toc-t">Overall Site Observation</div><div class="toc-d">Health score, top issues and what is already working</div></div></div>
+    <div class="toc-row"><div class="toc-n">02</div><div><div class="toc-t">Search Visibility Stats</div><div class="toc-d">Organic traffic, keywords and Google index check</div></div></div>
+    <div class="toc-row"><div class="toc-n">03</div><div><div class="toc-t">Technical SEO Stats</div><div class="toc-d">Meta robots, robots.txt, XML sitemap, response codes</div></div></div>
+    <div class="toc-row"><div class="toc-n">04</div><div><div class="toc-t">Page Performance &amp; Mobile</div><div class="toc-d">PageSpeed, Core Web Vitals, page size, responsiveness</div></div></div>
+    <div class="toc-row"><div class="toc-n">05</div><div><div class="toc-t">On Page SEO Stats</div><div class="toc-d">Titles, descriptions, headings, images, schema, social tags</div></div></div>
+    <div class="toc-row"><div class="toc-n">06</div><div><div class="toc-t">Content Quality &amp; Trust</div><div class="toc-d">Dummy text, testimonials, thin pages, E-E-A-T</div></div></div>
+    <div class="toc-row"><div class="toc-n">07</div><div><div class="toc-t">Site Architecture</div><div class="toc-d">Menu, URLs, internal linking and page structure</div></div></div>
+    <div class="toc-row"><div class="toc-n">08</div><div><div class="toc-t">Off Page Stats</div><div class="toc-d">Backlink profile, authority and link opportunities</div></div></div>
+    <div class="toc-row"><div class="toc-n">09</div><div><div class="toc-t">Competitor Overview</div><div class="toc-d">How the market looks in search</div></div></div>
+    <div class="toc-row"><div class="toc-n">10</div><div><div class="toc-t">Keyword Opportunity Map</div><div class="toc-d">The searches each page should target</div></div></div>
+    <div class="toc-row"><div class="toc-n">11</div><div><div class="toc-t">AI Search Visibility</div><div class="toc-d">ChatGPT, Perplexity, Gemini and Google AI Overviews</div></div></div>
+    <div class="toc-row"><div class="toc-n">12</div><div><div class="toc-t">Tracking &amp; Social Profiles</div><div class="toc-d">Analytics, tag manager, pixels and social media presence</div></div></div>
+    <div class="toc-row"><div class="toc-n">13</div><div><div class="toc-t">Action Plan &amp; Approval</div><div class="toc-d">What we need from you to get started</div></div></div>
+  </div>
+</div>
+
+<div class="page page-break-before">
+  <div class="rhead"><div class="l">Pre-SEO Audit Report &nbsp;|&nbsp; oilchef.com</div><div class="r">Qtonix<span class="dot">.</span></div></div>
+  <div class="band"><div class="no">01</div><div class="ch">OVERVIEW</div><h2>Overall Site Observation</h2><div class="sub">A quick look at where oilchef.com stands today, before the campaign starts.</div></div>
+  <div class="stats">
+    <div class="stat"><b>36</b><span>overall health score (out of 100)</span></div><div class="stat"><b>14</b><span>pages found in the XML sitemap</span></div><div class="stat"><b>53</b><span>mobile page-speed score (PageSpeed)</span></div><div class="stat"><b>10/43</b><span>homepage images missing alt text</span></div>
+  </div>
+  <div class="sub-h"><span class="n">1.1</span> Homepage <span class="src">| oilchef.com</span></div>
+  <div class="shot"><div class="t">[ HOMEPAGE SCREENSHOT ]</div><div class="n">Homepage of oilchef.com</div></div>
+  <p class="lead">The homepage was reviewed as part of this audit.</p>
+
+  <div class="sub-h"><span class="n">1.2</span> SEO Health Score <span class="src">| Qtonix audit checklist</span></div>
+  <div class="health">
+    <div class="dial"><div class="hole"><div class="hv">36</div><div class="hl">out of 100</div></div></div>
+    <div class="bars">
+      <div class="hbar"><div class="hn">Crawling &amp; Indexing</div><div class="ht"><i style="width:70%;background:#16a34a"></i></div><div class="hs">7/10</div></div><div class="hbar"><div class="hn">On-Page SEO</div><div class="ht"><i style="width:30%;background:#dc2626"></i></div><div class="hs">3/10</div></div><div class="hbar"><div class="hn">Content &amp; Trust</div><div class="ht"><i style="width:50%;background:#f59e0b"></i></div><div class="hs">5/10</div></div><div class="hbar"><div class="hn">Speed &amp; Core Web Vitals</div><div class="ht"><i style="width:50%;background:#f59e0b"></i></div><div class="hs">5/10</div></div><div class="hbar"><div class="hn">Mobile &amp; UX Basics</div><div class="ht"><i style="width:60%;background:#f59e0b"></i></div><div class="hs">6/10</div></div><div class="hbar"><div class="hn">Schema &amp; Social Tags</div><div class="ht"><i style="width:50%;background:#f59e0b"></i></div><div class="hs">5/10</div></div><div class="hbar"><div class="hn">Backlinks &amp; Authority</div><div class="ht"><i style="width:10%;background:#dc2626"></i></div><div class="hs">1/10</div></div><div class="hbar"><div class="hn">Tracking &amp; Measurement</div><div class="ht"><i style="width:10%;background:#dc2626"></i></div><div class="hs">1/10</div></div><div class="hbar"><div class="hn">AI Search Visibility</div><div class="ht"><i style="width:20%;background:#dc2626"></i></div><div class="hs">2/10</div></div><div class="hbar"><div class="hn">Brand &amp; Social Presence</div><div class="ht"><i style="width:10%;background:#dc2626"></i></div><div class="hs">1/10</div></div>
+    </div>
+  </div>
+  <p class="keyline">Each area is scored out of 10 based on the checks in this report. The total gives a <b>starting score of 36 / 100</b>. Once the Week 1 fixes are live, the score can realistically pass 50.</p>
+
+  <div class="sub-h"><span class="n">1.3</span> Top 5 Issues That Matter Most</div>
+  <table><thead><tr><th style="width:8%">#</th><th>Issue</th><th class="r" style="width:16%">Priority</th></tr></thead><tbody>
+    
+  </tbody></table>
+
+  <div class="sub-h"><span class="n">1.4</span> What Is Working vs What Needs Fixing</div>
+  <div class="cols">
+    <div class="col good"><h4>What is already working</h4><ul></ul></div>
+    <div class="col bad"><h4>What needs fixing</h4><ul></ul></div>
+  </div>
+
+  <div class="sub-h page-break-before"><span class="n">1.5</span> Quick Summary</div>
+  <table><thead><tr><th style="width:36%">Element</th><th class="c" style="width:14%">Status</th><th>Remarks</th></tr></thead><tbody>
+    <tr><td><b>Website visible on Google / Bing</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td>No noindex block</td></tr><tr><td><b>XML Sitemap</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td>Found</td></tr><tr><td><b>Robots.txt</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td>Present</td></tr><tr><td><b>HTTPS / SSL</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td>Active</td></tr><tr><td><b>Canonical Tags</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td>Present</td></tr><tr><td><b>Meta Titles optimized</b></td><td class="c"><span class="badge b-fail">FAIL</span></td><td>&quot;Oil Chef&quot;</td></tr><tr><td><b>Meta Descriptions</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td>Present</td></tr><tr><td><b>Schema Markup</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td>Organization</td></tr><tr><td><b>Open Graph / Social Tags</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td>Present</td></tr><tr><td><b>Mobile Friendly</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td>Viewport set</td></tr>
+  </tbody></table>
+  <div class="callout crit"><div class="ct"><div class="cn">Key Takeaway</div><span class="badge b-crit">CRITICAL</span></div><p>The audit identified the key issues to fix before the campaign starts.</p></div>
+  <div class="willdo"><div class="cn">About This Report</div><p>This report shows where oilchef.com stands today. Every fix listed will be carried out by the Qtonix team once you approve the plan.</p></div>
+  <div class="sub-h"><span class="n">1.6</span> How to Read This Report</div>
+  <table><thead><tr><th style="width:20%">Label</th><th>Meaning</th></tr></thead><tbody>
+    <tr><td class="c"><span class="badge b-crit">CRITICAL</span></td><td>Stops the site from ranking at all. Fix before anything else.</td></tr>
+    <tr><td class="c"><span class="badge b-high">HIGH</span></td><td>Holds rankings or conversions back. Fix in the first month.</td></tr>
+    <tr><td class="c"><span class="badge b-med">MEDIUM</span></td><td>Worth fixing as part of ongoing optimisation.</td></tr>
+    <tr><td class="c"><span class="badge b-good">GOOD</span></td><td>Working correctly. No action needed.</td></tr>
+    <tr><td class="c"><span class="badge b-info">INFO</span></td><td>For reference or baseline, no direct action needed.</td></tr>
+  </tbody></table>
+</div>
+
+<div class="page page-break-before">
+  <div class="rhead"><div class="l">Pre-SEO Audit Report &nbsp;|&nbsp; oilchef.com</div><div class="r">Qtonix<span class="dot">.</span></div></div>
+  <div class="band"><div class="no">02</div><div class="ch">CHAPTER</div><h2>Search Visibility Stats</h2><div class="sub">Current organic traffic, keywords and whether Google has the site in its index.</div></div>
+
+  
+
+  <div class="sub-h first"><span class="n">2.1</span> Overall Site Stats<span class="src">| SEMrush</span></div>
+
+
+  
+  
+
+
+  <div class="callout info"><div class="ct"><div class="cn">Current Observation</div><span class="badge b-info">INFO</span></div><ul><li>Organic traffic, keyword rankings and domain authority will be confirmed from SEMrush.</li><li>These figures form the baseline we will grow from.</li></ul></div>
+
+  
+
+  
+
+  
+  <div class="sub-h"><span class="n">2.2</span> Google Index Check<span class="src">| site:oilchef.com</span></div>
+
+
+  
+  
+
+
+  <div class="callout info"><div class="ct"><div class="cn">Current Observation</div><span class="badge b-info">INFO</span></div><ul><li>The main pages (home, contact, products, about) are set up to be indexed.</li><li>The exact number of indexed pages will be confirmed from Google Search Console.</li></ul></div>
+
+  
+
+  
+
+  
+</div>
+<div class="page page-break-before">
+  <div class="rhead"><div class="l">Pre-SEO Audit Report &nbsp;|&nbsp; oilchef.com</div><div class="r">Qtonix<span class="dot">.</span></div></div>
+  <div class="band"><div class="no">03</div><div class="ch">CHAPTER</div><h2>Technical SEO Stats</h2><div class="sub">Can search engines find, crawl and index the website?</div></div>
+
+  
+
+  <div class="sub-h first"><span class="n">3.1</span> Meta Robots Tag<span class="src">| Page Source</span></div>
+
+
+  
+  
+
+
+  <div class="callout good"><div class="ct"><div class="cn">Current Observation</div><span class="badge b-good">GOOD</span></div><p>No noindex block found on the homepage.</p></div>
+
+  
+
+  
+
+  
+  <div class="sub-h"><span class="n">3.2</span> Robots.txt<span class="src">| oilchef.com/robots.txt</span></div>
+
+
+  
+  
+
+
+  <div class="callout info"><div class="ct"><div class="cn">Current Observation</div><span class="badge b-medium">MEDIUM</span></div><p>A robots.txt file is present. AI crawlers (GPTBot, PerplexityBot, ClaudeBot, Google-Extended) are not blocked, which is good. </p></div>
+
+  
+
+  
+
+  
+  <div class="sub-h"><span class="n">3.3</span> XML Sitemap<span class="src">| Browser</span></div>
+
+
+  
+  
+
+
+  <div class="callout good"><div class="ct"><div class="cn">Current Observation</div><span class="badge b-good">GOOD</span></div><p>An XML sitemap is present and lists 14 pages, organised as a sitemap index across 2 child sitemaps (each child groups a set of pages — they are not pages themselves). This gives search engines a clear map of the site.</p></div>
+
+  
+
+  
+
+  
+  <div class="sub-h"><span class="n">3.4</span> Response Codes &amp; Links<span class="src">| Screaming Frog</span></div>
+
+
+  
+  
+
+
+
+  
+
+  
+
+  
+  <div class="sub-h"><span class="n">3.5</span> Technical Checklist</div>
+
+
+  
+  
+
+  <table><thead><tr><th class="" style="width:34%">Check</th><th class="c" style="width:14%">Status</th><th class="" >Finding</th></tr></thead><tbody>
+    <tr><td class=""><b>Meta robots tag</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td class="">Indexable</td></tr><tr><td class=""><b>XML sitemap</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td class="">Present</td></tr><tr><td class=""><b>Robots.txt</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td class="">Present</td></tr><tr><td class=""><b>HTTPS / SSL</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td class="">Active</td></tr><tr><td class=""><b>Canonical tags</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td class="">Present</td></tr><tr><td class=""><b>Mobile viewport</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td class="">Set</td></tr>
+  </tbody></table>
+
+
+  
+
+  
+
+  
+</div>
+<div class="page page-break-before">
+  <div class="rhead"><div class="l">Pre-SEO Audit Report &nbsp;|&nbsp; oilchef.com</div><div class="r">Qtonix<span class="dot">.</span></div></div>
+  <div class="band"><div class="no">04</div><div class="ch">CHAPTER</div><h2>Page Performance &amp; Mobile Usability</h2><div class="sub">How fast the website loads and how it works on mobile.</div></div>
+
+  <div class="stats"><div class="stat"><b>0.73 MB</b><span>homepage size (target under 2 MB)</span></div><div class="stat"><b>43</b><span>images on the homepage</span></div><div class="stat"><b>10</b><span>images missing alt text</span></div></div>
+
+  <div class="sub-h first"><span class="n">4.1</span> Page Performance: Mobile<span class="src">| Lighthouse</span></div>
+
+
+  
+  
+
+
+  <div class="callout high"><div class="ct"><div class="cn">Current Observation</div><span class="badge b-high">HIGH</span></div><p>The mobile performance score is 53/100 and the layout shift (CLS) score is 0.116. Google uses these as ranking signals, so improving them is a priority. Our team will work on image sizes, render-blocking files and server response time.</p></div>
+
+  
+
+  
+
+  
+  <div class="sub-h"><span class="n">4.2</span> Page Performance: Desktop<span class="src">| Lighthouse</span></div>
+
+
+  
+  
+
+
+  <div class="callout high"><div class="ct"><div class="cn">Current Observation</div><span class="badge b-high">HIGH</span></div><p>The desktop performance score is 67/100. Desktop is usually faster than mobile; the same speed fixes will lift both.</p></div>
+
+  
+
+  
+
+  
+  <div class="sub-h"><span class="n">4.3</span> Core Web Vitals<span class="src">| Google PageSpeed Insights</span></div>
+
+
+  
+  
+
+  <table><thead><tr><th class="" >Metric</th><th class="" >What it measures</th><th class="" >Good target</th><th class="" >This site</th></tr></thead><tbody>
+    <tr><td class=""><b>LCP</b></td><td class="">How quickly the main content appears</td><td class="">2.5 s or less</td><td class="">18.4 s</td></tr><tr><td class=""><b>INP</b></td><td class="">How quickly the page reacts to a tap</td><td class="">200 ms or less</td><td class="">~890 ms TBT</td></tr><tr><td class=""><b>CLS</b></td><td class="">Whether the layout jumps while loading</td><td class="">0.1 or less</td><td class="">0.116</td></tr><tr><td class=""><b>TBT</b></td><td class="">Total time the page is blocked from input</td><td class="">200 ms or less</td><td class="">890 ms</td></tr><tr><td class=""><b>Speed Index</b></td><td class="">How fast content is visually populated</td><td class="">3.4 s or less</td><td class="">9.2 s</td></tr><tr><td class=""><b>Performance Score</b></td><td class="">Lighthouse lab test, 0 to 100</td><td class="">90+</td><td class="">Mobile 53 / Desktop 67</td></tr>
+  </tbody></table>
+
+
+  
+
+  
+
+  
+  <div class="sub-h"><span class="n">4.4</span> Mobile Usability<span class="src">| Responsiveness</span></div>
+
+
+  
+  
+
+
+  <div class="callout good"><div class="ct"><div class="cn">Current Observation</div><span class="badge b-good">GOOD</span></div><p>The website is mobile friendly and the layout adjusts well. We will re-test on real devices after the speed work.</p></div>
+
+  
+
+  
+
+  
+</div>
+<div class="page page-break-before">
+  <div class="rhead"><div class="l">Pre-SEO Audit Report &nbsp;|&nbsp; oilchef.com</div><div class="r">Qtonix<span class="dot">.</span></div></div>
+  <div class="band"><div class="no">05</div><div class="ch">CHAPTER</div><h2>On Page SEO Stats</h2><div class="sub">Titles, descriptions, headings, images, schema and social tags.</div></div>
+
+  
+
+  <div class="sub-h first"><span class="n">5.1</span> Meta Title &amp; Meta Description<span class="src">| Homepage</span></div>
+
+  <div class="serp">
+    <div class="serp-lbl">How this page looks in Google</div>
+    <div class="serp-url">oilchef.com</div>
+    <div class="serp-title">Oil Chef</div>
+    <div class="serp-desc">No meta description set — Google will auto-generate a snippet from page text, which is usually weaker.</div>
+  </div>
+
+  
+  
+
+
+  <div class="callout high"><div class="ct"><div class="cn">Current Observation</div><span class="badge b-high">HIGH</span></div><ul><li>Title: &quot;Oil Chef&quot; (8 chars) — short, room to add keywords</li><li>Meta description: present (0 chars)</li><li>H1 tags: 1</li><li>Images: 43 on the homepage, 10 missing alt text</li><li>Schema types: Organization</li><li>NAP (name / address / phone): phone +1 800 555 1234 · email info@oilchef.com · address 123 Market Street, London</li></ul></div>
+  <div class="callout high"><div class="ct"><div class="cn">Brand name consistency</div><span class="badge b-high">HIGH</span></div><p>The brand name is written inconsistently across the site: &quot;Oil Chef&quot; vs &quot;OiL Chef&quot;. Pick one exact spelling and use it everywhere (header, footer, titles, schema) so search engines and AI tools treat it as one consistent brand.</p></div>
+
+  
+
+  
+
+  
+  <div class="sub-h"><span class="n">5.2</span> Schema Markup<span class="src">| Rich Results Test</span></div>
+
+
+  
+  
+
+
+  <div class="callout good"><div class="ct"><div class="cn">Current Observation</div><span class="badge b-good">GOOD</span></div><p>Schema found: Organization.</p></div>
+
+  
+
+  
+
+  
+  <div class="sub-h"><span class="n">5.3</span> Social Tags<span class="src">| Open Graph</span></div>
+
+
+  
+  
+
+
+  <div class="callout good"><div class="ct"><div class="cn">Current Observation</div><span class="badge b-good">GOOD</span></div><p>Open Graph tags are present.</p></div>
+
+  
+
+  
+
+  
+  <div class="sub-h"><span class="n">5.4</span> Images<span class="src">| Crawl</span></div>
+
+
+  
+  
+
+
+  <div class="callout high"><div class="ct"><div class="cn">Current Observation</div><span class="badge b-high">HIGH</span></div><ul><li>Images on homepage: 43</li><li>Images missing alt text: 10</li></ul></div>
+
+  <div class="willdo"><div class="cn">What Qtonix Will Do (on your approval)</div><p>Add descriptive alt text to all images and compress large files.</p></div>
+
+  
+
+  
+</div>
+<div class="page page-break-before">
+  <div class="rhead"><div class="l">Pre-SEO Audit Report &nbsp;|&nbsp; oilchef.com</div><div class="r">Qtonix<span class="dot">.</span></div></div>
+  <div class="band"><div class="no">06</div><div class="ch">CHAPTER</div><h2>Content Quality &amp; Trust</h2><div class="sub">Google rewards Experience, Expertise, Authority and Trust (E-E-A-T).</div></div>
+
+  
+
+  <div class="sub-h first"><span class="n">6.1</span> Content Review</div>
+
+
+  
+  
+
+
+  <div class="callout good"><div class="ct"><div class="cn">Current Observation</div><span class="badge b-good">GOOD</span></div><ul><li>Homepage word count: 981 — a healthy amount of content</li><li>HTML-to-text ratio: 6.0% — low, the page is heavy on code vs. readable text</li><li>Content vs. title/description: checked against the homepage title and meta description</li><li>Writing quality: reviewed for spelling, clarity and signs of thin or auto-generated copy</li></ul></div>
+  <div class="callout high"><div class="ct"><div class="cn">Brand consistency (E-E-A-T)</div><span class="badge b-high">HIGH</span></div><p>The brand name appears in more than one form (Oil Chef / OiL Chef). Inconsistent naming weakens trust signals; we will standardise it across every page.</p></div>
+
+  <div class="willdo"><div class="cn">What Qtonix Will Do (on your approval)</div><p>Our content team will write SEO-friendly content for every main page (300+ words each), fix any spelling or clarity issues, align copy with the target keywords, and remove placeholder or thin text.</p></div>
+
+  
+
+  
+</div>
+<div class="page page-break-before">
+  <div class="rhead"><div class="l">Pre-SEO Audit Report &nbsp;|&nbsp; oilchef.com</div><div class="r">Qtonix<span class="dot">.</span></div></div>
+  <div class="band"><div class="no">07</div><div class="ch">CHAPTER</div><h2>Site Architecture</h2><div class="sub">Menu, URL structure and how pages link to each other.</div></div>
+
+  
+
+  <div class="sub-h first"><span class="n">7.1</span> Architecture Analysis</div>
+
+
+  
+  
+
+  <table><thead><tr><th class="" >Element</th><th class="" >Finding</th></tr></thead><tbody>
+    <tr><td class=""><b>Pages in the sitemap</b></td><td class="">14 URLs across 2 child sitemaps</td></tr><tr><td class=""><b>Internal links on homepage</b></td><td class="">28</td></tr><tr><td class=""><b>Canonical tags</b></td><td class="">Present — helps avoid duplicate content</td></tr><tr><td class=""><b>URL style</b></td><td class="">Readable, keyword-friendly URLs are recommended across all pages</td></tr>
+  </tbody></table>
+
+
+  
+
+  
+
+  
+  <div class="sub-h"><span class="n">7.2</span> Structure Notes</div>
+
+
+  
+  
+
+
+  <div class="callout info"><div class="ct"><div class="cn">Current Observation</div><span class="badge b-info">INFO</span></div><p>The site&#x27;s main sections are reachable from the top navigation. As new content pages are added, our team will plan a clear category structure and internal-linking plan so both visitors and search engines can find every page easily.</p></div>
+
+  
+
+  
+
+  
+</div>
+<div class="page page-break-before">
+  <div class="rhead"><div class="l">Pre-SEO Audit Report &nbsp;|&nbsp; oilchef.com</div><div class="r">Qtonix<span class="dot">.</span></div></div>
+  <div class="band"><div class="no">08</div><div class="ch">CHAPTER</div><h2>Off Page Stats</h2><div class="sub">Who links to the website today, and how strong those links are.</div></div>
+
+  
+
+  <div class="sub-h first"><span class="n">8.1</span> Backlink Status<span class="src">| SEMrush</span></div>
+
+
+  
+  
+
+
+
+  
+
+  
+
+  
+  <div class="sub-h"><span class="n">8.2</span> Website Authority<span class="src">| Moz</span></div>
+
+
+  
+  
+
+
+
+  
+
+  
+
+  
+</div>
+<div class="page page-break-before">
+  <div class="rhead"><div class="l">Pre-SEO Audit Report &nbsp;|&nbsp; oilchef.com</div><div class="r">Qtonix<span class="dot">.</span></div></div>
+  <div class="band"><div class="no">09</div><div class="ch">CHAPTER</div><h2>Competitor Overview</h2><div class="sub">How the market looks in search.</div></div>
+
+  
+
+  <div class="sub-h first"><span class="n">9.1</span> Competitor Traffic<span class="src">| SEMrush</span></div>
+
+
+  
+  
+
+
+
+  
+
+  
+
+  
+  <div class="sub-h"><span class="n">9.2</span> Where You Can Win</div>
+
+
+  
+  
+
+  <table><thead><tr><th class="" >Competitor strength</th><th class="" >Your opening</th></tr></thead><tbody>
+    <tr><td class="">Big players own broad terms</td><td class="">Target niche, buying-intent searches first</td></tr>
+  </tbody></table>
+
+
+  
+
+  
+
+  
+</div>
+<div class="page page-break-before">
+  <div class="rhead"><div class="l">Pre-SEO Audit Report &nbsp;|&nbsp; oilchef.com</div><div class="r">Qtonix<span class="dot">.</span></div></div>
+  <div class="band"><div class="no">10</div><div class="ch">CHAPTER</div><h2>Keyword Opportunity Map</h2><div class="sub">The main search phrase each page should focus on.</div></div>
+
+  
+
+  <div class="sub-h first"><span class="n">10.1</span> Proposed Keyword Targets<span class="src">| For approval</span></div>
+
+
+  
+  
+
+  <table><thead><tr><th class="" >Page</th><th class="" >Primary keyword</th><th class="" >Supporting keywords</th><th class="c" style="width:14%">Difficulty</th></tr></thead><tbody>
+    
+  </tbody></table>
+
+
+  
+
+  
+
+  
+  <div class="sub-h"><span class="n">10.2</span> Keyword Research<span class="src">| SEMrush Keyword Magic Tool</span></div>
+
+
+  
+  
+
+
+
+  
+
+  
+
+  
+</div>
+<div class="page page-break-before">
+  <div class="rhead"><div class="l">Pre-SEO Audit Report &nbsp;|&nbsp; oilchef.com</div><div class="r">Qtonix<span class="dot">.</span></div></div>
+  <div class="band"><div class="no">11</div><div class="ch">CHAPTER</div><h2>AI Search Visibility</h2><div class="sub">ChatGPT, Perplexity, Gemini and Google AI Overviews.</div></div>
+
+  
+
+  <div class="sub-h first"><span class="n">11.1</span> AI Answers<span class="src">| ChatGPT + Claude (live query)</span></div>
+
+
+  
+  
+
+
+  <div class="callout info"><div class="ct"><div class="cn">Current Observation</div><span class="badge b-info">INFO</span></div><p>AI assistant results could not be retrieved for this report. Our team will run these checks manually and include them in the first monthly report.</p></div>
+
+  
+
+  
+
+  
+  <div class="sub-h"><span class="n">11.2</span> AI Readiness Checklist</div>
+
+
+  
+  
+
+  <table><thead><tr><th class="" >Check</th><th class="c" style="width:14%">Status</th><th class="" >Finding</th></tr></thead><tbody>
+    <tr><td class=""><b>Indexed in Google and Bing</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td class="">Indexable</td></tr><tr><td class=""><b>AI crawlers allowed</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td class="">Not blocked in robots.txt</td></tr><tr><td class=""><b>Organization schema with social links</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td class="">Present</td></tr><tr><td class=""><b>Answer-friendly content (FAQs, guides)</b></td><td class="c"><span class="badge b-fail">FAIL</span></td><td class="">To build</td></tr>
+  </tbody></table>
+
+
+  <div class="willdo"><div class="cn">What Qtonix Will Do (on your approval)</div><p>Get the website indexed, add answer-friendly FAQ content and schema, and work on listings and article mentions so AI tools start recommending the brand.</p></div>
+
+  
+
+  
+</div>
+<div class="page page-break-before">
+  <div class="rhead"><div class="l">Pre-SEO Audit Report &nbsp;|&nbsp; oilchef.com</div><div class="r">Qtonix<span class="dot">.</span></div></div>
+  <div class="band"><div class="no">12</div><div class="ch">CHAPTER</div><h2>Tracking &amp; Social Profiles</h2><div class="sub">Analytics setup and social media presence.</div></div>
+
+  
+
+  <div class="sub-h first"><span class="n">12.1</span> Tracking &amp; Analytics<span class="src">| Page source</span></div>
+
+
+  
+  
+
+  <table><thead><tr><th class="" >Tool</th><th class="c" style="width:16%">Status</th><th class="" >What it does</th></tr></thead><tbody>
+    <tr><td class=""><b>Google Analytics 4</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td class="">Measures visitors, traffic sources and conversions</td></tr><tr><td class=""><b>Google Tag Manager</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td class="">Manages all tracking tags in one place</td></tr><tr><td class=""><b>Google Search Console</b></td><td class="c"><span class="badge b-unknown">UNKNOWN</span></td><td class="">Shows how the site performs in Google search (verify from the account)</td></tr><tr><td class=""><b>Bing Webmaster Tools</b></td><td class="c"><span class="badge b-unknown">UNKNOWN</span></td><td class="">The Bing equivalent of Search Console</td></tr><tr><td class=""><b>Meta (Facebook) Pixel</b></td><td class="c"><span class="badge b-fail">FAIL</span></td><td class="">Tracks visitors for Facebook/Instagram ads</td></tr><tr><td class=""><b>Other tools</b></td><td class="c"><span class="badge b-none">NONE</span></td><td class="">None detected</td></tr>
+  </tbody></table>
+
+  <div class="callout info"><div class="ct"><div class="cn">Current Observation</div><span class="badge b-info">INFO</span></div><p>Some tracking is already installed (GA4), via Google Tag Manager. Our team will confirm it is recording correctly and fill any gaps. Search Console access can only be confirmed from the account itself.</p></div>
+
+  <div class="willdo"><div class="cn">What Qtonix Will Do (on your approval)</div><p>Confirm or set up Google Analytics 4, Google Tag Manager, Search Console and Bing Webmaster Tools, with conversion tracking for the actions that matter to the business.</p></div>
+
+  
+
+  
+  <div class="sub-h"><span class="n">12.2</span> Social Profiles</div>
+
+
+  
+  
+
+  <table><thead><tr><th class="" >Profile</th><th class="c" style="width:14%">Status</th><th class="" >Link</th></tr></thead><tbody>
+    <tr><td class=""><b>Facebook</b></td><td class="c"><span class="badge b-pass">PASS</span></td><td class="">x</td></tr><tr><td class=""><b>Instagram</b></td><td class="c"><span class="badge b-fail">FAIL</span></td><td class="">—</td></tr><tr><td class=""><b>Twitter</b></td><td class="c"><span class="badge b-fail">FAIL</span></td><td class="">—</td></tr><tr><td class=""><b>Youtube</b></td><td class="c"><span class="badge b-fail">FAIL</span></td><td class="">—</td></tr><tr><td class=""><b>Tiktok</b></td><td class="c"><span class="badge b-fail">FAIL</span></td><td class="">—</td></tr><tr><td class=""><b>Linkedin</b></td><td class="c"><span class="badge b-fail">FAIL</span></td><td class="">—</td></tr>
+  </tbody></table>
+
+
+  
+
+  
+
+  
+</div>
+<div class="page page-break-before">
+  <div class="rhead"><div class="l">Pre-SEO Audit Report &nbsp;|&nbsp; oilchef.com</div><div class="r">Qtonix<span class="dot">.</span></div></div>
+  <div class="band"><div class="no">13</div><div class="ch">CHAPTER</div><h2>Action Plan &amp; Approval</h2><div class="sub">What we will do after your approval, and what we need from you.</div></div>
+
+  
+
+  <div class="sub-h first"><span class="n">13.1</span> What We Need From You</div>
+
+
+  
+  
+
+
+
+  
+
+  <div class="cols"><div class="col neu"><h4>Approval</h4><ul><li>Approval of the items in this report</li><li>Approval of new page content before it goes live</li></ul></div><div class="col neu"><h4>Access (whichever suits you)</h4><ul><li>Either share website admin / hosting access directly,</li><li>or introduce us to your developer and we will coordinate the changes with them.</li><li>Plus access to any existing Analytics / Search Console accounts, or a report export.</li></ul></div></div>
+
+  
+</div>
+<div class="page page-break-before">
+  <div class="rhead"><div class="l">Pre-SEO Audit Report &nbsp;|&nbsp; oilchef.com</div><div class="r">Qtonix<span class="dot">.</span></div></div>
+  <div class="band"><div class="no">A</div><div class="ch">CHAPTER</div><h2>Method &amp; Glossary</h2><div class="sub">How this audit was done and what the SEO terms mean.</div></div>
+
+  
+
+  <div class="sub-h first"><span class="n">A.1</span> How This Audit Was Done</div>
+
+
+  
+  
+
+  <table><thead><tr><th class="" >Area</th><th class="" >Source and date</th></tr></thead><tbody>
+    <tr><td class=""><b>On-page &amp; technical checks</b></td><td class="">Automated crawl of the live site, 11 Oct 2026</td></tr><tr><td class=""><b>Page speed</b></td><td class="">Google PageSpeed Insights</td></tr><tr><td class=""><b>Backlinks &amp; competitors</b></td><td class="">SEMrush (from uploaded screenshots)</td></tr>
+  </tbody></table>
+
+
+  
+
+  
+
+  
+  <div class="sub-h"><span class="n">A.2</span> Glossary</div>
+
+
+  
+  
+
+  <table><thead><tr><th class="" >Term</th><th class="" >Plain meaning</th></tr></thead><tbody>
+    <tr><td class=""><b>Indexing</b></td><td class="">Google saving a page so it can appear in search results</td></tr><tr><td class=""><b>noindex</b></td><td class="">A tag asking search engines not to show a page</td></tr><tr><td class=""><b>Meta description</b></td><td class="">The short summary shown under the title in Google</td></tr><tr><td class=""><b>Schema markup</b></td><td class="">Code that describes a business or page for search engines</td></tr><tr><td class=""><b>Core Web Vitals</b></td><td class="">Google&#x27;s speed and stability measurements</td></tr><tr><td class=""><b>E-E-A-T</b></td><td class="">Experience, Expertise, Authority, Trust: how Google judges quality</td></tr>
+  </tbody></table>
+
+
+  
+
+  
+
+  
+</div>
+
+<div class="back">
+  <div class="orb"></div>
+  <div class="logo-text">Qtonix<span class="dot">.</span></div>
+  <div class="eyebrow"><span class="dash"></span>THANK YOU</div>
+  <h1>Let's get Oil<br>found on <span class="o">Google</span> and<br><span class="o">AI search.</span></h1>
+  <div class="sub">Thank you for the opportunity to review your website. We're happy to walk you through every finding on a call.</div>
+  <div class="ns">NEXT STEPS</div>
+  <div class="steps">
+    <div class="step"><div class="sn">01</div><div class="st">Review the report</div><div class="sd">See where the website stands today and note any questions.</div></div>
+    <div class="step"><div class="sn">02</div><div class="st">Approve the plan</div><div class="sd">Confirm the items in “What We Need From You” (chapter 13).</div></div>
+    <div class="step"><div class="sn">03</div><div class="st">Access &amp; kick-off</div><div class="sd">Share access or connect us with your developer, and our team takes care of the fixes.</div></div>
+  </div>
+  <div class="contact">
+    <div><div class="cl">Sandeep</div><div class="cv">Project Manager<br><span class="lt">Qtonix Software Pvt. Ltd.</span></div></div>
+    <div><div class="cl">EMAIL</div><div class="cv">adam@qtonix.com</div></div>
+    <div><div class="cl">WEBSITE</div><div class="cv">www.qtonix.com</div></div>
+  </div>
+  <div class="back-bar"></div>
+</div>
+
+</body>
+</html>

@@ -99,12 +99,12 @@ function wrapperHtml(r) {
   .brand{font-weight:800;font-size:17px}.brand span{color:#FF6A00}
   .ttl{font-size:13px;color:#C9D8FF;font-weight:600}
   .dl{background:linear-gradient(90deg,#FF6A00,#FF4500);color:#fff;border:0;border-radius:9px;padding:10px 18px;font-weight:700;font-size:13px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
-  /* Grey stage; the real HTML report (fixed 816px / 8.5in wide) is rendered at
-     its TRUE width and SCALED to fit, centred, so it reads at document width
-     with blank grey margins left & right — no PDF-viewer zoom quirks. */
-  .stage{flex:1;background:#3a3d42;min-height:0;overflow:auto;padding:20px 0}
-  .scaler{margin:0 auto;transform-origin:top center}
-  .doc{width:816px;background:#fff;border-radius:6px;box-shadow:0 10px 40px rgba(0,0,0,.35);overflow:hidden}
+  /* The report (fixed 816px / 8.5in wide) is rendered at its TRUE width and
+     SCALED UP to fill the whole stage width, so the white document is one
+     continuous frame edge-to-edge — no grey gutters or floating box. */
+  .stage{flex:1;background:#fff;min-height:0;overflow:auto}
+  .scaler{transform-origin:top left}
+  .doc{width:816px;background:#fff;overflow:hidden}
   .doc iframe{width:816px;height:100%;border:0;display:block;background:#fff}
 </style></head><body>
 <header>
@@ -124,9 +124,10 @@ function wrapperHtml(r) {
   var doc = document.getElementById('doc');
   var frame = document.getElementById('rpt');
   function fit(){
-    // Available width inside the stage, leaving a side gutter for the grey margin.
-    var avail = stage.clientWidth - 48;
-    var scale = Math.min(1, avail / DOC_W);
+    // Scale the 816px document up/down to fill the FULL stage width, so the
+    // white frame spans edge-to-edge with no grey gutters on either side.
+    var avail = stage.clientWidth;
+    var scale = avail / DOC_W;
     if (scale <= 0) scale = 1;
     scaler.style.transform = 'scale(' + scale + ')';
     // Reserve the scaled footprint so the stage scrolls correctly.
