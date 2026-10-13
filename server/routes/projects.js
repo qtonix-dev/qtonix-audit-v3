@@ -908,6 +908,36 @@ router.get('/brandguide/:rid/view', guard, requireHrAdmin, async (req, res, next
     return res.status(404).json({ error: 'Not ready.' });
   } catch (e) { next(e); }
 });
+// Authed INLINE pdf (for the framed viewer below — not an attachment download).
+router.get('/brandguide/:rid/pdf', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r || r.kind !== BG_KIND) return res.status(404).json({ error: 'Guideline not found.' });
+    res.set('Cache-Control', 'no-store');
+    if (r.pdfPath && fsSync.existsSync(r.pdfPath)) { res.set('Content-Type', 'application/pdf'); res.set('Content-Disposition', 'inline'); return res.sendFile(path.resolve(r.pdfPath)); }
+    if (r.pdfUrl) return res.redirect(302, r.pdfUrl);
+    return res.status(404).json({ error: 'PDF not ready.' });
+  } catch (e) { next(e); }
+});
+// Framed, fit-to-width VIEWER page for a guideline (landscape deck centred with
+// blank side margins), so "View" in the report list shows the deck correctly.
+router.get('/brandguide/:rid/viewer', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r || r.kind !== BG_KIND) return res.status(404).json({ error: 'Guideline not found.' });
+    const tk = encodeURIComponent(String(req.query.token || ''));
+    const esc = (s) => String(s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const name = esc(r.businessName || r.domain);
+    const pdf = `/api/hr/projects/brandguide/${r.id}/pdf?token=${tk}&v=${r.completedAt || ''}`;
+    res.set('Cache-Control', 'no-store');
+    res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${name} — Brand Guidelines</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}html,body{height:100%}body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#2a2a2e;display:flex;justify-content:center;padding:20px}
+.frame{width:100%;max-width:1200px;height:100%;background:#000;border-radius:6px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.4)}object,iframe{width:100%;height:100%;border:0;display:block}
+@media(max-width:720px){body{padding:8px}}</style></head><body>
+<div class="frame"><object data="${pdf}#view=FitH&toolbar=1" type="application/pdf"><iframe title="brand guideline" src="${pdf}#view=FitH"></iframe></object></div>
+</body></html>`);
+  } catch (e) { next(e); }
+});
 
 // --- Brand-guideline public share link (landscape viewer at /bg/:slug) -------
 function bgSlug(name) { return String(name || 'brand').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 40) || 'brand'; }

@@ -87,17 +87,23 @@ function wrapperHtml(r) {
   .brand{font-weight:800;font-size:17px}.brand span{color:#E55B2A}
   .ttl{font-size:13px;color:#d9cfc4;font-weight:600}
   .dl{background:linear-gradient(90deg,#FF6A00,#E55B2A);color:#fff;border:0;border-radius:9px;padding:10px 18px;font-weight:700;font-size:13px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
-  .frame{flex:1;background:#3a3a3e;min-height:0}
+  /* Centred landscape deck in a framed card, blank space left and right. Wider
+     max-width than the portrait report since slides are 16:9. */
+  .stage{flex:1;background:#2a2a2e;min-height:0;display:flex;justify-content:center;padding:20px}
+  .frame{width:100%;max-width:1200px;background:#000;border-radius:6px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.4)}
   iframe,object{width:100%;height:100%;border:0;display:block}
+  @media (max-width:720px){ .stage{padding:10px} }
 </style></head><body>
 <header>
   <div><div class="brand">Qtonix<span>.</span></div><div class="ttl">${esc(r.businessName || r.domain)} — Brand Guidelines</div></div>
   <a class="dl" href="/bg/${esc(r.publicSlug)}/download">&#8595; Download PDF</a>
 </header>
-<div class="frame">
-  <object data="/bg/${esc(r.publicSlug)}/file#view=FitH&toolbar=1" type="application/pdf">
-    <iframe title="brand guideline" src="/bg/${esc(r.publicSlug)}/file#view=FitH"></iframe>
-  </object>
+<div class="stage">
+  <div class="frame">
+    <object data="/bg/${esc(r.publicSlug)}/file#view=FitH&toolbar=1" type="application/pdf">
+      <iframe title="brand guideline" src="/bg/${esc(r.publicSlug)}/file#view=FitH"></iframe>
+    </object>
+  </div>
 </div>
 </body></html>`;
 }

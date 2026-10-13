@@ -264,7 +264,9 @@ function PreSeoReports({ onBackTab }) {
                 <td className="px-3 py-3 text-right whitespace-nowrap">
                   <div className="inline-flex items-center gap-1.5 justify-end">
                     {r.status === 'complete' && <>
-                      {!isGuide(r) && <button onClick={() => setView(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>}
+                      {!isGuide(r)
+                        ? <button onClick={() => setView(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>
+                        : <button onClick={() => window.open(`${API_BASE}/api/hr/projects/brandguide/${r.id}/viewer?token=${encodeURIComponent(localStorage.getItem(TOKEN_KEY) || '')}`, '_blank')} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>}
                       <button onClick={() => download(r)} className="rounded-lg px-2.5 py-1.5 text-[11.5px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>PDF</button>
                       <button onClick={() => openEdit(r)} title="Edit" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:text-[#050A1F]">✎</button>
                       <button onClick={() => rerun(r)} title="Re-run with a fresh crawl" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:text-[#050A1F]">↻</button>
@@ -758,7 +760,9 @@ function ReportsTab({ id, data, onReload }) {
                   <td className="px-3 py-2.5 text-right whitespace-nowrap">
                     <div className="inline-flex gap-1.5 justify-end">
                       {r.status === 'complete' && <>
-                        {!isGuide(r) && <button onClick={() => setViewRep(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>}
+                        {!isGuide(r)
+                          ? <button onClick={() => setViewRep(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>
+                          : <button onClick={() => window.open(`${API_BASE}/api/hr/projects/brandguide/${r.id}/viewer?token=${encodeURIComponent(localStorage.getItem(TOKEN_KEY) || '')}`, '_blank')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>}
                         <button onClick={() => download(r)} className="rounded-lg px-2.5 py-1 text-[11px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>PDF</button>
                         <button onClick={() => openEdit(r)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">Edit</button>
                         <button onClick={() => rerun(r)} title="Re-run with a fresh crawl" className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-bold text-slate-600">↻</button>

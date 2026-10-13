@@ -98,20 +98,25 @@ function wrapperHtml(r) {
   .brand{font-weight:800;font-size:17px}.brand span{color:#FF6A00}
   .ttl{font-size:13px;color:#C9D8FF;font-weight:600}
   .dl{background:linear-gradient(90deg,#FF6A00,#FF4500);color:#fff;border:0;border-radius:9px;padding:10px 18px;font-weight:700;font-size:13px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
-  .frame{flex:1;background:#525659;min-height:0}
+  /* Grey stage with the document centred in a framed card, blank space left and
+     right so it reads like a document on a desk, not edge-to-edge. */
+  .stage{flex:1;background:#3a3d42;min-height:0;display:flex;justify-content:center;padding:20px}
+  .frame{width:100%;max-width:900px;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.35)}
   iframe,object{width:100%;height:100%;border:0;display:block}
+  @media (max-width:720px){ .stage{padding:10px} }
 </style></head><body>
 <header>
   <div><div class="brand">Qtonix<span>.</span></div><div class="ttl">${esc(r.businessName || r.domain)} — Pre-SEO Audit Report</div></div>
   <a class="dl" href="/pr/${esc(r.publicSlug)}/download">&#8595; Download PDF</a>
 </header>
-<div class="frame">
-  <!-- Embed the PDF fit-to-width so the fixed-size report scales to the screen
-       (the raw HTML is Letter-width and looked squashed on narrow screens). The
-       HTML view stays available as a fallback if the PDF can't be shown. -->
-  <object data="/pr/${esc(r.publicSlug)}/pdf#view=FitH&toolbar=1" type="application/pdf">
-    <iframe title="report" src="/pr/${esc(r.publicSlug)}/view"></iframe>
-  </object>
+<div class="stage">
+  <div class="frame">
+    <!-- Embed the PDF fit-to-width so the fixed-size report scales cleanly. The
+         HTML view stays available as a fallback if the PDF can't be shown. -->
+    <object data="/pr/${esc(r.publicSlug)}/pdf#view=FitH&toolbar=1" type="application/pdf">
+      <iframe title="report" src="/pr/${esc(r.publicSlug)}/view"></iframe>
+    </object>
+  </div>
 </div>
 </body></html>`;
 }
