@@ -93,33 +93,61 @@ function wrapperHtml(r) {
 <title>${esc(title)}</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#0A0E27;color:#fff;height:100vh;display:flex;flex-direction:column}
-  header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:linear-gradient(90deg,#0A0E28,#0435AC);gap:12px;flex-wrap:wrap}
+  html,body{height:100%}
+  body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#0A0E27;color:#fff;display:flex;flex-direction:column}
+  header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:linear-gradient(90deg,#0A0E28,#0435AC);gap:12px;flex-wrap:wrap;flex:none}
   .brand{font-weight:800;font-size:17px}.brand span{color:#FF6A00}
   .ttl{font-size:13px;color:#C9D8FF;font-weight:600}
   .dl{background:linear-gradient(90deg,#FF6A00,#FF4500);color:#fff;border:0;border-radius:9px;padding:10px 18px;font-weight:700;font-size:13px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
-  /* Grey stage; the document sits in a card whose shape matches the PAGE
-     (portrait Letter = 8.5:11), so the PDF fills the card with no white gap,
-     and the blank space is the grey stage on the left and right. The stage
-     scrolls if the page is taller than the viewport. */
-  .stage{flex:1;background:#3a3d42;min-height:0;display:flex;justify-content:center;align-items:flex-start;padding:20px;overflow:auto}
-  .frame{width:min(100%, calc((100vh - 110px) * 0.773));background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.35);aspect-ratio:8.5 / 11}
-  iframe,object{width:100%;height:100%;border:0;display:block}
-  @media (max-width:720px){ .stage{padding:10px;align-items:stretch} .frame{width:100%;height:100%;aspect-ratio:auto} }
+  /* Grey stage; the real HTML report (fixed 816px / 8.5in wide) is rendered at
+     its TRUE width and SCALED to fit, centred, so it reads at document width
+     with blank grey margins left & right — no PDF-viewer zoom quirks. */
+  .stage{flex:1;background:#3a3d42;min-height:0;overflow:auto;padding:20px 0}
+  .scaler{margin:0 auto;transform-origin:top center}
+  .doc{width:816px;background:#fff;border-radius:6px;box-shadow:0 10px 40px rgba(0,0,0,.35);overflow:hidden}
+  .doc iframe{width:816px;height:100%;border:0;display:block;background:#fff}
 </style></head><body>
 <header>
   <div><div class="brand">Qtonix<span>.</span></div><div class="ttl">${esc(r.businessName || r.domain)} — Pre-SEO Audit Report</div></div>
   <a class="dl" href="/pr/${esc(r.publicSlug)}/download">&#8595; Download PDF</a>
 </header>
-<div class="stage">
-  <div class="frame">
-    <!-- Embed the PDF fit-to-width so the fixed-size report scales cleanly. The
-         HTML view stays available as a fallback if the PDF can't be shown. -->
-    <object data="/pr/${esc(r.publicSlug)}/pdf#view=FitH&toolbar=1" type="application/pdf">
-      <iframe title="report" src="/pr/${esc(r.publicSlug)}/view"></iframe>
-    </object>
+<div class="stage" id="stage">
+  <div class="scaler" id="scaler">
+    <div class="doc" id="doc"><iframe id="rpt" title="report" src="/pr/${esc(r.publicSlug)}/view"></iframe></div>
   </div>
 </div>
+<script>
+(function(){
+  var DOC_W = 816;            // the report's true width (8.5in)
+  var stage = document.getElementById('stage');
+  var scaler = document.getElementById('scaler');
+  var doc = document.getElementById('doc');
+  var frame = document.getElementById('rpt');
+  function fit(){
+    // Available width inside the stage, leaving a side gutter for the grey margin.
+    var avail = stage.clientWidth - 48;
+    var scale = Math.min(1, avail / DOC_W);
+    if (scale <= 0) scale = 1;
+    scaler.style.transform = 'scale(' + scale + ')';
+    // Reserve the scaled footprint so the stage scrolls correctly.
+    var h = frame.getAttribute('data-h') || 0;
+    scaler.style.width = DOC_W + 'px';
+    scaler.style.height = (h ? (h * scale) + 'px' : '');
+    doc.style.height = h ? (h + 'px') : '';
+  }
+  // Measure the report's real height once it loads, then size & scale.
+  frame.addEventListener('load', function(){
+    try {
+      var d = frame.contentDocument || frame.contentWindow.document;
+      var h = Math.max(d.body.scrollHeight, d.documentElement.scrollHeight, 1056);
+      frame.setAttribute('data-h', h);
+    } catch(e){ frame.setAttribute('data-h', 1056 * 20); } // cross-origin fallback: tall enough for a multi-page report
+    fit();
+  });
+  window.addEventListener('resize', fit);
+  fit();
+})();
+</script>
 </body></html>`;
 }
 

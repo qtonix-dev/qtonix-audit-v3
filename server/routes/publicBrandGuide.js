@@ -49,6 +49,16 @@ router.get('/bg/:slug', async (req, res) => {
   res.send(wrapperHtml(r));
 });
 
+// The self-contained HTML deck (web fonts) — scaled to fit in the viewer.
+router.get('/bg/:slug/view', async (req, res) => {
+  const r = await findShared(req.params.slug);
+  if (!r) return res.status(404).send('Guideline not available.');
+  res.set('Cache-Control', 'no-store');
+  if (r.htmlPath && fs.existsSync(r.htmlPath)) return res.sendFile(path.resolve(r.htmlPath));
+  if (r.htmlUrl) return res.redirect(302, r.htmlUrl);
+  return res.status(404).send('The guideline is not ready yet.');
+});
+
 // The PDF, inline, for the iframe viewer.
 router.get('/bg/:slug/file', async (req, res) => {
   const r = await findShared(req.params.slug);
@@ -82,29 +92,35 @@ function wrapperHtml(r) {
 <title>${esc(title)}</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#1a1a1e;color:#fff;height:100vh;display:flex;flex-direction:column}
-  header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:linear-gradient(90deg,#16161a,#242424);gap:12px;flex-wrap:wrap}
+  html,body{height:100%}
+  body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#1a1a1e;color:#fff;display:flex;flex-direction:column}
+  header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:linear-gradient(90deg,#16161a,#242424);gap:12px;flex-wrap:wrap;flex:none}
   .brand{font-weight:800;font-size:17px}.brand span{color:#E55B2A}
   .ttl{font-size:13px;color:#d9cfc4;font-weight:600}
   .dl{background:linear-gradient(90deg,#FF6A00,#E55B2A);color:#fff;border:0;border-radius:9px;padding:10px 18px;font-weight:700;font-size:13px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
-  /* Landscape deck in a card whose shape matches the SLIDE (16:9), so slides
-     fill the card with no white gap; blank grey space sits left and right. */
-  .stage{flex:1;background:#2a2a2e;min-height:0;display:flex;justify-content:center;align-items:flex-start;padding:20px;overflow:auto}
-  .frame{width:min(100%, calc((100vh - 110px) * 1.778));background:#000;border-radius:6px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.4);aspect-ratio:16 / 9}
-  iframe,object{width:100%;height:100%;border:0;display:block}
-  @media (max-width:720px){ .stage{padding:10px;align-items:stretch} .frame{width:100%;height:100%;aspect-ratio:auto} }
+  /* The landscape deck HTML (1280px wide) is rendered at its true width and
+     SCALED to fit, centred, so slides show at full document width with blank
+     grey margins left & right. */
+  .stage{flex:1;background:#2a2a2e;min-height:0;overflow:auto;padding:20px 0}
+  .scaler{margin:0 auto;transform-origin:top center}
+  .doc{width:1280px;background:#000;border-radius:6px;box-shadow:0 10px 40px rgba(0,0,0,.4);overflow:hidden}
+  .doc iframe{width:1280px;height:100%;border:0;display:block}
 </style></head><body>
 <header>
   <div><div class="brand">Qtonix<span>.</span></div><div class="ttl">${esc(r.businessName || r.domain)} — Brand Guidelines</div></div>
   <a class="dl" href="/bg/${esc(r.publicSlug)}/download">&#8595; Download PDF</a>
 </header>
-<div class="stage">
-  <div class="frame">
-    <object data="/bg/${esc(r.publicSlug)}/file#view=FitH&toolbar=1" type="application/pdf">
-      <iframe title="brand guideline" src="/bg/${esc(r.publicSlug)}/file#view=FitH"></iframe>
-    </object>
-  </div>
+<div class="stage" id="stage">
+  <div class="scaler" id="scaler"><div class="doc" id="doc"><iframe id="rpt" title="brand guideline" src="/bg/${esc(r.publicSlug)}/view"></iframe></div></div>
 </div>
+<script>
+(function(){
+  var DOC_W=1280, stage=document.getElementById('stage'), scaler=document.getElementById('scaler'), doc=document.getElementById('doc'), frame=document.getElementById('rpt');
+  function fit(){ var avail=stage.clientWidth-48; var s=Math.min(1,avail/DOC_W); if(s<=0)s=1; scaler.style.transform='scale('+s+')'; var h=+frame.getAttribute('data-h')||720; scaler.style.width=DOC_W+'px'; scaler.style.height=(h*s)+'px'; doc.style.height=h+'px'; }
+  frame.addEventListener('load',function(){ try{var d=frame.contentDocument||frame.contentWindow.document; frame.setAttribute('data-h',Math.max(d.body.scrollHeight,d.documentElement.scrollHeight,720)); }catch(e){ frame.setAttribute('data-h',720*24); } fit(); });
+  window.addEventListener('resize',fit); fit();
+})();
+</script>
 </body></html>`;
 }
 function notFoundHtml() {

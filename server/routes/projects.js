@@ -928,13 +928,15 @@ router.get('/brandguide/:rid/viewer', guard, requireHrAdmin, async (req, res, ne
     const tk = encodeURIComponent(String(req.query.token || ''));
     const esc = (s) => String(s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const name = esc(r.businessName || r.domain);
-    const pdf = `/api/hr/projects/brandguide/${r.id}/pdf?token=${tk}&v=${r.completedAt || ''}`;
+    // Scale the real landscape HTML deck (1280px) to fit the viewport width —
+    // document width with blank side margins, no PDF-viewer zoom quirks.
+    const viewUrl = `/api/hr/projects/brandguide/${r.id}/view?token=${tk}&v=${r.completedAt || ''}`;
     res.set('Cache-Control', 'no-store');
     res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${name} — Brand Guidelines</title>
-<style>*{box-sizing:border-box;margin:0;padding:0}html,body{height:100%}body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#2a2a2e;display:flex;justify-content:center;align-items:flex-start;padding:20px;overflow:auto}
-.frame{width:min(100%, calc((100vh - 40px) * 1.778));background:#000;border-radius:6px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.4);aspect-ratio:16 / 9}object,iframe{width:100%;height:100%;border:0;display:block}
-@media(max-width:720px){body{padding:8px;align-items:stretch}.frame{width:100%;height:100%;aspect-ratio:auto}}</style></head><body>
-<div class="frame"><object data="${pdf}#view=FitH&toolbar=1" type="application/pdf"><iframe title="brand guideline" src="${pdf}#view=FitH"></iframe></object></div>
+<style>*{box-sizing:border-box;margin:0;padding:0}html,body{height:100%}body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#2a2a2e;overflow:auto;padding:20px 0}
+.scaler{margin:0 auto;transform-origin:top center}.doc{width:1280px;background:#000;border-radius:6px;box-shadow:0 10px 40px rgba(0,0,0,.4);overflow:hidden}.doc iframe{width:1280px;height:100%;border:0;display:block}</style></head><body>
+<div class="scaler" id="scaler"><div class="doc" id="doc"><iframe id="rpt" title="brand guideline" src="${viewUrl}"></iframe></div></div>
+<script>(function(){var DOC_W=1280,scaler=document.getElementById('scaler'),doc=document.getElementById('doc'),frame=document.getElementById('rpt');function fit(){var avail=document.documentElement.clientWidth-48;var s=Math.min(1,avail/DOC_W);if(s<=0)s=1;scaler.style.transform='scale('+s+')';var h=+frame.getAttribute('data-h')||720;scaler.style.width=DOC_W+'px';scaler.style.height=(h*s)+'px';doc.style.height=h+'px';}frame.addEventListener('load',function(){try{var d=frame.contentDocument||frame.contentWindow.document;frame.setAttribute('data-h',Math.max(d.body.scrollHeight,d.documentElement.scrollHeight,720));}catch(e){frame.setAttribute('data-h',720*24);}fit();});window.addEventListener('resize',fit);fit();})();</script>
 </body></html>`);
   } catch (e) { next(e); }
 });

@@ -4086,7 +4086,7 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
                 : <div className="bg-white">
                     {/* Filter completed tasks by the user they're assigned to —
                         the dropdown lists ONLY people who have a completed task. */}
-                    {completedAssignees.length > 1 && (
+                    {completedAssignees.length >= 1 && (
                       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-100 bg-slate-50/50">
                         <span className="text-[11px] font-bold text-slate-500">Filter by user:</span>
                         <select value={completedUser} onChange={(e) => setCompletedUser(e.target.value)} className="border border-slate-200 rounded-lg px-2.5 py-1 text-[12px] text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-green-200">
@@ -4276,6 +4276,7 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
   const [editingNoteId, setEditingNoteId] = useState(null);
   const [editingNoteText, setEditingNoteText] = useState('');
   const [newSub, setNewSub] = useState('');
+  const [doneUser, setDoneUser] = useState(''); // '' = all; else assignee id → filter completed subtasks
   const [subOpen, setSubOpen] = useState(null);   // open a subtask in its own drawer
   const [uploading, setUploading] = useState(false);
   const [upErr, setUpErr] = useState('');
@@ -4450,11 +4451,20 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
             );
             const subs = data.subtasks || [];
             const open = subs.filter((s) => s.stage !== 'completed');
-            const done = subs.filter((s) => s.stage === 'completed');
+            const allDone = subs.filter((s) => s.stage === 'completed');
+            // Users who have a COMPLETED subtask — populates the filter dropdown
+            // (only people with completed subtasks are listed).
+            const assigneesOf = (s) => (s.assignees && s.assignees.length) ? s.assignees : (s.assignee ? [s.assignee] : []);
+            const doneUsers = (() => {
+              const m = new Map();
+              for (const s of allDone) for (const a of assigneesOf(s)) { if (a && a.id != null && !m.has(a.id)) m.set(a.id, { id: a.id, name: a.name }); }
+              return [...m.values()].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+            })();
+            const done = doneUser ? allDone.filter((s) => assigneesOf(s).some((a) => a && String(a.id) === String(doneUser))) : allDone;
             // Group completed by the day they were completed (IST), newest first.
             const istDay = (iso) => { try { return new Date(new Date(iso).getTime() + 330 * 60000).toISOString().slice(0, 10); } catch { return '0000-00-00'; } };
             const todayIst = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
-            const doneToday = done.filter((s) => s.completedAt && istDay(s.completedAt) === todayIst).length;
+            const doneToday = allDone.filter((s) => s.completedAt && istDay(s.completedAt) === todayIst).length;
             const yestIst = new Date(Date.now() + 330 * 60000 - 86400000).toISOString().slice(0, 10);
             const groupsMap = {};
             for (const s of done) { const k = s.completedAt ? istDay(s.completedAt) : '0000-00-00'; (groupsMap[k] = groupsMap[k] || []).push(s); }
@@ -4478,9 +4488,21 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
                   <div className="flex items-center gap-2 px-3 py-2"><input value={newSub} onChange={(e) => setNewSub(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addSub()} placeholder="+ Add subtask" className="flex-1 text-sm focus:outline-none bg-transparent" /></div>
                 </div>
                 {/* Completed, grouped by date (newest first) */}
-                {done.length > 0 && (
+                {allDone.length > 0 && (
                   <div className="mt-3">
-                    <div className="text-[11px] font-extrabold text-green-700 mb-1 flex items-center gap-1.5">✓ Completed <span className="text-green-500 font-semibold">· {done.length}</span></div>
+                    <div className="mb-1.5 flex items-center gap-2 flex-wrap">
+                      <div className="text-[11px] font-extrabold text-green-700 flex items-center gap-1.5">✓ Completed <span className="text-green-500 font-semibold">· {done.length}{doneUser ? ` of ${allDone.length}` : ''}</span></div>
+                      {doneUsers.length >= 1 && (
+                        <div className="flex items-center gap-1.5 ml-auto">
+                          <span className="text-[10px] font-bold text-slate-400">By user:</span>
+                          <select value={doneUser} onChange={(e) => setDoneUser(e.target.value)} className="border border-slate-200 rounded-lg px-2 py-0.5 text-[11px] text-slate-600 bg-white focus:outline-none focus:ring-2 focus:ring-green-200">
+                            <option value="">All ({allDone.length})</option>
+                            {doneUsers.map((u) => <option key={u.id} value={u.id}>{titleCase(u.name)} ({allDone.filter((s) => assigneesOf(s).some((a) => a && String(a.id) === String(u.id))).length})</option>)}
+                          </select>
+                          {doneUser && <button onClick={() => setDoneUser('')} className="text-[10px] font-bold text-slate-400 hover:text-slate-600">Clear</button>}
+                        </div>
+                      )}
+                    </div>
                     <div className="rounded-lg border border-slate-200 overflow-hidden">
                       {groupKeys.map((k) => (
                         <div key={k}>
