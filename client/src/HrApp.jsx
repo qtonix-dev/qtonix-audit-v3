@@ -3743,6 +3743,7 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
   const [expandedTasks, setExpandedTasks] = useState({}); // inline subtask expand
   const [showCompleted, setShowCompleted] = useState(false);
   const [completedDaysShown, setCompletedDaysShown] = useState(3);
+  const [completedUser, setCompletedUser] = useState(''); // '' = all; else an assignee id → filter completed tasks
   const [filter, setFilter] = useState('all');      // all | mine | overdue | high
   const [sort, setSort] = useState('manual');       // manual | due | priority
 
@@ -3952,10 +3953,26 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
 
   const bucketByKey = Object.fromEntries((board.buckets || []).map((b) => [b.key, b]));
 
+  // Assignees who actually have a completed task here — used to populate the
+  // "filter by user" dropdown (only people with completed tasks are listed).
+  const completedAssignees = (() => {
+    const seen = new Map();
+    for (const t of (board.completed || [])) {
+      const list = (t.assignees && t.assignees.length) ? t.assignees : (t.assignee ? [t.assignee] : []);
+      for (const a of list) { if (a && a.id != null && !seen.has(a.id)) seen.set(a.id, { id: a.id, name: a.name }); }
+    }
+    return [...seen.values()].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  })();
+  const taskHasUser = (t, uid) => {
+    const list = (t.assignees && t.assignees.length) ? t.assignees : (t.assignee ? [t.assignee] : []);
+    return list.some((a) => a && String(a.id) === String(uid));
+  };
+
   // Group completed tasks by their completion date (IST), newest first, so the
   // section reads as Today / Yesterday / older days instead of one long list.
   const completedGroups = (() => {
-    const list = [...(board.completed || [])];
+    let list = [...(board.completed || [])];
+    if (completedUser) list = list.filter((t) => taskHasUser(t, completedUser));
     // Sort newest-completed first (fall back to updated/created if no timestamp).
     list.sort((a, b) => new Date(b.completedAt || b.updatedAt || 0) - new Date(a.completedAt || a.updatedAt || 0));
     const istDay = (d) => d ? new Date(new Date(d).getTime() + 330 * 60000).toISOString().slice(0, 10) : 'unknown';
@@ -4067,7 +4084,23 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
               (board.completed || []).length === 0
                 ? <div className="px-4 py-4 text-xs text-slate-400 bg-white">No completed tasks yet.</div>
                 : <div className="bg-white">
+                    {/* Filter completed tasks by the user they're assigned to —
+                        the dropdown lists ONLY people who have a completed task. */}
+                    {completedAssignees.length > 1 && (
+                      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-100 bg-slate-50/50">
+                        <span className="text-[11px] font-bold text-slate-500">Filter by user:</span>
+                        <select value={completedUser} onChange={(e) => setCompletedUser(e.target.value)} className="border border-slate-200 rounded-lg px-2.5 py-1 text-[12px] text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-green-200">
+                          <option value="">All users ({(board.completed || []).length})</option>
+                          {completedAssignees.map((a) => {
+                            const n = (board.completed || []).filter((t) => taskHasUser(t, a.id)).length;
+                            return <option key={a.id} value={a.id}>{titleCase(a.name)} ({n})</option>;
+                          })}
+                        </select>
+                        {completedUser && <button onClick={() => setCompletedUser('')} className="text-[11px] font-bold text-slate-400 hover:text-slate-600">Clear</button>}
+                      </div>
+                    )}
                     <HeaderRow />
+                    {completedGroups.length === 0 && <div className="px-4 py-4 text-xs text-slate-400">No completed tasks for this user.</div>}
                     {completedGroups.slice(0, completedDaysShown).map((g) => (
                       <div key={g.day}>
                         <div className="flex items-center gap-2 px-4 py-1.5 bg-slate-50/70 border-y border-slate-100">

@@ -98,12 +98,14 @@ function wrapperHtml(r) {
   .brand{font-weight:800;font-size:17px}.brand span{color:#FF6A00}
   .ttl{font-size:13px;color:#C9D8FF;font-weight:600}
   .dl{background:linear-gradient(90deg,#FF6A00,#FF4500);color:#fff;border:0;border-radius:9px;padding:10px 18px;font-weight:700;font-size:13px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
-  /* Grey stage with the document centred in a framed card, blank space left and
-     right so it reads like a document on a desk, not edge-to-edge. */
-  .stage{flex:1;background:#3a3d42;min-height:0;display:flex;justify-content:center;padding:20px}
-  .frame{width:100%;max-width:900px;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.35)}
+  /* Grey stage; the document sits in a card whose shape matches the PAGE
+     (portrait Letter = 8.5:11), so the PDF fills the card with no white gap,
+     and the blank space is the grey stage on the left and right. The stage
+     scrolls if the page is taller than the viewport. */
+  .stage{flex:1;background:#3a3d42;min-height:0;display:flex;justify-content:center;align-items:flex-start;padding:20px;overflow:auto}
+  .frame{width:min(100%, calc((100vh - 110px) * 0.773));background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.35);aspect-ratio:8.5 / 11}
   iframe,object{width:100%;height:100%;border:0;display:block}
-  @media (max-width:720px){ .stage{padding:10px} }
+  @media (max-width:720px){ .stage{padding:10px;align-items:stretch} .frame{width:100%;height:100%;aspect-ratio:auto} }
 </style></head><body>
 <header>
   <div><div class="brand">Qtonix<span>.</span></div><div class="ttl">${esc(r.businessName || r.domain)} — Pre-SEO Audit Report</div></div>

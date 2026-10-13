@@ -931,9 +931,9 @@ router.get('/brandguide/:rid/viewer', guard, requireHrAdmin, async (req, res, ne
     const pdf = `/api/hr/projects/brandguide/${r.id}/pdf?token=${tk}&v=${r.completedAt || ''}`;
     res.set('Cache-Control', 'no-store');
     res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${name} — Brand Guidelines</title>
-<style>*{box-sizing:border-box;margin:0;padding:0}html,body{height:100%}body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#2a2a2e;display:flex;justify-content:center;padding:20px}
-.frame{width:100%;max-width:1200px;height:100%;background:#000;border-radius:6px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.4)}object,iframe{width:100%;height:100%;border:0;display:block}
-@media(max-width:720px){body{padding:8px}}</style></head><body>
+<style>*{box-sizing:border-box;margin:0;padding:0}html,body{height:100%}body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#2a2a2e;display:flex;justify-content:center;align-items:flex-start;padding:20px;overflow:auto}
+.frame{width:min(100%, calc((100vh - 40px) * 1.778));background:#000;border-radius:6px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.4);aspect-ratio:16 / 9}object,iframe{width:100%;height:100%;border:0;display:block}
+@media(max-width:720px){body{padding:8px;align-items:stretch}.frame{width:100%;height:100%;aspect-ratio:auto}}</style></head><body>
 <div class="frame"><object data="${pdf}#view=FitH&toolbar=1" type="application/pdf"><iframe title="brand guideline" src="${pdf}#view=FitH"></iframe></object></div>
 </body></html>`);
   } catch (e) { next(e); }
