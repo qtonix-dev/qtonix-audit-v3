@@ -82,6 +82,21 @@ body{ font-family:'Plus Jakarta Sans', sans-serif; color:var(--ink); font-size:9
 /* ---------------- INTERIOR ---------------- */
 .page{ page:interior; }
 .page-break-before{ break-before:page; }
+/* ON SCREEN ONLY: the @page interior margins apply only when printing/PDF, so
+   in the browser (the shareable web viewer) interior content ran edge-to-edge
+   while the cover/TOC/back pages kept their inset — making the margins look
+   inconsistent. Here we give interior pages the same 8.5in sheet width and
+   0.62in side padding on screen so every page lines up. Print is untouched
+   (it still uses @page interior). */
+@media screen{
+  /* One continuous frame: the whole document is a single 816px-wide white
+     column. Every page type is the SAME width with no gap, so no grey shows
+     between or beside the sheets, and interior pages get the same side margin
+     as the cover/back. */
+  html, body{ background:#fff; width:816px; margin:0 auto; overflow-x:hidden; }
+  .cover, .toc-page, .back{ width:816px; margin:0; }
+  .page{ width:816px; padding:0.62in 0.62in 0.72in; margin:0; background:#fff; }
+}
 .rhead{ display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
 .rhead .l{ font-size:7.5pt; color:var(--muted); font-weight:600; }
 .rhead .r{ font-size:11pt; font-weight:800; }
