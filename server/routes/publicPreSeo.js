@@ -46,13 +46,52 @@ router.get('/pr/:slug', async (req, res) => {
   res.send(wrapperHtml(r));
 });
 
+/* Screen-only override injected into EVERY served report, so interior pages
+   get the SAME side margin as the cover/back even on reports whose stored HTML
+   predates the @media screen fix. @page interior margins apply only in PDF, so
+   without this the on-screen interior content runs to the edge of the white
+   frame. Harmless in print (scoped to @media screen) and idempotent. */
+const SCREEN_MARGIN_OVERRIDE = `
+<style id="qtx-screen-margin">
+@media screen{
+  html,body{ background:#fff !important; width:816px !important; margin:0 auto !important; overflow-x:hidden !important; }
+  .cover,.toc-page,.back{ width:816px !important; margin:0 !important; }
+  .page{ width:816px !important; padding:0.62in 0.62in 0.72in !important; margin:0 !important; background:#fff !important; box-sizing:border-box !important; }
+}
+</style>`;
+
+function injectScreenMargin(html) {
+  const s = String(html || '');
+  if (s.includes('qtx-screen-margin')) return s; // already present
+  if (s.includes('</head>')) return s.replace('</head>', SCREEN_MARGIN_OVERRIDE + '</head>');
+  return SCREEN_MARGIN_OVERRIDE + s;
+}
+
 router.get('/pr/:slug/view', async (req, res) => {
   const r = await findShared(req.params.slug);
   if (!r) return res.status(404).send('Report not available.');
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
   // Prefer the durable ImageKit copy; local disk only as a fast path if present.
-  if (r.htmlPath && fs.existsSync(r.htmlPath)) return res.sendFile(path.resolve(r.htmlPath), { etag: false, lastModified: false });
-  if (r.htmlUrl) return res.redirect(302, r.htmlUrl);
+  // Read the HTML and inject the screen-margin override so old reports get the
+  // consistent side margin too (sendFile/redirect would bypass the injection).
+  try {
+    if (r.htmlPath && fs.existsSync(r.htmlPath)) {
+      const html = fs.readFileSync(r.htmlPath, 'utf8');
+      res.set('Content-Type', 'text/html; charset=utf-8');
+      return res.send(injectScreenMargin(html));
+    }
+    if (r.htmlUrl) {
+      const resp = await fetch(r.htmlUrl);
+      if (resp.ok) {
+        const html = await resp.text();
+        res.set('Content-Type', 'text/html; charset=utf-8');
+        return res.send(injectScreenMargin(html));
+      }
+      return res.redirect(302, r.htmlUrl); // fallback: serve as-is
+    }
+  } catch (e) {
+    if (r.htmlUrl) return res.redirect(302, r.htmlUrl);
+  }
   return res.status(404).send('Report not ready yet.');
 });
 
@@ -99,12 +138,13 @@ function wrapperHtml(r) {
   .brand{font-weight:800;font-size:17px}.brand span{color:#FF6A00}
   .ttl{font-size:13px;color:#C9D8FF;font-weight:600}
   .dl{background:linear-gradient(90deg,#FF6A00,#FF4500);color:#fff;border:0;border-radius:9px;padding:10px 18px;font-weight:700;font-size:13px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
-  /* The report (fixed 816px / 8.5in wide) is rendered at its TRUE width and
-     SCALED UP to fill the whole stage width, so the white document is one
-     continuous frame edge-to-edge — no grey gutters or floating box. */
-  .stage{flex:1;background:#fff;min-height:0;overflow:auto}
-  .scaler{transform-origin:top left}
-  .doc{width:816px;background:#fff;overflow:hidden}
+  /* Grey stage; the white report (fixed 816px / 8.5in wide) sits centred with
+     grey margins on both outer sides. The report's own content has its white
+     side margin injected into /view, so there are TWO margins as intended:
+     the grey stage gutter outside, and the white content inset inside. */
+  .stage{flex:1;background:#3a3d42;min-height:0;overflow:auto;padding:24px 0}
+  .scaler{margin:0 auto;transform-origin:top center}
+  .doc{width:816px;background:#fff;border-radius:6px;box-shadow:0 10px 40px rgba(0,0,0,.35);overflow:hidden}
   .doc iframe{width:816px;height:100%;border:0;display:block;background:#fff}
 </style></head><body>
 <header>
@@ -124,10 +164,10 @@ function wrapperHtml(r) {
   var doc = document.getElementById('doc');
   var frame = document.getElementById('rpt');
   function fit(){
-    // Scale the 816px document up/down to fill the FULL stage width, so the
-    // white frame spans edge-to-edge with no grey gutters on either side.
-    var avail = stage.clientWidth;
-    var scale = avail / DOC_W;
+    // Scale the 816px document down to fit, centred, leaving a grey side gutter.
+    // Capped at 1 so the document never upscales past its true width.
+    var avail = stage.clientWidth - 48;
+    var scale = Math.min(1, avail / DOC_W);
     if (scale <= 0) scale = 1;
     scaler.style.transform = 'scale(' + scale + ')';
     // Reserve the scaled footprint so the stage scrolls correctly.
