@@ -2439,17 +2439,29 @@ router.get('/converted', requireAuth, async (req, res, next) => {
           });
         }
 
-        // --- Upcoming renewals: soonest active renewal date across deals ---
-        const renewDates = [];
+        // --- Upcoming renewals: the renewal date of each deal's LATEST PAID
+        // installment. A deal's current coverage ends at the renewalDate of its
+        // most-recently-paid installment; the renewalDates of earlier paid
+        // installments are already superseded. Picking the soonest future date
+        // across ALL installments (the old behaviour) wrongly surfaced a stale
+        // earlier renewal (e.g. Sep payment's +1mo = 15 Oct) as "due today"
+        // even though the next month was already paid ahead of schedule. We take
+        // one renewal per deal — that of its latest paid installment — then the
+        // soonest of those across the client's deals. Only PAID installments
+        // carry earned coverage, so unpaid ones are ignored here. ---
+        const renewByDeal = [];
         for (const d of deals) {
           if (d && (d.recurringStopped || d.cancelled)) continue;
+          let latest = null; // the paid installment with the furthest-forward renewalDate
           for (const it of (d && d.installments || [])) {
-            if (it && it.renewalDate) renewDates.push({ date: it.renewalDate, service: d.service || d.name || '', dealId: d.id });
+            if (!it || !it.paid || !it.renewalDate) continue;
+            if (!latest || String(it.renewalDate) > String(latest.renewalDate)) latest = it;
           }
+          if (latest) renewByDeal.push({ date: latest.renewalDate, service: d.service || d.name || '', dealId: d.id });
         }
-        if (renewDates.length) {
-          renewDates.sort((a, b2) => String(a.date).localeCompare(String(b2.date)));
-          const fut = renewDates.find((r) => r.date >= todayStr2) || renewDates[0];
+        if (renewByDeal.length) {
+          renewByDeal.sort((a, b2) => String(a.date).localeCompare(String(b2.date)));
+          const fut = renewByDeal.find((r) => r.date >= todayStr2) || renewByDeal[0];
           upcomingRenewals.push({ leadId: l.id, name: nm, website: l.website || '', ownerName: l.ownerName || '', date: fut.date, service: fut.service });
           allDue.push({ kind: 'renewal', leadId: l.id, name: nm, website: l.website || '', ownerName: l.ownerName || '', date: fut.date, service: fut.service, dealId: fut.dealId });
         }
@@ -2483,12 +2495,19 @@ router.get('/converted', requireAuth, async (req, res, next) => {
         // a renewalDate (set at Mark Paid). We surface the earliest upcoming one
         // (or the earliest overall if all are past) so the Converted views can
         // show "next renewal" and build the Upcoming Renewals table.
+        // One renewal per deal: the renewalDate of its latest PAID installment
+        // (current coverage end). Earlier installments' renewalDates are
+        // superseded once a later installment is paid, so we don't let a stale
+        // one show as the next renewal. (Mirrors the Upcoming Renewals table.)
         const renewDates = [];
         for (const d of deals) {
           if (d && (d.recurringStopped || d.cancelled)) continue; // stopped/cancelled → no active renewal
+          let latest = null;
           for (const it of (d && d.installments || [])) {
-            if (it && it.renewalDate) renewDates.push({ date: it.renewalDate, service: d.service || d.name || '', dealId: d.id });
+            if (!it || !it.paid || !it.renewalDate) continue;
+            if (!latest || String(it.renewalDate) > String(latest.renewalDate)) latest = it;
           }
+          if (latest) renewDates.push({ date: latest.renewalDate, service: d.service || d.name || '', dealId: d.id });
         }
         renewDates.sort((a, b2) => String(a.date).localeCompare(String(b2.date)));
         const todayStr = new Date().toISOString().slice(0, 10);
