@@ -2791,13 +2791,19 @@ router.get('/me/clock', requireHrAccess, async (req, res, next) => {
     const emp = await HrUser.findByPk(empId);
     const shiftRow = emp && emp.shiftId ? await HrShift.findByPk(emp.shiftId) : null;
     const date = await attendanceDayFor(emp);
-    // On approved leave today?
+    // Any approved leave today (for the onLeave/leaveType context flags), and
+    // separately a *blocking* leave. WFH is NOT a blocking leave: a WFH employee
+    // is working from home and must be able to clock in / break / clock out just
+    // like an in-office (or after-shift sales) employee, so a WFH day must never
+    // produce the 'leave' state that the UI uses to hide the clock controls.
     const leave = await HrLeave.findOne({ where: { employeeId: empId, date, status: 'approved' } });
+    const blockingLeave = await HrLeave.findOne({ where: { employeeId: empId, date, status: 'approved', duration: 'full', type: { [Op.ne]: 'wfh' } } });
+    const isWfh = !!leave && leave.type === 'wfh';
     const row = await HrAttendance.findOne({ where: { employeeId: empId, date } });
     const breaks = (row && Array.isArray(row.breaks)) ? row.breaks : [];
     let breakMin = 0; breaks.forEach((b) => { const s = hhmmToMin(b.start), e = hhmmToMin(b.end); if (s != null && e != null) breakMin += (e - s); });
     let state = 'out';
-    if (leave && leave.duration === 'full') state = 'leave';
+    if (blockingLeave) state = 'leave'; // only a non-WFH full-day leave blocks clocking
     else if (row) {
       if (row.breakOpen) state = 'break';
       else if (row.logoutTime) state = 'done';
@@ -2807,7 +2813,11 @@ router.get('/me/clock', requireHrAccess, async (req, res, next) => {
       state, date,
       loginTime: row ? row.loginTime : null, logoutTime: row ? row.logoutTime : null,
       breakOpen: row ? row.breakOpen : null, breaks, breakMin, late: row ? row.late : false,
-      onLeave: !!leave, leaveType: leave ? leave.type : null,
+      // onLeave reflects a *blocking* leave only, so a WFH day isn't reported as
+      // "on leave". wfh is surfaced separately so the UI can show a "Working from
+      // home" badge alongside the normal clock-in controls.
+      onLeave: !!blockingLeave, leaveType: blockingLeave ? blockingLeave.type : null,
+      wfh: isWfh,
       shift: shiftRow ? { name: shiftRow.name, start: shiftRow.startTime, end: shiftRow.endTime, hybridSplit: !!shiftRow.hybridSplit } : null,
     });
   } catch (e) { next(e); }

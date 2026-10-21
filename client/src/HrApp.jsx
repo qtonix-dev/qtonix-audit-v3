@@ -6009,6 +6009,7 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
   const quote = dailyQuote ? dailyQuote.quote : 'The great thing in this world is not so much where you stand, as in what direction you are moving.';
   const quoteAuthor = dailyQuote ? dailyQuote.author : 'Oliver Wendell Holmes';
   const st = clock ? clock.state : 'out';
+  const isWfh = !!(clock && clock.wfh); // approved work-from-home day — clocks in normally
   // Is it at/after the employee's shift end time? (Clock Out only shows then.)
   const pastShiftEnd = (() => {
     if (!clock || !clock.shift || !clock.shift.end) return true; // no shift → always allow
@@ -6109,6 +6110,9 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
             </div>
             <div className="text-4xl font-extrabold tracking-wide mt-2" style={{ fontVariantNumeric: 'tabular-nums' }}>{pad(now.getHours())}:{pad(now.getMinutes())}:{pad(now.getSeconds())}</div>
             <div className="text-xs mt-1" style={{ color: '#ffe4d3' }}>{now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })}</div>
+            {isWfh && (
+              <div className="mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-extrabold" style={{ background: 'rgba(255,255,255,.18)' }}>🏠 Working from home today</div>
+            )}
             {st === 'leave' ? (
               <div className="mt-4 rounded-xl py-3 text-center font-extrabold" style={{ background: 'rgba(255,255,255,.15)' }}>On approved leave today</div>
             ) : st === 'out' ? (
