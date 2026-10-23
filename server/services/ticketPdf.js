@@ -52,11 +52,12 @@ async function extractTickets(buffer) {
   try {
     const out = await readPdfText(buffer);
     allText = out.text || '';
-    // Prefer the library's own page split; otherwise split on the Italian page
-    // marker ("Pagina 1/1") or the "-- N of M --" separators the reader inserts.
+    // Prefer the library's own page split; otherwise split on the page marker,
+    // which the ticket PDF prints as either "Page 1/2" (English) or "Pagina 1/1"
+    // (Italian), or the "-- N of M --" separators the reader inserts.
     pages = (out.pages && out.pages.length)
       ? out.pages
-      : allText.split(/Pagina\s+\d+\/\d+|--\s*\d+\s+of\s+\d+\s*--/i);
+      : allText.split(/Pag(?:in)?a\s+\d+\/\d+|--\s*\d+\s+of\s+\d+\s*--/i);
   } catch (e) {
     pages = [];
     parseError = (e && e.message) || 'PDF parse failed';
@@ -64,21 +65,46 @@ async function extractTickets(buffer) {
 
   const oco = (allText.match(/Prenotazione\s+n\.\s*(OCO\d+)/i) || [])[1] || (allText.match(/(OCO\d{4,})/) || [])[1] || null;
 
+  // A line that is clearly NOT a traveller name (headers, labels, metadata).
+  const NON_NAME = /ELECTRONIC|BIGLIETTO|ELETTRONICO|COLOSSEO|FORO|ROMANO|PALATINO|ROMA\s*PASS|VALID|GRATUITO|\bPASS\b|Sigillo|Gruppo|Acquisto|Email|Activity Booking|MiDA|Free|Roma Pass|Page|Pagina|^OCO\d|€|@/i;
+  const looksLikeName = (s) => {
+    const cand = String(s || '').trim();
+    if (!cand || cand.length > 60) return false;
+    if (NON_NAME.test(cand)) return false;
+    // 2–4 words, letters/accents/'.- only (handles "Rosangela cunha", "Carlos Cunha").
+    const words = cand.split(/\s+/);
+    if (words.length < 2 || words.length > 4) return false;
+    return /^[A-Za-zÀ-ÿ'’.\- ]+$/.test(cand);
+  };
+
   const tickets = [];
   pages.forEach((chunk, i) => {
-    if (!/BIGLIETTO ELETTRONICO/i.test(chunk)) return;
-    const code = (chunk.match(/\b(SPCO[A-Z0-9]{8,})\b/) || [])[1] || null;
+    // Accept both the English ("ELECTRONIC TICKET") and Italian
+    // ("BIGLIETTO ELETTRONICO") ticket pages.
+    if (!/ELECTRONIC TICKET|BIGLIETTO ELETTRONICO/i.test(chunk)) return;
+    // Ticket code: the Colosseo "Sigillo: SPCO…" value, else a bare SPCO code.
+    const code = (chunk.match(/Sigillo:\s*(SPCO[A-Z0-9]+)/i) || [])[1]
+      || (chunk.match(/\b(SPCO[A-Z0-9]{8,})\b/) || [])[1] || null;
     const dt = chunk.match(/(\d{2}\/\d{2}\/\d{4})\s*-\s*(\d{1,2}[:.]\d{2})/);
     const dateIso = dt ? isoFromDMY(dt[1]) : null;
     const time = dt ? to24h(dt[2]) : null;
-    // Name sits on the line right after "BIGLIETTO ELETTRONICO".
     let name = '';
-    const nm = chunk.match(/BIGLIETTO ELETTRONICO\s*\n\s*([^\n]+)/);
-    if (nm) { const cand = nm[1].trim(); if (/^[A-Za-zÀ-ÿ'’.\- ]+$/.test(cand) && cand.split(/\s+/).length >= 2) name = cand; }
-    if (!name) {
-      const lines = chunk.split('\n').map((l) => l.trim()).filter(Boolean);
-      for (const l of lines) { if (/^[A-Za-zÀ-ÿ'’.-]+\s+[A-Za-zÀ-ÿ'’.-]+$/.test(l) && !/COLOSSEO|ROMA|BIGLIETTO|VALID|GRATUITO|PASS/i.test(l)) { name = l; break; } }
+    // Primary anchor (English format): the name is the line right after the
+    // "date - time" line, e.g.  "24/10/2026 - 14:15\nFree (Roma Pass)…\nRosangela cunha".
+    // We scan the lines after the date line and take the first name-looking one,
+    // skipping the price line in between.
+    const lines = chunk.split('\n').map((l) => l.trim()).filter(Boolean);
+    const dtIdx = lines.findIndex((l) => /\d{2}\/\d{2}\/\d{4}\s*-\s*\d{1,2}[:.]\d{2}/.test(l));
+    if (dtIdx >= 0) {
+      for (let k = dtIdx + 1; k < lines.length; k++) { if (looksLikeName(lines[k])) { name = lines[k]; break; } }
     }
+    // Fallback (Italian format): name on the line right after the header.
+    if (!name) {
+      const nm = chunk.match(/BIGLIETTO ELETTRONICO\s*\n\s*([^\n]+)/);
+      if (nm && looksLikeName(nm[1])) name = nm[1].trim();
+    }
+    // Last resort: first name-looking line anywhere on the page.
+    if (!name) { for (const l of lines) { if (looksLikeName(l)) { name = l; break; } } }
     if (code || name) tickets.push({ page: i + 1, code, name, dateIso, time });
   });
   // rawTextLen + parseError let the caller tell apart the three failure modes:
@@ -172,8 +198,19 @@ function bulkMatch(allTickets, bookings) {
     // Score every slot; keep those above threshold.
     const scored = slots.filter((s) => !s.taken).map((s) => ({ s, sc: nameScore(s.name, tk.name) })).filter((x) => x.sc >= 0.7);
     let cands = scored.map((x) => x.s);
-    // Prefer those whose date+time also match the ticket.
-    const withDT = cands.filter((s) => (!tk.dateIso || !s.date || s.date === tk.dateIso) && (!tk.time || !s.time || s.time === tk.time));
+    // Prefer those whose date+time also match the ticket. Date must be equal;
+    // time uses the same tolerance as matchVerdict — the ticket's ENTRY time is
+    // normally at or shortly after the customer's booked slot (Colosseo gives a
+    // +15 timed entry), so we accept 0..+45 min rather than an exact string
+    // match. Without this, a standard +15 ticket would miss its booking whenever
+    // the name alone is ambiguous.
+    const withDT = cands.filter((s) => {
+      const dateOk = !tk.dateIso || !s.date || s.date === tk.dateIso;
+      if (!tk.time || !s.time) return dateOk;
+      const diff = timeToMin(tk.time) - timeToMin(s.time);
+      const timeOk = diff != null && diff >= 0 && diff <= 45;
+      return dateOk && timeOk;
+    });
     const pool = withDT.length ? withDT : cands;
     if (pool.length === 1) { pool[0].taken = true; matched.push({ ticket: tk, bookingId: pool[0].bookingId, travelerIndex: pool[0].travelerIndex, dtMatch: withDT.length > 0 }); }
     else if (pool.length === 0) { review.push({ ticket: tk, reason: 'No booking found for this traveler.', candidates: [] }); }
