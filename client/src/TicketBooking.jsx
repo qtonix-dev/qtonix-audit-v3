@@ -794,6 +794,19 @@ function BulkUpload({ onClose, onDone }) {
             </>
           ) : (
             <>
+              {/* When extraction read no tickets, explain why per file instead of
+                  a silent "no matches" (reader error / scanned PDF / unknown layout). */}
+              {(result.ticketsRead === 0) && Array.isArray(result.diagnostics) && result.diagnostics.some((d) => d.reason) && (
+                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800">
+                  <div className="font-extrabold mb-1">⚠ No ticket details could be read from the PDF{result.diagnostics.length > 1 ? 's' : ''}.</div>
+                  <ul className="list-disc ml-4 space-y-0.5">
+                    {result.diagnostics.filter((d) => d.reason).map((d, i) => (
+                      <li key={i}><span className="font-semibold">{d.name}</span> — {d.reason}{d.parseError ? <span className="text-amber-600"> ({d.parseError})</span> : null}</li>
+                    ))}
+                  </ul>
+                  <div className="mt-1.5 text-amber-700">If these are the usual Colosseo e-tickets, this is a reader issue on our side — share this message with the team.</div>
+                </div>
+              )}
               <div className="text-[11px] font-extrabold uppercase text-slate-500 mb-2.5 flex items-center gap-2">✓ Matched & linked <span className="text-[10px] font-bold bg-green-100 text-green-700 rounded-full px-2 py-0.5">{result.matched.length} tickets</span></div>
               <div className="border border-slate-200 rounded-xl overflow-hidden mb-5">
                 <table className="w-full text-[12px]"><thead><tr className="bg-slate-50 text-[9px] uppercase text-slate-400 font-bold text-left"><th className="px-3 py-2">Ticket name</th><th className="px-2">Code</th><th className="px-2">Date · Time</th><th className="px-2">Booking</th><th className="px-2">Traveler</th><th className="px-2">Status</th></tr></thead>

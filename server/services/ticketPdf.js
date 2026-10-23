@@ -19,15 +19,48 @@ function isoFromDMY(s) { // "22/09/2026" -> "2026-09-22"
 
 // Extract per-page ticket info from the PDF's text (pdf-parse gives text per page
 // via the render; here we parse the whole text and split by the page markers).
+// Read a PDF's text with whatever pdf-parse API is installed. pdf-parse has
+// shipped two incompatible shapes: 2.x exports a { PDFParse } class used as
+// `new PDFParse({data}).getText()`, while 1.x exports a single callable used as
+// `pdfParse(buffer)`. A caret range (^2.4.5) or a moved `latest` dist-tag can
+// swap one for the other on a fresh deploy with no code change — which silently
+// broke extraction. We now support BOTH and return { text, pages }. The error is
+// no longer swallowed: it propagates so the caller can report "couldn't read N
+// PDFs" instead of a mysterious zero-match.
+async function readPdfText(buffer) {
+  const mod = require('pdf-parse');
+  // 2.x: class API
+  if (mod && typeof mod.PDFParse === 'function') {
+    const data = await new mod.PDFParse({ data: buffer }).getText();
+    const text = data.text || '';
+    const pages = Array.isArray(data.pages)
+      ? data.pages.map((p) => (typeof p === 'string' ? p : (p && p.text) || ''))
+      : null;
+    return { text, pages };
+  }
+  // 1.x: callable API (module itself, or a .default export)
+  const fn = typeof mod === 'function' ? mod : (typeof mod.default === 'function' ? mod.default : null);
+  if (fn) {
+    const data = await fn(buffer);
+    return { text: (data && data.text) || '', pages: null }; // 1.x gives no per-page split
+  }
+  throw new Error('pdf-parse: unrecognised module shape (neither 2.x PDFParse class nor 1.x callable).');
+}
+
 async function extractTickets(buffer) {
-  let pages = []; let allText = '';
+  let pages = []; let allText = ''; let parseError = null;
   try {
-    const { PDFParse } = require('pdf-parse');
-    const parser = new PDFParse({ data: buffer });
-    const data = await parser.getText();
-    allText = data.text || '';
-    pages = Array.isArray(data.pages) ? data.pages.map((p) => (typeof p === 'string' ? p : (p && p.text) || '')) : allText.split(/Pagina\s+\d+\/\d+/i);
-  } catch { pages = []; }
+    const out = await readPdfText(buffer);
+    allText = out.text || '';
+    // Prefer the library's own page split; otherwise split on the Italian page
+    // marker ("Pagina 1/1") or the "-- N of M --" separators the reader inserts.
+    pages = (out.pages && out.pages.length)
+      ? out.pages
+      : allText.split(/Pagina\s+\d+\/\d+|--\s*\d+\s+of\s+\d+\s*--/i);
+  } catch (e) {
+    pages = [];
+    parseError = (e && e.message) || 'PDF parse failed';
+  }
 
   const oco = (allText.match(/Prenotazione\s+n\.\s*(OCO\d+)/i) || [])[1] || (allText.match(/(OCO\d{4,})/) || [])[1] || null;
 
@@ -48,7 +81,11 @@ async function extractTickets(buffer) {
     }
     if (code || name) tickets.push({ page: i + 1, code, name, dateIso, time });
   });
-  return { oco, tickets };
+  // rawTextLen + parseError let the caller tell apart the three failure modes:
+  //  - parseError set            → the PDF library failed (dependency/env issue)
+  //  - rawTextLen 0, no error    → image-only/scanned PDF with no text layer
+  //  - text present, 0 tickets   → a format we don't recognise (selectors stale)
+  return { oco, tickets, parseError, rawTextLen: allText.length };
 }
 
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z]/g, '');

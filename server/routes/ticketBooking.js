@@ -388,7 +388,7 @@ router.post('/bulk/read', async (req, res, next) => {
     const where = { status: { [Op.in]: ['new', 'ticketed'] } };
     const bookings = (await TicketBooking.findAll({ where })).map((r) => r.toJSON());
     // Read each PDF; keep a per-page provenance (which stored PDF + page).
-    const stored = []; const allTickets = [];
+    const stored = []; const allTickets = []; const diagnostics = [];
     for (const f of files) {
       const buffer = Buffer.from(String(f.base64 || '').replace(/^data:[^;]+;base64,/, ''), 'base64');
       const ex = await ticketPdf.extractTickets(buffer);
@@ -396,6 +396,18 @@ router.post('/bulk/read', async (req, res, next) => {
       try { const up = await imagekit.uploadFile({ base64: buffer.toString('base64'), fileName: `${ex.oco || f.name || 'ticket'}.pdf`, folder: `TicketBooking/bulk` }); url = up.url; fileId = up.fileId; } catch {}
       const fileRef = { name: f.name || (ex.oco + '.pdf'), oco: ex.oco, url, fileId };
       stored.push(fileRef);
+      // Per-file diagnostic so the UI can explain a zero result instead of a
+      // silent "No confident matches": how many tickets were read, and why not.
+      diagnostics.push({
+        name: fileRef.name,
+        ticketsFound: ex.tickets.length,
+        parseError: ex.parseError || null,
+        rawTextLen: ex.rawTextLen || 0,
+        reason: ex.parseError
+          ? 'Could not read the PDF (reader error).'
+          : (!ex.rawTextLen ? 'No text found — this looks like a scanned/image-only PDF.'
+            : (!ex.tickets.length ? 'Text read, but no ticket layout recognised.' : null)),
+      });
       ex.tickets.forEach((tk) => allTickets.push({ ...tk, oco: ex.oco, pdfUrl: url, pdfFileId: fileId, fileName: fileRef.name }));
     }
     const { matched, review } = ticketPdf.bulkMatch(allTickets, bookings);
@@ -403,7 +415,7 @@ router.post('/bulk/read', async (req, res, next) => {
     const bById = Object.fromEntries(bookings.map((b) => [b.id, b]));
     const matchedOut = matched.map((m) => { const b = bById[m.bookingId]; const t = b && b.travelers[m.travelerIndex]; return { ticket: m.ticket, bookingId: m.bookingId, reference: b && b.reference, travelerIndex: m.travelerIndex, travelerName: t ? `${t.firstName} ${t.lastName}` : '', travelerLabel: t ? `${t.type}-${m.travelerIndex + 1}` : '' }; });
     const reviewOut = review.map((r) => ({ ticket: r.ticket, reason: r.reason, candidates: (r.candidates || []).map((id) => ({ id, reference: bById[id] && bById[id].reference, lead: bById[id] && bById[id].leadTraveler })) }));
-    res.json({ matched: matchedOut, review: reviewOut, files: stored, bookings: bookings.map((b) => ({ id: b.id, reference: b.reference, leadTraveler: b.leadTraveler, travelDate: b.travelDate, bookedTime: b.bookedTime, travelers: b.travelers.map((t) => `${t.firstName} ${t.lastName}`) })) });
+    res.json({ matched: matchedOut, review: reviewOut, files: stored, diagnostics, ticketsRead: allTickets.length, bookings: bookings.map((b) => ({ id: b.id, reference: b.reference, leadTraveler: b.leadTraveler, travelDate: b.travelDate, bookedTime: b.bookedTime, travelers: b.travelers.map((t) => `${t.firstName} ${t.lastName}`) })) });
   } catch (e) { next(e); }
 });
 
