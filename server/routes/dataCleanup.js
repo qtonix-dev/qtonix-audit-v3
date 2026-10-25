@@ -24,7 +24,7 @@
 const express = require('express');
 const router = express.Router();
 const { validatePhone, REASON_LABELS, pickColumnsFull, softSignals, HARD_REASONS } = require('../services/dataCleanup');
-const { PhoneCheck, Op, Settings } = require('../models');
+const { PhoneCheck, CleanupBatch, Op, Settings } = require('../models');
 const numverify = require('../services/numverify');
 
 const b64ToBuffer = (s) => Buffer.from(String(s || '').replace(/^data:[^;]+;base64,/, ''), 'base64');
@@ -192,54 +192,95 @@ router.post('/check', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// --- Export a cleaned workbook (flagged rows removed) -----------------------
-// Body: { headers, rows, fileName, includeLineTypes? }
-// Keeps ok===true rows. If includeLineTypes is given (e.g. ['mobile','unknown'])
-// AND a deep check was run, a kept row is also filtered by its line type — so
-// the admin picks exactly which line types go into the dialer file at download.
-// 'unknown' covers rows with no line_type (not deep-checked, or NumVerify blank).
+// Build the cleaned workbook. IMPORTANT: it writes ONLY the original sheet
+// columns (plus a Source file column for multi-file, and a Removed reason on the
+// Removed sheet). No NumVerify / line-type / carrier columns — the dialer wants
+// the data exactly as uploaded. A deep check still filters WHICH rows are kept
+// (via each row's ok + line type), it just never adds columns to the file.
+function buildCleanedWorkbook({ headers, kept, removed, multi }) {
+  const XLSX = require('xlsx');
+  const wb = XLSX.utils.book_new();
+
+  const cleanHead = multi ? [...headers, 'Source file'] : headers;
+  const cleanAoa = [cleanHead, ...kept.map((r) => {
+    const cells = (r.cells || []).map((c) => (c == null ? '' : c));
+    return multi ? [...cells, r.srcFile || ''] : cells;
+  })];
+  const wsClean = XLSX.utils.aoa_to_sheet(cleanAoa);
+  wsClean['!cols'] = cleanHead.map((h) => ({ wch: Math.min(28, Math.max(10, String(h).length + 2)) }));
+  XLSX.utils.book_append_sheet(wb, wsClean, 'Cleaned');
+
+  const remHead = [...(multi ? [...headers, 'Source file'] : headers), 'Removed reason'];
+  const removedAoa = [remHead, ...removed.map((r) => {
+    const cells = (r.cells || []).map((c) => (c == null ? '' : c));
+    const reason = (r.reasonLabels || []).join('; ') || (r.reason || '');
+    return multi ? [...cells, r.srcFile || '', reason] : [...cells, reason];
+  })];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(removedAoa), 'Removed');
+
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+
+// Dominant country label from the kept+removed rows (for the batch record).
+function dominantCountry(rows, headers) {
+  const ci = headers.findIndex((h) => /country/i.test(String(h)));
+  if (ci < 0) return '';
+  const counts = {};
+  rows.forEach((r) => { const v = String((r.cells || [])[ci] || '').trim(); if (v) counts[v] = (counts[v] || 0) + 1; });
+  const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+  return top ? top[0] : '';
+}
+
+// --- Export a cleaned workbook (flagged rows removed) + RECORD the batch -----
+// Body: { headers, rows, fileName, includeLineTypes?, fileNames? }
+// Keeps ok===true rows; if includeLineTypes is given (after a deep check) a kept
+// row is also filtered by its line type. On a successful download we persist a
+// CleanupBatch audit row (who/when/file/country/counts + the committed rows) so
+// the exact same file can be re-downloaded from History.
 router.post('/export/xlsx', async (req, res, next) => {
   try {
-    const XLSX = require('xlsx');
     const headers = Array.isArray(req.body && req.body.headers) ? req.body.headers : [];
     const rows = Array.isArray(req.body && req.body.rows) ? req.body.rows : [];
     const srcName = String((req.body && req.body.fileName) || 'whois-data').replace(/\.(xlsx|xls|csv)$/i, '');
     const includeLineTypes = Array.isArray(req.body && req.body.includeLineTypes) ? req.body.includeLineTypes : null;
+    const fileNames = Array.isArray(req.body && req.body.fileNames) ? req.body.fileNames : [srcName];
     if (!headers.length) return res.status(400).json({ error: 'Nothing to export.' });
 
     const multi = rows.some((r) => r && r.srcFile) && new Set(rows.map((r) => r && r.srcFile)).size > 1;
     const lineTypeOf = (r) => (r && r.lineType ? String(r.lineType).toLowerCase() : 'unknown');
     const passesLineType = (r) => !includeLineTypes || includeLineTypes.includes(lineTypeOf(r));
+    const deepRan = rows.some((r) => r && r.lineType);
 
     const kept = rows.filter((r) => r && r.ok && passesLineType(r));
-    // Removed = structurally excluded OR excluded by the line-type chooser.
-    const removed = rows.filter((r) => r && (!r.ok || !passesLineType(r)));
+    const removed = rows.filter((r) => r && (!r.ok || !passesLineType(r))).map((r) => {
+      if (!(r.reasonLabels || []).length && includeLineTypes && !passesLineType(r)) {
+        return { ...r, reason: `Line type not selected (${lineTypeOf(r)})` };
+      }
+      return r;
+    });
 
-    const wb = XLSX.utils.book_new();
-    const withLT = rows.some((r) => r && r.lineType); // was a deep check run?
+    const buf = buildCleanedWorkbook({ headers, kept, removed, multi });
 
-    // Sheet 1: Cleaned — header + kept rows (+ Source file / Line type columns).
-    const cleanHead = [...headers, ...(multi ? ['Source file'] : []), ...(withLT ? ['Line type', 'Carrier'] : [])];
-    const cleanAoa = [cleanHead, ...kept.map((r) => {
-      const cells = (r.cells || []).map((c) => (c == null ? '' : c));
-      return [...cells, ...(multi ? [r.srcFile || ''] : []), ...(withLT ? [r.lineType || '', r.carrier || ''] : [])];
-    })];
-    const wsClean = XLSX.utils.aoa_to_sheet(cleanAoa);
-    wsClean['!cols'] = cleanHead.map((h) => ({ wch: Math.min(28, Math.max(10, String(h).length + 2)) }));
-    XLSX.utils.book_append_sheet(wb, wsClean, 'Cleaned');
+    // Record the batch (committed result). Store original cells only + line type
+    // for the detail view; best-effort so a logging hiccup never fails the download.
+    try {
+      const trim = (r) => ({ cells: r.cells, srcFile: r.srcFile || null, phone: r.phone, lineType: r.lineType || null, carrier: r.carrier || null, ok: !!r.ok, reasonLabels: r.reasonLabels || [], reason: r.reason || null });
+      const mobileCount = deepRan ? kept.filter((r) => lineTypeOf(r) === 'mobile').length : null;
+      await CleanupBatch.create({
+        userId: (req.user && req.user.id) || null,
+        userName: (req.user && req.user.name) || 'Unknown',
+        fileNames,
+        country: dominantCountry(rows, headers),
+        headers,
+        totalRows: rows.length,
+        cleanCount: kept.length,
+        mobileCount,
+        excludedCount: removed.length,
+        keptRows: kept.map(trim),
+        removedRows: removed.map(trim),
+      });
+    } catch (e) { /* non-fatal: download still succeeds */ }
 
-    // Sheet 2: Removed — dropped rows + Source file / Line type + Reason.
-    const remHead = [...headers, ...(multi ? ['Source file'] : []), ...(withLT ? ['Line type', 'Carrier'] : []), 'Removed reason'];
-    const removedAoa = [remHead, ...removed.map((r) => {
-      const cells = (r.cells || []).map((c) => (c == null ? '' : c));
-      // Reason = the hard reasons, or (if only a line-type filter dropped it) the line-type exclusion.
-      let reason = (r.reasonLabels || []).join('; ');
-      if (!reason && includeLineTypes) reason = `Line type not selected (${lineTypeOf(r)})`;
-      return [...cells, ...(multi ? [r.srcFile || ''] : []), ...(withLT ? [r.lineType || '', r.carrier || ''] : []), reason];
-    })];
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(removedAoa), 'Removed');
-
-    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     res.json({ ok: true, base64: buf.toString('base64'), fileName: `${srcName}-cleaned.xlsx`, kept: kept.length, removed: removed.length });
   } catch (e) { next(e); }
 });
@@ -313,6 +354,65 @@ router.post('/deep-check', async (req, res, next) => {
     }
 
     res.json({ ok: true, results, checked: candidates.length, fromCache: cached.size, called, errors });
+  } catch (e) { next(e); }
+});
+
+// --- History: list committed batches + top-box totals -----------------------
+router.get('/batches', async (req, res, next) => {
+  try {
+    const q = String((req.query && req.query.q) || '').trim().toLowerCase();
+    const all = await CleanupBatch.findAll({ order: [['createdAt', 'DESC']], limit: 500 });
+    let list = all.map((b) => {
+      const o = b.toJSON();
+      return {
+        id: o.id, createdAt: o.createdAt, userName: o.userName || 'Unknown',
+        fileNames: o.fileNames || [], country: o.country || '',
+        totalRows: o.totalRows, cleanCount: o.cleanCount, mobileCount: o.mobileCount, excludedCount: o.excludedCount,
+      };
+    });
+    if (q) list = list.filter((b) => (b.userName || '').toLowerCase().includes(q) || (b.fileNames || []).join(' ').toLowerCase().includes(q));
+    const totals = list.reduce((a, b) => ({
+      batches: a.batches + 1,
+      checked: a.checked + (b.totalRows || 0),
+      clean: a.clean + (b.cleanCount || 0),
+      excluded: a.excluded + (b.excludedCount || 0),
+    }), { batches: 0, checked: 0, clean: 0, excluded: 0 });
+    res.json({ ok: true, batches: list, totals });
+  } catch (e) { next(e); }
+});
+
+// --- History: one batch's numbers (for the View detail page) ----------------
+router.get('/batches/:id', async (req, res, next) => {
+  try {
+    const b = await CleanupBatch.findByPk(req.params.id);
+    if (!b) return res.status(404).json({ error: 'Batch not found.' });
+    const o = b.toJSON();
+    // Build the detail rows: kept (clean) + removed (excluded), with a flag.
+    const kept = (o.keptRows || []).map((r) => ({ ...r, excluded: false }));
+    const removed = (o.removedRows || []).map((r) => ({ ...r, excluded: true }));
+    res.json({
+      ok: true,
+      batch: {
+        id: o.id, createdAt: o.createdAt, userName: o.userName, fileNames: o.fileNames || [], country: o.country || '',
+        headers: o.headers || [], totalRows: o.totalRows, cleanCount: o.cleanCount, mobileCount: o.mobileCount, excludedCount: o.excludedCount,
+      },
+      rows: [...kept, ...removed],
+    });
+  } catch (e) { next(e); }
+});
+
+// --- History: re-download a batch's committed cleaned file ------------------
+router.get('/batches/:id/download', async (req, res, next) => {
+  try {
+    const b = await CleanupBatch.findByPk(req.params.id);
+    if (!b) return res.status(404).send('Batch not found.');
+    const o = b.toJSON();
+    const multi = (o.fileNames || []).length > 1;
+    const buf = buildCleanedWorkbook({ headers: o.headers || [], kept: o.keptRows || [], removed: o.removedRows || [], multi });
+    const name = `${String((o.fileNames || ['whois'])[0]).replace(/\.(xlsx|xls|csv)$/i, '')}-cleaned.xlsx`;
+    res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.set('Content-Disposition', `attachment; filename="${name}"`);
+    res.send(buf);
   } catch (e) { next(e); }
 });
 

@@ -3192,11 +3192,34 @@ const PhoneCheck = sequelize.define('PhoneCheck', {
   lastCheckedAt: { type: DataTypes.DATE, allowNull: true },    // when the API verdict was fetched
 }, { tableName: 'phone_checks', indexes: [{ unique: true, fields: ['phone'] }, { fields: ['lineType'] }, { fields: ['apiChecked'] }] });
 
+// --- Data Cleanup: one audit row per committed (downloaded) upload batch ----
+// Recorded when the user DOWNLOADS the cleaned file. Stores who/when/what plus
+// the committed rows so the exact same file can be re-downloaded from history.
+// `headers` + `kept`/`removed` hold ONLY the original sheet cells (no API data)
+// so the regenerated file matches the uploaded format.
+const CleanupBatch = sequelize.define('CleanupBatch', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  userId: { type: DataTypes.INTEGER, allowNull: true },
+  userName: { type: DataTypes.STRING(160), allowNull: true },
+  fileNames: { type: DataTypes.JSON, defaultValue: [] },        // ['a.xlsx', ...]
+  country: { type: DataTypes.STRING(60), allowNull: true },     // dominant country in the data
+  headers: { type: DataTypes.JSON, defaultValue: [] },          // original column headers
+  totalRows: { type: DataTypes.INTEGER, defaultValue: 0 },
+  cleanCount: { type: DataTypes.INTEGER, defaultValue: 0 },
+  mobileCount: { type: DataTypes.INTEGER, allowNull: true },    // null if no deep check was run
+  excludedCount: { type: DataTypes.INTEGER, defaultValue: 0 },
+  // Committed rows (original cells only). kept = in the downloaded file.
+  // Each row: { cells:[...], srcFile, phone, lineType, carrier, ok, reasonLabels }
+  // lineType/carrier are kept for the detail VIEW only, never written to Excel.
+  keptRows: { type: DataTypes.JSON, defaultValue: [] },
+  removedRows: { type: DataTypes.JSON, defaultValue: [] },
+}, { tableName: 'cleanup_batches', indexes: [{ fields: ['userId'] }, { fields: ['createdAt'] }] });
+
 module.exports = {
   sequelize, Sequelize, Op,
   runWithDemoScope, currentDemoScope, hasDemoContext,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog, MailFolderCache,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, AiOverviewReport, PushSubscription, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse, TicketBooking, TicketCustomer, StickyNote, GstReconciliation, PhoneCheck,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, AiOverviewReport, PushSubscription, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse, TicketBooking, TicketCustomer, StickyNote, GstReconciliation, PhoneCheck, CleanupBatch,
   Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential, ProjectPlan, PreSeoReport, TaskFlow, TaskFlowRun,
   RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption,
   ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember,

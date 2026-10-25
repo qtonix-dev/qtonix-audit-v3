@@ -1066,7 +1066,7 @@ function UserMenu({ user, onEditProfile, onEmailSettings, onTemplates, onSignOut
               GST Reconciliation
             </button>
           )}
-          {user && user.role === 'admin' && onDataCleanup && (
+          {user && ['admin', 'manager', 'leadmanager'].includes(user.role) && onDataCleanup && (
             <button onClick={() => { setOpen(false); onDataCleanup(); }} className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-[#050A1F] hover:bg-slate-50 text-left">
               <span className="text-[15px] leading-none">🧹</span>
               Data Cleanup

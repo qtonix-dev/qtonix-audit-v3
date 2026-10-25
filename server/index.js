@@ -159,8 +159,13 @@ app.use('/api/admin', admin);
 // GST reconciliation (PayPal + Stripe inward remittance) — admin only.
 { const { requireAuth, requireAdmin } = require('./middleware/auth');
   app.use('/api/gst-reconcile', requireAuth, requireAdmin, require('./routes/gstReconcile')); }
-{ const { requireAuth, requireAdmin } = require('./middleware/auth');
-  app.use('/api/data-cleanup', requireAuth, requireAdmin, require('./routes/dataCleanup')); }
+// Data Cleanup — admin AND managers (Sandeep gives managers access to this page).
+{ const { requireAuth } = require('./middleware/auth');
+  const adminOrManager = (req, res, next) => {
+    if (req.user && (req.user.role === 'admin' || req.user.role === 'manager' || req.user.role === 'leadmanager')) return next();
+    return res.status(403).json({ error: 'Admins and managers only.' });
+  };
+  app.use('/api/data-cleanup', requireAuth, adminOrManager, require('./routes/dataCleanup')); }
 // Sticky Notes — CRM surface (role-based visibility via User.managerId).
 {
   const { requireAuth } = require('./middleware/auth');
