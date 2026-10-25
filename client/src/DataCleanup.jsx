@@ -30,7 +30,6 @@ const REASON_PILL = {
   'Not a USA/Canada number': { bg: '#FEE2E2', fg: '#B91C1C' },
   'Fake / placeholder number': { bg: '#FEE2E2', fg: '#B91C1C' },
   'Duplicate number': { bg: '#FEF3C7', fg: '#B45309' },
-  'Already checked in a previous upload': { bg: '#E0E7FF', fg: '#4338CA' },
   'Area code doesn’t match the state': { bg: '#FEF3C7', fg: '#B45309' },
   'Suspicious registrant name': { bg: '#FEF3C7', fg: '#B45309' },
   'Disposable / hidden-identity email': { bg: '#FEF3C7', fg: '#B45309' },
@@ -193,10 +192,9 @@ function CleanTab() {
             <Tile label="9-digit / bad length" value={s.short_9_digit + s.wrong_length} fg="#B91C1C" />
             <Tile label="Not USA/Canada" value={s.not_us_canada} fg="#B91C1C" />
             <Tile label="Fake / placeholder" value={s.fake} fg="#B91C1C" />
-            <Tile label="Duplicate (this upload)" value={s.duplicate} fg="#B45309" />
+            <Tile label="Duplicate numbers" value={(s.duplicate || 0) + (s.seen_before || 0)} fg="#B45309" />
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
-            <Tile label="Already checked before" value={s.seen_before} fg="#4338CA" />
             <Tile label="Area code ≠ state" value={s.area_state_mismatch} fg="#B45309" />
             <Tile label="Fake name (excluded)" value={s.fake_name} fg="#B91C1C" />
             <Tile label="Disposable email (excluded)" value={s.disposable_email} fg="#B91C1C" />
@@ -227,7 +225,7 @@ function CleanTab() {
           {/* API accounting — shows the credit savings before any paid check. */}
           {deepAvailable && (s.api_cached > 0 || s.api_to_check > 0) && (
             <div className="mb-5 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-[12.5px] text-indigo-800">
-              <b>NumVerify (paid) accounting:</b> {s.api_to_check} unique new valid number{s.api_to_check === 1 ? '' : 's'} would be looked up · {s.api_cached} already cached (free) · {s.seen_before} seen before (free, skipped). Only numbers that survive every free rule are ever sent to NumVerify — each checked once, then cached forever.
+              <b>NumVerify (paid) accounting:</b> {s.api_to_check} unique new valid number{s.api_to_check === 1 ? '' : 's'} would be looked up · {s.api_cached} already cached (free) · {s.duplicate + s.seen_before} duplicate (free, skipped). Only numbers that survive every free rule are ever sent to NumVerify — each checked once, then cached forever.
             </div>
           )}
 
@@ -331,9 +329,15 @@ function HistoryTab({ onView }) {
   const [data, setData] = useState(null);
   const [q, setQ] = useState('');
   const [busyId, setBusyId] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const load = (query = '') => api(`/batches${query ? `?q=${encodeURIComponent(query)}` : ''}`).then(setData).catch((e) => toast(e.message));
-  React.useEffect(() => { load(); }, []);
+  React.useEffect(() => { load(); api('/config').then((c) => setIsAdmin(!!c.isAdmin)).catch(() => {}); }, []);
+
+  const resetCache = async () => {
+    if (!window.confirm('Clear the phone-check cache? This removes the stored "duplicate" memory so numbers are re-checked fresh. History and downloaded files are NOT affected.')) return;
+    try { const r = await api('/reset-cache', { method: 'POST', body: '{}' }); toast(`Cache cleared — ${r.cleared} numbers`); } catch (e) { toast(e.message); }
+  };
   React.useEffect(() => { const t = setTimeout(() => load(q), 300); return () => clearTimeout(t); /* eslint-disable-next-line */ }, [q]);
 
   const download = async (b) => {
@@ -358,8 +362,11 @@ function HistoryTab({ onView }) {
         <Tile label="Clean numbers" value={t ? t.clean.toLocaleString() : '—'} fg="#15803D" />
         <Tile label="Excluded numbers" value={t ? t.excluded.toLocaleString() : '—'} fg="#B91C1C" />
       </div>
-      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 Search by user or file name…"
-        className="w-full max-w-sm border border-slate-200 rounded-lg px-3 py-2 text-[13px] mb-4" />
+      <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 Search by user or file name…"
+          className="flex-1 max-w-sm border border-slate-200 rounded-lg px-3 py-2 text-[13px]" />
+        {isAdmin && <button onClick={resetCache} className="rounded-lg px-3.5 py-2 text-[12px] font-bold border border-slate-200 text-slate-500 hover:text-red-600 hover:border-red-200">↺ Reset check cache</button>}
+      </div>
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
         <div className="overflow-auto">
           <table className="w-full text-[12.5px]">

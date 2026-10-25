@@ -108,7 +108,7 @@ const REASON_LABELS = {
   not_us_canada: 'Not a USA/Canada number',
   fake: 'Fake / placeholder number',
   duplicate: 'Duplicate number',
-  seen_before: 'Already checked in a previous upload',
+  seen_before: 'Duplicate number',
   // Soft signals (flag by default, don't hard-exclude unless the admin opts in).
   area_state_mismatch: 'Area code doesn’t match the state',
   fake_name: 'Suspicious registrant name',

@@ -295,7 +295,7 @@ async function getNumverifyKey() {
 router.get('/config', async (req, res, next) => {
   try {
     const key = await getNumverifyKey();
-    res.json({ deepCheck: { provider: 'numverify', available: !!key } });
+    res.json({ deepCheck: { provider: 'numverify', available: !!key }, isAdmin: !!(req.user && req.user.role === 'admin') });
   } catch (e) { next(e); }
 });
 
@@ -354,6 +354,18 @@ router.post('/deep-check', async (req, res, next) => {
     }
 
     res.json({ ok: true, results, checked: candidates.length, fromCache: cached.size, called, errors });
+  } catch (e) { next(e); }
+});
+
+// --- Reset the phone-check cache (admin only) -------------------------------
+// Clears the dedupe/line-type cache so numbers stop showing as "duplicate from a
+// previous upload". Does NOT touch the batch history. Useful once, to start
+// fresh (e.g. after the history feature was added). Admin-only for safety.
+router.post('/reset-cache', async (req, res, next) => {
+  try {
+    if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'Only an admin can reset the cache.' });
+    const n = await PhoneCheck.destroy({ where: {}, truncate: false });
+    res.json({ ok: true, cleared: n });
   } catch (e) { next(e); }
 });
 
