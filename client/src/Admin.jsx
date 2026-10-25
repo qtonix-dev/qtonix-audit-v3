@@ -1036,6 +1036,7 @@ function ApiKeys({ settings, setSettings, say }) {
     openai: { label: 'OpenAI', required: false, hint: 'AI draft generator in the email composer (gpt-4o-mini)' },
     pagespeed: { label: 'Google PageSpeed', required: false, hint: 'Free, 25k/day. Real-visitor Core Web Vitals' },
     googlePlaces: { label: 'Google Places', required: false, hint: 'Local SEO section — GBP reviews, ratings, NAP' },
+    numverify: { label: 'NumVerify', required: false, hint: 'Data Cleanup — phone line-type lookup (mobile / landline / VoIP)' },
   };
   const isSet = (id) => settings.apiKeys && settings.apiKeys[id] && !String(settings.apiKeys[id]).startsWith('••');
   const hasMask = (id) => settings.apiKeys && String(settings.apiKeys[id] || '').startsWith('••');

@@ -274,6 +274,21 @@ router.post('/settings/test-key', async (req, res) => {
       if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 160)}`);
       return res.json({ ok: true, detail: 'Key is valid.' });
     }
+    if (service === 'numverify') {
+      // Validate by checking a known-good US number. Free plans are http-only,
+      // so try https first and fall back to http. One lookup spends 1 credit.
+      const num = '14155552671';
+      const call = async (scheme) => {
+        const u = `${scheme}://apilayer.net/api/validate?access_key=${encodeURIComponent(useKey)}&number=${num}&country_code=US&format=1`;
+        const r = await fetch(u);
+        return r.json().catch(() => ({}));
+      };
+      let data = await call('https').catch(() => null);
+      if (!data || (data.success === false && data.error && data.error.code === 105)) data = await call('http'); // 105 = https not on this plan
+      if (data && data.success === false && data.error) throw new Error(data.error.info || data.error.type || 'Invalid key');
+      if (data && (data.valid === true || data.valid === false)) return res.json({ ok: true, detail: `Key is valid (line type: ${data.line_type || 'n/a'}).` });
+      throw new Error('Unexpected NumVerify response.');
+    }
     res.status(400).json({ ok: false, error: 'Unknown service.' });
   } catch (e) {
     res.json({ ok: false, error: e.message });

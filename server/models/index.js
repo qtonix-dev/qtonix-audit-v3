@@ -3164,11 +3164,39 @@ GstReconciliation.prototype.toJSON = function () {
   return o;
 };
 
+// --- Data Cleanup: cached phone validation ---------------------------------
+// One row per normalised 10-digit NANP number. Caching lets us (a) recognise a
+// number as already-seen across any future upload (dedupe over time) and
+// (b) NEVER spend a paid API credit re-checking a number whose line-type/live
+// status we already fetched. 'phone' is the unique key.
+const PhoneCheck = sequelize.define('PhoneCheck', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  phone: { type: DataTypes.STRING(10), allowNull: false, unique: true }, // normalised 10-digit
+  // Free rule verdict (deterministic): true if it passed all local rules.
+  rulesOk: { type: DataTypes.BOOLEAN, defaultValue: false },
+  ruleReasons: { type: DataTypes.JSON, defaultValue: [] }, // ['toll_free',...] from rules
+  // Paid API verdict (null until a deep check is run for this number).
+  apiChecked: { type: DataTypes.BOOLEAN, defaultValue: false },
+  lineType: { type: DataTypes.STRING(20), allowNull: true },   // mobile | landline | voip | tollFree | null
+  carrier: { type: DataTypes.STRING(120), allowNull: true },
+  liveStatus: { type: DataTypes.STRING(20), allowNull: true }, // active | disconnected | unknown | null
+  apiProvider: { type: DataTypes.STRING(30), allowNull: true },// twilio | numverify | abstract | ...
+  apiRaw: { type: DataTypes.JSON, allowNull: true },           // trimmed raw response for audit
+  // Bookkeeping.
+  seenCount: { type: DataTypes.INTEGER, defaultValue: 1 },     // times this number appeared in uploads
+  firstSeenFile: { type: DataTypes.STRING(200), allowNull: true },
+  // The upload "session" that first inserted this number. Re-running the SAME
+  // upload (e.g. to toggle a filter) reuses this id, so those numbers are not
+  // wrongly reported as "seen in a previous upload".
+  firstSessionId: { type: DataTypes.STRING(40), allowNull: true },
+  lastCheckedAt: { type: DataTypes.DATE, allowNull: true },    // when the API verdict was fetched
+}, { tableName: 'phone_checks', indexes: [{ unique: true, fields: ['phone'] }, { fields: ['lineType'] }, { fields: ['apiChecked'] }] });
+
 module.exports = {
   sequelize, Sequelize, Op,
   runWithDemoScope, currentDemoScope, hasDemoContext,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog, MailFolderCache,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, AiOverviewReport, PushSubscription, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse, TicketBooking, TicketCustomer, StickyNote, GstReconciliation,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, AiOverviewReport, PushSubscription, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse, TicketBooking, TicketCustomer, StickyNote, GstReconciliation, PhoneCheck,
   Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential, ProjectPlan, PreSeoReport, TaskFlow, TaskFlowRun,
   RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption,
   ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember,

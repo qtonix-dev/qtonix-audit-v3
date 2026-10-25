@@ -159,6 +159,8 @@ app.use('/api/admin', admin);
 // GST reconciliation (PayPal + Stripe inward remittance) — admin only.
 { const { requireAuth, requireAdmin } = require('./middleware/auth');
   app.use('/api/gst-reconcile', requireAuth, requireAdmin, require('./routes/gstReconcile')); }
+{ const { requireAuth, requireAdmin } = require('./middleware/auth');
+  app.use('/api/data-cleanup', requireAuth, requireAdmin, require('./routes/dataCleanup')); }
 // Sticky Notes — CRM surface (role-based visibility via User.managerId).
 {
   const { requireAuth } = require('./middleware/auth');
