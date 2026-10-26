@@ -1390,6 +1390,20 @@ async function initDb({ sync = true } = {}) {
     await addCol('currentStep', '`currentStep` VARCHAR(120) NULL');
     await addCol('progress', '`progress` INT NULL DEFAULT 0');
   }
+
+  // Guarantee the Data Cleanup tables exist even if the bulk alter-sync bailed
+  // (same safety net as PreSeoReport above). Without this, History stays empty
+  // and batch saves fail silently on an upgraded MySQL database.
+  try { await PhoneCheck.sync({ alter: false }); } catch (e) { console.error('[schema] PhoneCheck.sync failed (non-fatal):', e.message); }
+  try { await CleanupBatch.sync({ alter: false }); } catch (e) { console.error('[schema] CleanupBatch.sync failed (non-fatal):', e.message); }
+  if (dialect !== 'sqlite') {
+    // Add any newer columns individually (ignore "duplicate column" errors).
+    const addPcCol = async (ddl) => { try { await sequelize.query(`ALTER TABLE \`phone_checks\` ADD COLUMN ${ddl}`); } catch (e) { if (!/duplicate column|exists/i.test(e.message)) console.error('[schema] phone_checks col (non-fatal):', e.message); } };
+    await addPcCol('`firstSessionId` VARCHAR(40) NULL');
+    const addCbCol = async (ddl) => { try { await sequelize.query(`ALTER TABLE \`cleanup_batches\` ADD COLUMN ${ddl}`); } catch (e) { if (!/duplicate column|exists/i.test(e.message)) console.error('[schema] cleanup_batches col (non-fatal):', e.message); } };
+    await addCbCol('`mobileCount` INT NULL');
+    await addCbCol('`sessionId` VARCHAR(40) NULL');
+  }
   let s = await Settings.findOne({ where: { singleton: 'settings' } });
   if (!s) s = await Settings.create({ singleton: 'settings', pricing: defaultPricing() });
   if (!s.pricing) {
@@ -3199,6 +3213,9 @@ const PhoneCheck = sequelize.define('PhoneCheck', {
 // so the regenerated file matches the uploaded format.
 const CleanupBatch = sequelize.define('CleanupBatch', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  // The upload session (from the client). One batch row per upload; re-checking
+  // the same upload (filter toggles) updates this row instead of adding a new one.
+  sessionId: { type: DataTypes.STRING(40), allowNull: true },
   userId: { type: DataTypes.INTEGER, allowNull: true },
   userName: { type: DataTypes.STRING(160), allowNull: true },
   fileNames: { type: DataTypes.JSON, defaultValue: [] },        // ['a.xlsx', ...]
@@ -3213,7 +3230,7 @@ const CleanupBatch = sequelize.define('CleanupBatch', {
   // lineType/carrier are kept for the detail VIEW only, never written to Excel.
   keptRows: { type: DataTypes.JSON, defaultValue: [] },
   removedRows: { type: DataTypes.JSON, defaultValue: [] },
-}, { tableName: 'cleanup_batches', indexes: [{ fields: ['userId'] }, { fields: ['createdAt'] }] });
+}, { tableName: 'cleanup_batches', indexes: [{ fields: ['userId'] }, { fields: ['createdAt'] }, { fields: ['sessionId'] }] });
 
 module.exports = {
   sequelize, Sequelize, Op,

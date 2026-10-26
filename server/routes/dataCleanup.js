@@ -188,7 +188,13 @@ router.post('/check', async (req, res, next) => {
     summary.api_cached = firstValid.filter((r) => r.apiChecked).length;
     summary.api_to_check = firstValid.filter((r) => !r.apiChecked).length;
 
-    res.json({ ok: true, headers, phoneCol, countryCol, rows: out, summary, perFile, multi: files.length > 1 });
+    // Record the batch NOW (on process), so it appears in History immediately —
+    // even if the user never downloads. Upserted by sessionId, so filter re-runs
+    // update the same row. No line-type filter yet (that's applied at download).
+    const fileNames = files.map((f) => f.name);
+    const batchId = await recordBatch({ sessionId, user: req.user, headers, rows: out, fileNames });
+
+    res.json({ ok: true, headers, phoneCol, countryCol, rows: out, summary, perFile, multi: files.length > 1, batchId });
   } catch (e) { next(e); }
 });
 
@@ -231,6 +237,43 @@ function dominantCountry(rows, headers) {
   return top ? top[0] : '';
 }
 
+// Record (or update) a batch for this upload. Keyed by sessionId so re-checking
+// the same upload (filter toggles, deep check, download) UPDATES one row rather
+// than creating many. Called on /check so history appears as soon as a file is
+// processed — not only on download. Returns the batch id (or null on failure).
+async function recordBatch({ sessionId, user, headers, rows, fileNames, includeLineTypes }) {
+  try {
+    const lineTypeOf = (r) => (r && r.lineType ? String(r.lineType).toLowerCase() : 'unknown');
+    const passesLT = (r) => !includeLineTypes || includeLineTypes.includes(lineTypeOf(r));
+    const deepRan = rows.some((r) => r && r.lineType);
+    const kept = rows.filter((r) => r && r.ok && passesLT(r));
+    const removed = rows.filter((r) => r && (!r.ok || !passesLT(r)));
+    const trim = (r) => ({ cells: r.cells, srcFile: r.srcFile || null, phone: r.phone, lineType: r.lineType || null, carrier: r.carrier || null, ok: !!r.ok, reasonLabels: r.reasonLabels || [], reason: r.reason || null });
+    const payload = {
+      sessionId: sessionId || null,
+      userId: (user && user.id) || null,
+      userName: (user && user.name) || 'Unknown',
+      fileNames: fileNames || [],
+      country: dominantCountry(rows, headers),
+      headers,
+      totalRows: rows.length,
+      cleanCount: kept.length,
+      mobileCount: deepRan ? kept.filter((r) => lineTypeOf(r) === 'mobile').length : null,
+      excludedCount: removed.length,
+      keptRows: kept.map(trim),
+      removedRows: removed.map(trim),
+    };
+    let batch = null;
+    if (sessionId) batch = await CleanupBatch.findOne({ where: { sessionId } });
+    if (batch) { await batch.update(payload); return batch.id; }
+    batch = await CleanupBatch.create(payload);
+    return batch.id;
+  } catch (e) {
+    console.error('[data-cleanup] recordBatch failed:', e.message);
+    return null;
+  }
+}
+
 // --- Export a cleaned workbook (flagged rows removed) + RECORD the batch -----
 // Body: { headers, rows, fileName, includeLineTypes?, fileNames? }
 // Keeps ok===true rows; if includeLineTypes is given (after a deep check) a kept
@@ -244,12 +287,12 @@ router.post('/export/xlsx', async (req, res, next) => {
     const srcName = String((req.body && req.body.fileName) || 'whois-data').replace(/\.(xlsx|xls|csv)$/i, '');
     const includeLineTypes = Array.isArray(req.body && req.body.includeLineTypes) ? req.body.includeLineTypes : null;
     const fileNames = Array.isArray(req.body && req.body.fileNames) ? req.body.fileNames : [srcName];
+    const sessionId = String((req.body && req.body.sessionId) || '').slice(0, 40) || null;
     if (!headers.length) return res.status(400).json({ error: 'Nothing to export.' });
 
     const multi = rows.some((r) => r && r.srcFile) && new Set(rows.map((r) => r && r.srcFile)).size > 1;
     const lineTypeOf = (r) => (r && r.lineType ? String(r.lineType).toLowerCase() : 'unknown');
     const passesLineType = (r) => !includeLineTypes || includeLineTypes.includes(lineTypeOf(r));
-    const deepRan = rows.some((r) => r && r.lineType);
 
     const kept = rows.filter((r) => r && r.ok && passesLineType(r));
     const removed = rows.filter((r) => r && (!r.ok || !passesLineType(r))).map((r) => {
@@ -261,25 +304,9 @@ router.post('/export/xlsx', async (req, res, next) => {
 
     const buf = buildCleanedWorkbook({ headers, kept, removed, multi });
 
-    // Record the batch (committed result). Store original cells only + line type
-    // for the detail view; best-effort so a logging hiccup never fails the download.
-    try {
-      const trim = (r) => ({ cells: r.cells, srcFile: r.srcFile || null, phone: r.phone, lineType: r.lineType || null, carrier: r.carrier || null, ok: !!r.ok, reasonLabels: r.reasonLabels || [], reason: r.reason || null });
-      const mobileCount = deepRan ? kept.filter((r) => lineTypeOf(r) === 'mobile').length : null;
-      await CleanupBatch.create({
-        userId: (req.user && req.user.id) || null,
-        userName: (req.user && req.user.name) || 'Unknown',
-        fileNames,
-        country: dominantCountry(rows, headers),
-        headers,
-        totalRows: rows.length,
-        cleanCount: kept.length,
-        mobileCount,
-        excludedCount: removed.length,
-        keptRows: kept.map(trim),
-        removedRows: removed.map(trim),
-      });
-    } catch (e) { /* non-fatal: download still succeeds */ }
+    // Update the batch to reflect the DOWNLOADED (line-type-filtered) result, so
+    // History shows exactly what was downloaded. Upserted by sessionId.
+    await recordBatch({ sessionId, user: req.user, headers, rows, fileNames, includeLineTypes });
 
     res.json({ ok: true, base64: buf.toString('base64'), fileName: `${srcName}-cleaned.xlsx`, kept: kept.length, removed: removed.length });
   } catch (e) { next(e); }

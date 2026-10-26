@@ -126,7 +126,7 @@ function CleanTab() {
     try {
       const baseName = files.length === 1 ? files[0].name : 'whois-combined';
       // Only apply the line-type chooser when a deep check actually ran.
-      const body = { headers: result.headers, rows: result.rows, fileName: baseName, fileNames: files.map((f) => f.name) };
+      const body = { headers: result.headers, rows: result.rows, fileName: baseName, fileNames: files.map((f) => f.name), sessionId: sessionRef.current };
       if (deepDone) body.includeLineTypes = includeLineTypes;
       const r = await api('/export/xlsx', { method: 'POST', body: JSON.stringify(body) });
       downloadBase64(r.base64, r.fileName);
@@ -235,12 +235,14 @@ function CleanTab() {
               <input type="checkbox" checked={onlyFlagged} onChange={(e) => setOnlyFlagged(e.target.checked)} /> Show only flagged rows
             </label>
             <div className="flex items-center gap-2">
-              {deepAvailable && (
+              {deepAvailable ? (
                 <button onClick={deepCheck} disabled={deepBusy || busy} title="Look up line type (mobile/landline/VoIP) via NumVerify — only new, valid, uncached numbers are charged"
                   className="rounded-lg px-4 py-2 text-[13px] font-bold border disabled:opacity-50"
                   style={{ borderColor: '#6366F1', color: '#4338CA', background: '#EEF2FF' }}>
                   {deepBusy ? 'Checking line types…' : deepDone ? '✓ Line types checked' : `📞 Deep check line type (${s.api_to_check} new)`}
                 </button>
+              ) : (
+                <span className="text-[11.5px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">⚠ Add the NumVerify key in Admin → API to enable mobile/landline detection</span>
               )}
               <button onClick={exportClean} disabled={busy} className="rounded-lg px-5 py-2 text-[13px] font-bold text-white disabled:opacity-50" style={{ background: '#050A1F' }}>
                 {busy ? 'Preparing…' : `⬇ Download cleaned file (${keptCount} kept · ${removeCount} removed)`}
