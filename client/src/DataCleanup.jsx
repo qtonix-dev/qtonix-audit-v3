@@ -487,14 +487,15 @@ function BatchDetail({ batchId, onBack }) {
   React.useEffect(() => { const t = setTimeout(() => { setPage(0); load(); }, 350); return () => clearTimeout(t); /* eslint-disable-next-line */ }, [q]);
   React.useEffect(() => { setPage(0); }, [filter]);
 
-  const download = async () => {
+  const download = async (which = 'clean') => {
     setBusy(true);
     try {
       const token = localStorage.getItem('qtx_token');
-      const res = await fetch(`${API_BASE}/api/data-cleanup/batches/${batchId}/download`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      const res = await fetch(`${API_BASE}/api/data-cleanup/batches/${batchId}/download${which === 'removed' ? '?which=removed' : ''}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
       if (!res.ok) throw new Error('Download failed');
       const blob = await res.blob(); const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = `${String((data.batch.fileNames || ['whois'])[0]).replace(/\.(xlsx|xls|csv)$/i, '')}-cleaned.xlsx`; a.click();
+      const stem = String((data.batch.fileNames || ['whois'])[0]).replace(/\.(xlsx|xls|csv)$/i, '');
+      const a = document.createElement('a'); a.href = url; a.download = `${stem}-${which === 'removed' ? 'removed' : 'cleaned'}.xlsx`; a.click();
       setTimeout(() => URL.revokeObjectURL(url), 2000);
     } catch (e) { toast(e.message); } finally { setBusy(false); }
   };
@@ -518,7 +519,10 @@ function BatchDetail({ batchId, onBack }) {
         <div><div className="text-[9px] uppercase text-slate-400 font-bold">Clean</div><span className="text-green-700 font-bold">{b.cleanCount}</span></div>
         <div><div className="text-[9px] uppercase text-slate-400 font-bold">Mobile</div>{b.mobileCount == null ? '—' : b.mobileCount}</div>
         <div><div className="text-[9px] uppercase text-slate-400 font-bold">Excluded</div><span className="text-red-700 font-bold">{b.excludedCount}</span></div>
-        <button onClick={download} disabled={busy} className="ml-auto rounded-lg px-4 py-2 text-[13px] font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>{busy ? 'Preparing…' : '⬇ Download cleaned file'}</button>
+        <div className="ml-auto flex gap-2">
+          {b.excludedCount > 0 && <button onClick={() => download('removed')} disabled={busy} className="rounded-lg px-3.5 py-2 text-[12.5px] font-bold border border-slate-200 text-slate-600 disabled:opacity-50">⬇ Removed ({b.excludedCount})</button>}
+          <button onClick={() => download('clean')} disabled={busy} className="rounded-lg px-4 py-2 text-[13px] font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>{busy ? 'Preparing…' : '⬇ Download cleaned file'}</button>
+        </div>
       </div>
       <div className="flex gap-2 mb-3 flex-wrap items-center">
         {[['all', `All (${b.totalRows})`], ['clean', `Clean (${b.cleanCount})`], ['mobile', `Mobile (${b.mobileCount == null ? '—' : b.mobileCount})`], ['excluded', `Excluded (${b.excludedCount})`]].map(([k, lbl]) => (

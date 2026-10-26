@@ -214,27 +214,33 @@ router.post('/check', async (req, res, next) => {
 // Removed sheet). No NumVerify / line-type / carrier columns — the dialer wants
 // the data exactly as uploaded. A deep check still filters WHICH rows are kept
 // (via each row's ok + line type), it just never adds columns to the file.
-function buildCleanedWorkbook({ headers, kept, removed, multi }) {
+// DIALER-READY by default: ONE sheet, ONLY the original columns. No "Source
+// file" column and no "Removed" sheet — VOIP dialers import the first sheet
+// with a fixed column layout, and an extra column or a second sheet makes the
+// import "run but show no data". Removed numbers stay viewable in History and
+// can be downloaded separately via buildRemovedWorkbook().
+function buildCleanedWorkbook({ headers, kept /* removed, multi ignored by design */ }) {
   const XLSX = require('xlsx');
   const wb = XLSX.utils.book_new();
+  const aoa = [headers, ...kept.map((r) => (r.cells || []).map((c) => (c == null ? '' : c)))];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = headers.map((h) => ({ wch: Math.min(28, Math.max(10, String(h).length + 2)) }));
+  XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
 
-  const cleanHead = multi ? [...headers, 'Source file'] : headers;
-  const cleanAoa = [cleanHead, ...kept.map((r) => {
+// Separate file of the removed/excluded numbers (with a reason column), for
+// optional review. Single sheet, original columns + a trailing reason.
+function buildRemovedWorkbook({ headers, removed }) {
+  const XLSX = require('xlsx');
+  const wb = XLSX.utils.book_new();
+  const head = [...headers, 'Removed reason'];
+  const aoa = [head, ...removed.map((r) => {
     const cells = (r.cells || []).map((c) => (c == null ? '' : c));
-    return multi ? [...cells, r.srcFile || ''] : cells;
+    return [...cells, (r.reasonLabels || []).join('; ') || (r.reason || '')];
   })];
-  const wsClean = XLSX.utils.aoa_to_sheet(cleanAoa);
-  wsClean['!cols'] = cleanHead.map((h) => ({ wch: Math.min(28, Math.max(10, String(h).length + 2)) }));
-  XLSX.utils.book_append_sheet(wb, wsClean, 'Cleaned');
-
-  const remHead = [...(multi ? [...headers, 'Source file'] : headers), 'Removed reason'];
-  const removedAoa = [remHead, ...removed.map((r) => {
-    const cells = (r.cells || []).map((c) => (c == null ? '' : c));
-    const reason = (r.reasonLabels || []).join('; ') || (r.reason || '');
-    return multi ? [...cells, r.srcFile || '', reason] : [...cells, reason];
-  })];
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(removedAoa), 'Removed');
-
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  XLSX.utils.book_append_sheet(wb, ws, 'Removed');
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }
 
@@ -535,10 +541,14 @@ router.get('/batches/:id/download', async (req, res, next) => {
       }
       return out;
     };
-    const kept = await fetchAll(false);
-    const removed = await fetchAll(true);
-    const buf = buildCleanedWorkbook({ headers: o.headers || [], kept, removed, multi });
-    const name = `${String((o.fileNames || ['whois'])[0]).replace(/\.(xlsx|xls|csv)$/i, '')}-cleaned.xlsx`;
+    const which = String((req.query && req.query.which) || 'clean');
+    const kept = which === 'removed' ? [] : await fetchAll(false);
+    const removed = which === 'removed' ? await fetchAll(true) : [];
+    const buf = which === 'removed'
+      ? buildRemovedWorkbook({ headers: o.headers || [], removed })
+      : buildCleanedWorkbook({ headers: o.headers || [], kept });
+    const stem = String((o.fileNames || ['whois'])[0]).replace(/\.(xlsx|xls|csv)$/i, '');
+    const name = which === 'removed' ? `${stem}-removed.xlsx` : `${stem}-cleaned.xlsx`;
     res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.set('Content-Disposition', `attachment; filename="${name}"`);
     res.send(buf);
