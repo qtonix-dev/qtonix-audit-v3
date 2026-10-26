@@ -1039,6 +1039,9 @@ connectWithRetry()
       // Scheduled-email dispatcher (sends queued emails at their chosen time).
       try { require('./jobs/scheduledEmail').start(require('./models')); }
       catch (e) { console.error('[sched-email] not started:', e.message); }
+      // Data Cleanup retention: prune per-number detail older than 6 months.
+      try { const dc = require('./routes/dataCleanup'); dc.pruneOldNumbers(); setInterval(() => dc.pruneOldNumbers(), 24 * 60 * 60 * 1000); }
+      catch (e) { console.error('[data-cleanup] prune not scheduled:', e.message); }
       // Team day-end report scheduler (EOD digest + weekly productivity digest).
       try { require('./jobs/teamReportJob').start(require('./models')); }
       catch (e) { console.error('[team-report] not started:', e.message); }

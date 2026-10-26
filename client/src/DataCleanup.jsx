@@ -411,9 +411,15 @@ function HistoryTab({ onView }) {
 function BatchDetail({ batchId, onBack }) {
   const [data, setData] = useState(null);
   const [filter, setFilter] = useState('all'); // all | clean | mobile | excluded
+  const [page, setPage] = useState(0);
+  const [q, setQ] = useState('');
   const [busy, setBusy] = useState(false);
 
-  React.useEffect(() => { api(`/batches/${batchId}`).then(setData).catch((e) => toast(e.message)); }, [batchId]);
+  // Server-paginated + SQL-filtered: never loads all 90k rows into the browser.
+  const load = () => api(`/batches/${batchId}?filter=${filter}&page=${page}${q ? `&q=${encodeURIComponent(q)}` : ''}`).then(setData).catch((e) => toast(e.message));
+  React.useEffect(() => { load(); /* eslint-disable-next-line */ }, [batchId, filter, page]);
+  React.useEffect(() => { const t = setTimeout(() => { setPage(0); load(); }, 350); return () => clearTimeout(t); /* eslint-disable-next-line */ }, [q]);
+  React.useEffect(() => { setPage(0); }, [filter]);
 
   const download = async () => {
     setBusy(true);
@@ -430,7 +436,8 @@ function BatchDetail({ batchId, onBack }) {
   if (!data) return <div className="text-slate-400 text-sm py-10 text-center">Loading…</div>;
   const b = data.batch;
   const ltOf = (r) => (r.lineType ? String(r.lineType).toLowerCase() : 'unknown');
-  const shown = data.rows.filter((r) => filter === 'all' ? true : filter === 'clean' ? !r.excluded : filter === 'mobile' ? (!r.excluded && ltOf(r) === 'mobile') : r.excluded);
+  const shown = data.rows; // already filtered + paginated server-side
+  const totalPages = Math.ceil((data.totalRows || 0) / (data.pageSize || 100));
   const phoneIdx = (b.headers || []).findIndex((h) => /phone/i.test(String(h)));
   const domainIdx = 0;
 
@@ -447,11 +454,12 @@ function BatchDetail({ batchId, onBack }) {
         <div><div className="text-[9px] uppercase text-slate-400 font-bold">Excluded</div><span className="text-red-700 font-bold">{b.excludedCount}</span></div>
         <button onClick={download} disabled={busy} className="ml-auto rounded-lg px-4 py-2 text-[13px] font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>{busy ? 'Preparing…' : '⬇ Download cleaned file'}</button>
       </div>
-      <div className="flex gap-2 mb-3">
-        {[['all', `All (${data.rows.length})`], ['clean', `Clean (${b.cleanCount})`], ['mobile', `Mobile (${b.mobileCount == null ? '—' : b.mobileCount})`], ['excluded', `Excluded (${b.excludedCount})`]].map(([k, lbl]) => (
+      <div className="flex gap-2 mb-3 flex-wrap items-center">
+        {[['all', `All (${b.totalRows})`], ['clean', `Clean (${b.cleanCount})`], ['mobile', `Mobile (${b.mobileCount == null ? '—' : b.mobileCount})`], ['excluded', `Excluded (${b.excludedCount})`]].map(([k, lbl]) => (
           <button key={k} onClick={() => setFilter(k)} className="rounded-full px-3.5 py-1.5 text-[11.5px] font-bold border"
             style={filter === k ? { background: '#050A1F', color: '#fff', borderColor: '#050A1F' } : { borderColor: '#e2e8f0', color: '#64748b' }}>{lbl}</button>
         ))}
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 phone…" className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-[12px] w-40" />
       </div>
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
         <div className="overflow-auto" style={{ maxHeight: '62vh' }}>
@@ -469,10 +477,20 @@ function BatchDetail({ batchId, onBack }) {
                   <td className="px-2 text-slate-500">{r.carrier || '—'}</td>
                 </tr>
               ))}
+              {shown.length === 0 && <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-400">No numbers to show.</td></tr>}
             </tbody>
           </table>
         </div>
       </div>
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between mt-3 text-[12px]">
+          <span className="text-slate-400">Page {page + 1} of {totalPages} · {data.totalRows.toLocaleString()} numbers</span>
+          <div className="flex gap-2">
+            <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))} className="rounded-md px-3 py-1.5 font-bold border border-slate-200 disabled:opacity-40">‹ Prev</button>
+            <button disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)} className="rounded-md px-3 py-1.5 font-bold border border-slate-200 disabled:opacity-40">Next ›</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

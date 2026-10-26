@@ -87,6 +87,32 @@ const sequelize =
       );
 
 // ---------------------------------------------------------------------------
+// Data Cleanup connection — a SEPARATE database (same MySQL server by default)
+// so the large WHOIS phone tables never touch or slow down CRM/HRMS. Set
+// CLEANUP_DB_NAME (e.g. "qtonix_cleanup") on Railway to activate it; the DB must
+// exist (CREATE DATABASE qtonix_cleanup). Host/user/pass default to the main
+// DB's. If CLEANUP_DB_NAME is unset we reuse the main connection, so nothing
+// breaks before it's configured — just without the isolation.
+let cleanupSequelize = sequelize;
+if (dialect !== 'sqlite' && process.env.CLEANUP_DB_NAME) {
+  cleanupSequelize = new Sequelize(
+    process.env.CLEANUP_DB_NAME,
+    process.env.CLEANUP_DB_USER || process.env.DB_USER || 'root',
+    process.env.CLEANUP_DB_PASS || process.env.DB_PASS || '',
+    {
+      host: process.env.CLEANUP_DB_HOST || process.env.DB_HOST || '127.0.0.1',
+      port: Number(process.env.CLEANUP_DB_PORT || process.env.DB_PORT || 3306),
+      dialect: 'mysql',
+      logging: false,
+      define: { charset: 'utf8mb4', collate: 'utf8mb4_unicode_ci' },
+      // Its own small pool, independent of the CRM/HRMS pool — a heavy cleanup
+      // query can never starve the main app of connections.
+      pool: { max: Number(process.env.CLEANUP_DB_POOL_MAX || 6), min: 0, idle: 10000, acquire: 30000, evict: 1000 },
+    }
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
 
@@ -1391,19 +1417,25 @@ async function initDb({ sync = true } = {}) {
     await addCol('progress', '`progress` INT NULL DEFAULT 0');
   }
 
-  // Guarantee the Data Cleanup tables exist even if the bulk alter-sync bailed
-  // (same safety net as PreSeoReport above). Without this, History stays empty
-  // and batch saves fail silently on an upgraded MySQL database.
-  try { await PhoneCheck.sync({ alter: false }); } catch (e) { console.error('[schema] PhoneCheck.sync failed (non-fatal):', e.message); }
-  try { await CleanupBatch.sync({ alter: false }); } catch (e) { console.error('[schema] CleanupBatch.sync failed (non-fatal):', e.message); }
-  if (dialect !== 'sqlite') {
-    // Add any newer columns individually (ignore "duplicate column" errors).
-    const addPcCol = async (ddl) => { try { await sequelize.query(`ALTER TABLE \`phone_checks\` ADD COLUMN ${ddl}`); } catch (e) { if (!/duplicate column|exists/i.test(e.message)) console.error('[schema] phone_checks col (non-fatal):', e.message); } };
-    await addPcCol('`firstSessionId` VARCHAR(40) NULL');
-    const addCbCol = async (ddl) => { try { await sequelize.query(`ALTER TABLE \`cleanup_batches\` ADD COLUMN ${ddl}`); } catch (e) { if (!/duplicate column|exists/i.test(e.message)) console.error('[schema] cleanup_batches col (non-fatal):', e.message); } };
-    await addCbCol('`mobileCount` INT NULL');
-    await addCbCol('`sessionId` VARCHAR(40) NULL');
-  }
+  // Data Cleanup lives on its own connection (a separate DB when CLEANUP_DB_NAME
+  // is set). Sync those tables on THAT connection, independently of the main
+  // schema sync, so the heavy tables never interfere with CRM/HRMS migrations.
+  try {
+    if (cleanupSequelize !== sequelize) {
+      await cleanupSequelize.authenticate();
+      console.log('[schema] cleanup DB connected:', process.env.CLEANUP_DB_NAME);
+    }
+    await PhoneCheck.sync({ alter: false });
+    await CleanupBatch.sync({ alter: false });
+    await CleanupNumber.sync({ alter: false });
+    // Add newer columns individually on the cleanup connection (ignore dupes).
+    if (cleanupSequelize.getDialect() !== 'sqlite') {
+      const q = (sql) => cleanupSequelize.query(sql).catch((e) => { if (!/duplicate column|exists/i.test(e.message)) console.error('[schema] cleanup col (non-fatal):', e.message); });
+      await q('ALTER TABLE `phone_checks` ADD COLUMN `firstSessionId` VARCHAR(40) NULL');
+      await q('ALTER TABLE `cleanup_batches` ADD COLUMN `mobileCount` INT NULL');
+      await q('ALTER TABLE `cleanup_batches` ADD COLUMN `sessionId` VARCHAR(40) NULL');
+    }
+  } catch (e) { console.error('[schema] cleanup DB sync failed (non-fatal):', e.message); }
   let s = await Settings.findOne({ where: { singleton: 'settings' } });
   if (!s) s = await Settings.create({ singleton: 'settings', pricing: defaultPricing() });
   if (!s.pricing) {
@@ -3178,65 +3210,66 @@ GstReconciliation.prototype.toJSON = function () {
   return o;
 };
 
-// --- Data Cleanup: cached phone validation ---------------------------------
+// --- Data Cleanup: cached phone validation (on the CLEANUP connection) ------
 // One row per normalised 10-digit NANP number. Caching lets us (a) recognise a
 // number as already-seen across any future upload (dedupe over time) and
-// (b) NEVER spend a paid API credit re-checking a number whose line-type/live
-// status we already fetched. 'phone' is the unique key.
-const PhoneCheck = sequelize.define('PhoneCheck', {
+// (b) NEVER spend a paid API credit re-checking a number whose line-type we
+// already fetched. 'phone' is the unique key. Kept forever (one compact row).
+const PhoneCheck = cleanupSequelize.define('PhoneCheck', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-  phone: { type: DataTypes.STRING(10), allowNull: false, unique: true }, // normalised 10-digit
-  // Free rule verdict (deterministic): true if it passed all local rules.
+  phone: { type: DataTypes.STRING(10), allowNull: false, unique: true },
   rulesOk: { type: DataTypes.BOOLEAN, defaultValue: false },
-  ruleReasons: { type: DataTypes.JSON, defaultValue: [] }, // ['toll_free',...] from rules
-  // Paid API verdict (null until a deep check is run for this number).
+  ruleReasons: { type: DataTypes.JSON, defaultValue: [] },
   apiChecked: { type: DataTypes.BOOLEAN, defaultValue: false },
-  lineType: { type: DataTypes.STRING(20), allowNull: true },   // mobile | landline | voip | tollFree | null
+  lineType: { type: DataTypes.STRING(20), allowNull: true },
   carrier: { type: DataTypes.STRING(120), allowNull: true },
-  liveStatus: { type: DataTypes.STRING(20), allowNull: true }, // active | disconnected | unknown | null
-  apiProvider: { type: DataTypes.STRING(30), allowNull: true },// twilio | numverify | abstract | ...
-  apiRaw: { type: DataTypes.JSON, allowNull: true },           // trimmed raw response for audit
-  // Bookkeeping.
-  seenCount: { type: DataTypes.INTEGER, defaultValue: 1 },     // times this number appeared in uploads
+  liveStatus: { type: DataTypes.STRING(20), allowNull: true },
+  apiProvider: { type: DataTypes.STRING(30), allowNull: true },
+  apiRaw: { type: DataTypes.JSON, allowNull: true },
+  seenCount: { type: DataTypes.INTEGER, defaultValue: 1 },
   firstSeenFile: { type: DataTypes.STRING(200), allowNull: true },
-  // The upload "session" that first inserted this number. Re-running the SAME
-  // upload (e.g. to toggle a filter) reuses this id, so those numbers are not
-  // wrongly reported as "seen in a previous upload".
   firstSessionId: { type: DataTypes.STRING(40), allowNull: true },
-  lastCheckedAt: { type: DataTypes.DATE, allowNull: true },    // when the API verdict was fetched
+  lastCheckedAt: { type: DataTypes.DATE, allowNull: true },
 }, { tableName: 'phone_checks', indexes: [{ unique: true, fields: ['phone'] }, { fields: ['lineType'] }, { fields: ['apiChecked'] }] });
 
-// --- Data Cleanup: one audit row per committed (downloaded) upload batch ----
-// Recorded when the user DOWNLOADS the cleaned file. Stores who/when/what plus
-// the committed rows so the exact same file can be re-downloaded from history.
-// `headers` + `kept`/`removed` hold ONLY the original sheet cells (no API data)
-// so the regenerated file matches the uploaded format.
-const CleanupBatch = sequelize.define('CleanupBatch', {
+// --- Data Cleanup: one SUMMARY row per upload batch -------------------------
+// No big JSON blobs — just counts + metadata, so the History list is tiny and
+// fast. The actual numbers live in cleanup_numbers (one row each), paginated.
+const CleanupBatch = cleanupSequelize.define('CleanupBatch', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-  // The upload session (from the client). One batch row per upload; re-checking
-  // the same upload (filter toggles) updates this row instead of adding a new one.
   sessionId: { type: DataTypes.STRING(40), allowNull: true },
   userId: { type: DataTypes.INTEGER, allowNull: true },
   userName: { type: DataTypes.STRING(160), allowNull: true },
-  fileNames: { type: DataTypes.JSON, defaultValue: [] },        // ['a.xlsx', ...]
-  country: { type: DataTypes.STRING(60), allowNull: true },     // dominant country in the data
-  headers: { type: DataTypes.JSON, defaultValue: [] },          // original column headers
+  fileNames: { type: DataTypes.JSON, defaultValue: [] },
+  country: { type: DataTypes.STRING(60), allowNull: true },
+  headers: { type: DataTypes.JSON, defaultValue: [] },          // original column headers (small)
   totalRows: { type: DataTypes.INTEGER, defaultValue: 0 },
   cleanCount: { type: DataTypes.INTEGER, defaultValue: 0 },
-  mobileCount: { type: DataTypes.INTEGER, allowNull: true },    // null if no deep check was run
+  mobileCount: { type: DataTypes.INTEGER, allowNull: true },
   excludedCount: { type: DataTypes.INTEGER, defaultValue: 0 },
-  // Committed rows (original cells only). kept = in the downloaded file.
-  // Each row: { cells:[...], srcFile, phone, lineType, carrier, ok, reasonLabels }
-  // lineType/carrier are kept for the detail VIEW only, never written to Excel.
-  keptRows: { type: DataTypes.JSON, defaultValue: [] },
-  removedRows: { type: DataTypes.JSON, defaultValue: [] },
 }, { tableName: 'cleanup_batches', indexes: [{ fields: ['userId'] }, { fields: ['createdAt'] }, { fields: ['sessionId'] }] });
+
+// --- Data Cleanup: one row per number per batch -----------------------------
+// This replaces the giant keptRows/removedRows JSON. Paginated and SQL-filtered
+// in the detail view, and pruned after 6 months (createdAt index). `cells` is
+// the original sheet row for THIS number (so the file can be regenerated).
+const CleanupNumber = cleanupSequelize.define('CleanupNumber', {
+  id: { type: DataTypes.BIGINT, primaryKey: true, autoIncrement: true },
+  batchId: { type: DataTypes.INTEGER, allowNull: false },
+  phone: { type: DataTypes.STRING(20), allowNull: true },       // as shown
+  cells: { type: DataTypes.JSON, defaultValue: [] },            // original row cells (one row, small)
+  srcFile: { type: DataTypes.STRING(200), allowNull: true },
+  lineType: { type: DataTypes.STRING(20), allowNull: true },
+  carrier: { type: DataTypes.STRING(120), allowNull: true },
+  excluded: { type: DataTypes.BOOLEAN, defaultValue: false },   // true = removed from the cleaned file
+  reason: { type: DataTypes.STRING(255), allowNull: true },     // why excluded (joined labels)
+}, { tableName: 'cleanup_numbers', indexes: [{ fields: ['batchId'] }, { fields: ['batchId', 'excluded'] }, { fields: ['batchId', 'lineType'] }, { fields: ['createdAt'] }] });
 
 module.exports = {
   sequelize, Sequelize, Op,
   runWithDemoScope, currentDemoScope, hasDemoContext,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog, MailFolderCache,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, AiOverviewReport, PushSubscription, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse, TicketBooking, TicketCustomer, StickyNote, GstReconciliation, PhoneCheck, CleanupBatch,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, AiOverviewReport, PushSubscription, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse, TicketBooking, TicketCustomer, StickyNote, GstReconciliation, PhoneCheck, CleanupBatch, CleanupNumber, cleanupSequelize,
   Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential, ProjectPlan, PreSeoReport, TaskFlow, TaskFlowRun,
   RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption,
   ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember,

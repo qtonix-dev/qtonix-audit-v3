@@ -24,7 +24,7 @@
 const express = require('express');
 const router = express.Router();
 const { validatePhone, REASON_LABELS, pickColumnsFull, softSignals, HARD_REASONS } = require('../services/dataCleanup');
-const { PhoneCheck, CleanupBatch, Op, Settings } = require('../models');
+const { PhoneCheck, CleanupBatch, CleanupNumber, Op, Settings, cleanupSequelize } = require('../models');
 const numverify = require('../services/numverify');
 
 const b64ToBuffer = (s) => Buffer.from(String(s || '').replace(/^data:[^;]+;base64,/, ''), 'base64');
@@ -248,8 +248,7 @@ async function recordBatch({ sessionId, user, headers, rows, fileNames, includeL
     const deepRan = rows.some((r) => r && r.lineType);
     const kept = rows.filter((r) => r && r.ok && passesLT(r));
     const removed = rows.filter((r) => r && (!r.ok || !passesLT(r)));
-    const trim = (r) => ({ cells: r.cells, srcFile: r.srcFile || null, phone: r.phone, lineType: r.lineType || null, carrier: r.carrier || null, ok: !!r.ok, reasonLabels: r.reasonLabels || [], reason: r.reason || null });
-    const payload = {
+    const summary = {
       sessionId: sessionId || null,
       userId: (user && user.id) || null,
       userName: (user && user.name) || 'Unknown',
@@ -260,13 +259,31 @@ async function recordBatch({ sessionId, user, headers, rows, fileNames, includeL
       cleanCount: kept.length,
       mobileCount: deepRan ? kept.filter((r) => lineTypeOf(r) === 'mobile').length : null,
       excludedCount: removed.length,
-      keptRows: kept.map(trim),
-      removedRows: removed.map(trim),
     };
-    let batch = null;
-    if (sessionId) batch = await CleanupBatch.findOne({ where: { sessionId } });
-    if (batch) { await batch.update(payload); return batch.id; }
-    batch = await CleanupBatch.create(payload);
+
+    // Upsert the SUMMARY row by sessionId.
+    let batch = sessionId ? await CleanupBatch.findOne({ where: { sessionId } }) : null;
+    if (batch) await batch.update(summary); else batch = await CleanupBatch.create(summary);
+
+    // Replace this batch's number rows. Each number is one row (no giant JSON).
+    // Delete + chunked bulkCreate keeps memory flat even for 90k+ numbers.
+    await CleanupNumber.destroy({ where: { batchId: batch.id } });
+    const toNumRow = (r, excluded) => ({
+      batchId: batch.id,
+      phone: String(r.phone == null ? '' : r.phone).slice(0, 20),
+      cells: r.cells || [],
+      srcFile: r.srcFile || null,
+      lineType: r.lineType || null,
+      carrier: r.carrier || null,
+      excluded,
+      reason: excluded ? ((r.reasonLabels || []).join('; ') || r.reason || '').slice(0, 255) : null,
+    });
+    const all = [...kept.map((r) => toNumRow(r, false)), ...removed.map((r) => toNumRow(r, true))];
+    const CHUNK = 1000;
+    for (let i = 0; i < all.length; i += CHUNK) {
+      // eslint-disable-next-line no-await-in-loop
+      await CleanupNumber.bulkCreate(all.slice(i, i + CHUNK));
+    }
     return batch.id;
   } catch (e) {
     console.error('[data-cleanup] recordBatch failed:', e.message);
@@ -396,58 +413,92 @@ router.post('/reset-cache', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// --- History: list committed batches + top-box totals -----------------------
+// --- History: list batches (summary only — tiny & fast) + top-box totals ----
 router.get('/batches', async (req, res, next) => {
   try {
-    const q = String((req.query && req.query.q) || '').trim().toLowerCase();
-    const all = await CleanupBatch.findAll({ order: [['createdAt', 'DESC']], limit: 500 });
-    let list = all.map((b) => {
-      const o = b.toJSON();
-      return {
-        id: o.id, createdAt: o.createdAt, userName: o.userName || 'Unknown',
-        fileNames: o.fileNames || [], country: o.country || '',
-        totalRows: o.totalRows, cleanCount: o.cleanCount, mobileCount: o.mobileCount, excludedCount: o.excludedCount,
-      };
+    const q = String((req.query && req.query.q) || '').trim();
+    const page = Math.max(0, parseInt((req.query && req.query.page) || '0', 10) || 0);
+    const PAGE = 50;
+    const where = {};
+    if (q) where[Op.or] = [{ userName: { [Op.like]: `%${q}%` } }];
+    // Summary rows only — never loads the number lists, so this is light.
+    const { rows, count } = await CleanupBatch.findAndCountAll({
+      where, order: [['createdAt', 'DESC']], limit: PAGE, offset: page * PAGE,
+      attributes: ['id', 'createdAt', 'userName', 'fileNames', 'country', 'totalRows', 'cleanCount', 'mobileCount', 'excludedCount'],
     });
-    if (q) list = list.filter((b) => (b.userName || '').toLowerCase().includes(q) || (b.fileNames || []).join(' ').toLowerCase().includes(q));
-    const totals = list.reduce((a, b) => ({
-      batches: a.batches + 1,
-      checked: a.checked + (b.totalRows || 0),
-      clean: a.clean + (b.cleanCount || 0),
-      excluded: a.excluded + (b.excludedCount || 0),
-    }), { batches: 0, checked: 0, clean: 0, excluded: 0 });
-    res.json({ ok: true, batches: list, totals });
+    let list = rows.map((b) => b.toJSON());
+    // File-name search (fileNames is JSON, filter in JS for the current page set
+    // after the userName SQL filter; good enough and still light).
+    if (q) list = list.filter((b) => (b.userName || '').toLowerCase().includes(q.toLowerCase()) || (b.fileNames || []).join(' ').toLowerCase().includes(q.toLowerCase()));
+    // Totals via SQL aggregate (cheap) across ALL batches, not just this page.
+    const agg = await CleanupBatch.findOne({
+      attributes: [
+        [cleanupSequelize.fn('COUNT', cleanupSequelize.col('id')), 'batches'],
+        [cleanupSequelize.fn('SUM', cleanupSequelize.col('totalRows')), 'checked'],
+        [cleanupSequelize.fn('SUM', cleanupSequelize.col('cleanCount')), 'clean'],
+        [cleanupSequelize.fn('SUM', cleanupSequelize.col('excludedCount')), 'excluded'],
+      ], raw: true,
+    });
+    const totals = {
+      batches: Number(agg.batches || 0), checked: Number(agg.checked || 0),
+      clean: Number(agg.clean || 0), excluded: Number(agg.excluded || 0),
+    };
+    res.json({ ok: true, batches: list, totals, page, pageSize: PAGE, totalBatches: count });
   } catch (e) { next(e); }
 });
 
-// --- History: one batch's numbers (for the View detail page) ----------------
+// --- History: one batch's numbers, PAGINATED + SQL-filtered -----------------
+// Query: ?filter=all|clean|mobile|excluded & ?page=N & ?q=phone
 router.get('/batches/:id', async (req, res, next) => {
   try {
     const b = await CleanupBatch.findByPk(req.params.id);
     if (!b) return res.status(404).json({ error: 'Batch not found.' });
     const o = b.toJSON();
-    // Build the detail rows: kept (clean) + removed (excluded), with a flag.
-    const kept = (o.keptRows || []).map((r) => ({ ...r, excluded: false }));
-    const removed = (o.removedRows || []).map((r) => ({ ...r, excluded: true }));
+    const filter = String((req.query && req.query.filter) || 'all');
+    const q = String((req.query && req.query.q) || '').trim();
+    const page = Math.max(0, parseInt((req.query && req.query.page) || '0', 10) || 0);
+    const PAGE = 100;
+    const where = { batchId: o.id };
+    if (filter === 'clean') where.excluded = false;
+    else if (filter === 'excluded') where.excluded = true;
+    else if (filter === 'mobile') { where.excluded = false; where.lineType = 'mobile'; }
+    if (q) where.phone = { [Op.like]: `%${q.replace(/\D/g, '')}%` };
+    const { rows, count } = await CleanupNumber.findAndCountAll({
+      where, order: [['excluded', 'ASC'], ['id', 'ASC']], limit: PAGE, offset: page * PAGE,
+    });
     res.json({
       ok: true,
       batch: {
         id: o.id, createdAt: o.createdAt, userName: o.userName, fileNames: o.fileNames || [], country: o.country || '',
         headers: o.headers || [], totalRows: o.totalRows, cleanCount: o.cleanCount, mobileCount: o.mobileCount, excludedCount: o.excludedCount,
       },
-      rows: [...kept, ...removed],
+      rows: rows.map((r) => { const x = r.toJSON(); return { phone: x.phone, cells: x.cells, srcFile: x.srcFile, lineType: x.lineType, carrier: x.carrier, excluded: x.excluded, reason: x.reason, reasonLabels: x.reason ? x.reason.split('; ') : [] }; }),
+      page, pageSize: PAGE, totalRows: count,
     });
   } catch (e) { next(e); }
 });
 
-// --- History: re-download a batch's committed cleaned file ------------------
+// --- History: re-download a batch's cleaned file (streamed from DB rows) -----
 router.get('/batches/:id/download', async (req, res, next) => {
   try {
     const b = await CleanupBatch.findByPk(req.params.id);
     if (!b) return res.status(404).send('Batch not found.');
     const o = b.toJSON();
     const multi = (o.fileNames || []).length > 1;
-    const buf = buildCleanedWorkbook({ headers: o.headers || [], kept: o.keptRows || [], removed: o.removedRows || [], multi });
+    // Pull kept + removed rows in pages to keep memory flat on large batches.
+    const fetchAll = async (excluded) => {
+      const out = []; const PAGE = 2000; let off = 0;
+      for (;;) {
+        // eslint-disable-next-line no-await-in-loop
+        const rows = await CleanupNumber.findAll({ where: { batchId: o.id, excluded }, order: [['id', 'ASC']], limit: PAGE, offset: off });
+        rows.forEach((r) => { const x = r.toJSON(); out.push({ cells: x.cells, srcFile: x.srcFile, reasonLabels: x.reason ? x.reason.split('; ') : [] }); });
+        if (rows.length < PAGE) break; off += PAGE;
+      }
+      return out;
+    };
+    const kept = await fetchAll(false);
+    const removed = await fetchAll(true);
+    const buf = buildCleanedWorkbook({ headers: o.headers || [], kept, removed, multi });
     const name = `${String((o.fileNames || ['whois'])[0]).replace(/\.(xlsx|xls|csv)$/i, '')}-cleaned.xlsx`;
     res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.set('Content-Disposition', `attachment; filename="${name}"`);
@@ -455,4 +506,16 @@ router.get('/batches/:id/download', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Retention: delete per-number detail older than 6 months. The summary batch
+// rows and the dedupe cache (phone_checks) are KEPT — only the heavy
+// cleanup_numbers detail is pruned, so History stays small and fast.
+async function pruneOldNumbers() {
+  try {
+    const cutoff = new Date(Date.now() - 183 * 24 * 60 * 60 * 1000); // ~6 months
+    const n = await CleanupNumber.destroy({ where: { createdAt: { [Op.lt]: cutoff } } });
+    if (n) console.log(`[data-cleanup] pruned ${n} number rows older than 6 months`);
+  } catch (e) { console.error('[data-cleanup] prune failed (non-fatal):', e.message); }
+}
+
 module.exports = router;
+module.exports.pruneOldNumbers = pruneOldNumbers;
