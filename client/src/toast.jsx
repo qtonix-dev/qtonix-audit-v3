@@ -9,7 +9,7 @@ let idc = 1;
 
 function guessType(msg) {
   const s = String(msg || '').toLowerCase();
-  if (/fail|error|can.?t|cannot|not allowed|invalid|required|denied|no access|wrong|unable|must|already|couldn|don.?t have|not found|empty|too (big|large)|permission/.test(s)) return 'error';
+  if (/fail|error|can.?t|cannot|not allowed|invalid|required|denied|no access|wrong|unable|must|already|couldn|don.?t have|not found|empty|too (big|large)|permission|memory|buffer|timeout|timed out|connection|refused|unreachable|crash|exceeded|\blimit\b/.test(s)) return 'error';
   if (/success|saved|done|added|updated|created|sent|approved|redeemed|requested|removed|deleted|reset|marked|granted/.test(s)) return 'success';
   return 'info';
 }

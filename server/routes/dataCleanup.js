@@ -84,6 +84,12 @@ router.post('/check', async (req, res, next) => {
 
     const summary = { total: 0, valid: 0, flagged: 0, toll_free: 0, short_9_digit: 0, wrong_length: 0, not_us_canada: 0, fake: 0, duplicate: 0, seen_before: 0, area_state_mismatch: 0, fake_name: 0, disposable_email: 0, api_cached: 0, api_to_check: 0, files: files.length };
     const seenInBatch = new Map(); // normalized -> first row index kept in THIS upload
+    // When the client uploads files ONE AT A TIME (for a progress bar), it passes
+    // the numbers already seen in earlier files of the SAME upload here, so a
+    // number repeated across files is still flagged as a duplicate. Pre-seed the
+    // in-batch set with them (index -1 = "seen in an earlier file this upload").
+    const priorNormals = Array.isArray(req.body && req.body.priorNormals) ? req.body.priorNormals : [];
+    for (const p of priorNormals) { if (p && !seenInBatch.has(p)) seenInBatch.set(p, -1); }
 
     // First pass: rules + soft signals + in-batch dedupe. Reasons are split into
     // `reasons` (hard — exclude by default) and `softReasons` (advisory — only
@@ -189,12 +195,17 @@ router.post('/check', async (req, res, next) => {
     summary.api_to_check = firstValid.filter((r) => !r.apiChecked).length;
 
     // Record the batch NOW (on process), so it appears in History immediately —
-    // even if the user never downloads. Upserted by sessionId, so filter re-runs
-    // update the same row. No line-type filter yet (that's applied at download).
+    // even if the user never downloads. `append` mode (file-by-file upload) adds
+    // this file's rows to the running batch; otherwise it replaces.
+    const append = !!(req.body && req.body.append);
     const fileNames = files.map((f) => f.name);
-    const batchId = await recordBatch({ sessionId, user: req.user, headers, rows: out, fileNames });
+    const batchId = await recordBatch({ sessionId, user: req.user, headers, rows: out, fileNames, append });
 
-    res.json({ ok: true, headers, phoneCol, countryCol, rows: out, summary, perFile, multi: files.length > 1, batchId });
+    // The normalized numbers in THIS file, so a file-by-file client can carry
+    // them forward (priorNormals) to flag cross-file duplicates.
+    const newNormals = [...new Set(out.filter((r) => r.normalized).map((r) => r.normalized))];
+
+    res.json({ ok: true, headers, phoneCol, countryCol, rows: out, summary, perFile, multi: files.length > 1, batchId, newNormals });
   } catch (e) { next(e); }
 });
 
@@ -241,33 +252,43 @@ function dominantCountry(rows, headers) {
 // the same upload (filter toggles, deep check, download) UPDATES one row rather
 // than creating many. Called on /check so history appears as soon as a file is
 // processed — not only on download. Returns the batch id (or null on failure).
-async function recordBatch({ sessionId, user, headers, rows, fileNames, includeLineTypes }) {
+async function recordBatch({ sessionId, user, headers, rows, fileNames, includeLineTypes, append = false }) {
   try {
     const lineTypeOf = (r) => (r && r.lineType ? String(r.lineType).toLowerCase() : 'unknown');
     const passesLT = (r) => !includeLineTypes || includeLineTypes.includes(lineTypeOf(r));
     const deepRan = rows.some((r) => r && r.lineType);
     const kept = rows.filter((r) => r && r.ok && passesLT(r));
     const removed = rows.filter((r) => r && (!r.ok || !passesLT(r)));
-    const summary = {
+
+    // Upsert the SUMMARY row by sessionId. In append mode (file-by-file upload)
+    // we ADD this file's counts to the existing row; otherwise we set them.
+    let batch = sessionId ? await CleanupBatch.findOne({ where: { sessionId } }) : null;
+    const base = {
       sessionId: sessionId || null,
       userId: (user && user.id) || null,
       userName: (user && user.name) || 'Unknown',
       fileNames: fileNames || [],
       country: dominantCountry(rows, headers),
       headers,
-      totalRows: rows.length,
-      cleanCount: kept.length,
-      mobileCount: deepRan ? kept.filter((r) => lineTypeOf(r) === 'mobile').length : null,
-      excludedCount: removed.length,
     };
+    const mobileThis = deepRan ? kept.filter((r) => lineTypeOf(r) === 'mobile').length : null;
+    if (batch && append) {
+      await batch.update({
+        ...base,
+        fileNames: [...new Set([...(batch.fileNames || []), ...(fileNames || [])])],
+        country: batch.country || base.country,
+        totalRows: (batch.totalRows || 0) + rows.length,
+        cleanCount: (batch.cleanCount || 0) + kept.length,
+        excludedCount: (batch.excludedCount || 0) + removed.length,
+        mobileCount: mobileThis == null ? batch.mobileCount : (batch.mobileCount || 0) + mobileThis,
+      });
+    } else if (batch) {
+      await batch.update({ ...base, totalRows: rows.length, cleanCount: kept.length, excludedCount: removed.length, mobileCount: mobileThis });
+      await CleanupNumber.destroy({ where: { batchId: batch.id } });
+    } else {
+      batch = await CleanupBatch.create({ ...base, totalRows: rows.length, cleanCount: kept.length, excludedCount: removed.length, mobileCount: mobileThis });
+    }
 
-    // Upsert the SUMMARY row by sessionId.
-    let batch = sessionId ? await CleanupBatch.findOne({ where: { sessionId } }) : null;
-    if (batch) await batch.update(summary); else batch = await CleanupBatch.create(summary);
-
-    // Replace this batch's number rows. Each number is one row (no giant JSON).
-    // Delete + chunked bulkCreate keeps memory flat even for 90k+ numbers.
-    await CleanupNumber.destroy({ where: { batchId: batch.id } });
     const toNumRow = (r, excluded) => ({
       batchId: batch.id,
       phone: String(r.phone == null ? '' : r.phone).slice(0, 20),
@@ -339,7 +360,25 @@ async function getNumverifyKey() {
 router.get('/config', async (req, res, next) => {
   try {
     const key = await getNumverifyKey();
-    res.json({ deepCheck: { provider: 'numverify', available: !!key }, isAdmin: !!(req.user && req.user.role === 'admin') });
+    // Live-check the cleanup DB so the UI can show a clear connection status.
+    let db = { separate: cleanupSequelize !== require('../models').sequelize, connected: false, name: process.env.CLEANUP_DB_NAME || null, error: null };
+    try { await cleanupSequelize.authenticate(); db.connected = true; } catch (e) { db.error = e.message; }
+    res.json({ deepCheck: { provider: 'numverify', available: !!key }, isAdmin: !!(req.user && req.user.role === 'admin'), db });
+  } catch (e) { next(e); }
+});
+
+// Explicit DB health-check endpoint (admin) — returns the live status + table row counts.
+router.get('/db-status', async (req, res, next) => {
+  try {
+    const out = { separate: cleanupSequelize !== require('../models').sequelize, name: process.env.CLEANUP_DB_NAME || '(main DB)', host: process.env.CLEANUP_DB_HOST || process.env.DB_HOST || null, connected: false, tables: {}, error: null };
+    try {
+      await cleanupSequelize.authenticate();
+      out.connected = true;
+      out.tables.phone_checks = await PhoneCheck.count();
+      out.tables.cleanup_batches = await CleanupBatch.count();
+      out.tables.cleanup_numbers = await CleanupNumber.count();
+    } catch (e) { out.error = e.message; }
+    res.json(out);
   } catch (e) { next(e); }
 });
 

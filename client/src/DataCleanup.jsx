@@ -47,9 +47,11 @@ function CleanTab() {
   const [excludeArea, setExcludeArea] = useState(false);   // free rule → affects /check
   const [excludeVoip, setExcludeVoip] = useState(false);   // line type → affects download
   const [excludeLandline, setExcludeLandline] = useState(false);
+  const [progress, setProgress] = useState(null); // { total, done, current, files:[{name,status,rows}] }
+  const [dbStatus, setDbStatus] = useState(null);  // cleanup DB connection status
 
   React.useEffect(() => {
-    api('/config').then((c) => setDeepAvailable(!!(c.deepCheck && c.deepCheck.available))).catch(() => {});
+    api('/config').then((c) => { setDeepAvailable(!!(c.deepCheck && c.deepCheck.available)); setDbStatus(c.db || null); }).catch(() => {});
   }, []);
 
   // Line-type lookup: ANNOTATE each row with its type/carrier. We do NOT
@@ -87,25 +89,51 @@ function CleanTab() {
       return [...prev, ...incoming.filter((f) => !seen.has(key(f)))];
     });
     setResult(null); setDeepDone(false);
-    uploadedRef.current = null; sessionRef.current = null;
+    sessionRef.current = null;
   };
 
-  const uploadedRef = React.useRef(null); // cached base64 payload so re-runs don't re-read files
   const sessionRef = React.useRef(null);  // stable id for this upload (so re-runs aren't "seen before")
 
+  // Process files ONE AT A TIME so we can show a per-file progress bar (which
+  // file is done / in progress / pending). Results are merged into one view,
+  // and cross-file duplicates are flagged by carrying the seen numbers forward.
   const run = async (areaOn = excludeArea) => {
     if (!files.length) return;
     setBusy(true);
+    const softExclude = areaOn ? ['area_state_mismatch'] : [];
     try {
-      if (!uploadedRef.current) {
-        uploadedRef.current = await Promise.all(files.map(async (f) => ({ name: f.name, base64: await readB64(f) })));
-        sessionRef.current = `dc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      // New upload session on a fresh run (not a filter re-run reusing cache).
+      if (!sessionRef.current) sessionRef.current = `dc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const sid = sessionRef.current;
+      const prog = { total: files.length, done: 0, current: -1, files: files.map((f) => ({ name: f.name, status: 'pending', rows: 0 })) };
+      setProgress({ ...prog });
+
+      let mergedRows = []; let mergedSummary = null; let headers = null; let multi = files.length > 1;
+      const priorNormals = [];
+      for (let i = 0; i < files.length; i++) {
+        prog.current = i; prog.files[i].status = 'processing'; setProgress({ ...prog });
+        // eslint-disable-next-line no-await-in-loop
+        const base64 = await readB64(files[i]);
+        // eslint-disable-next-line no-await-in-loop
+        const r = await api('/check', { method: 'POST', body: JSON.stringify({
+          files: [{ name: files[i].name, base64 }], softExclude, sessionId: sid,
+          append: i > 0, priorNormals,
+        }) });
+        headers = headers || r.headers;
+        // Re-index merged rows so each has a unique index across files.
+        const offset = mergedRows.length;
+        mergedRows = mergedRows.concat(r.rows.map((x) => ({ ...x, index: offset + x.index })));
+        (r.newNormals || []).forEach((n) => priorNormals.push(n));
+        // Accumulate the summary counts.
+        if (!mergedSummary) mergedSummary = { ...r.summary };
+        else for (const k of Object.keys(r.summary)) { if (typeof r.summary[k] === 'number' && k !== 'files') mergedSummary[k] += r.summary[k]; }
+        prog.files[i].status = 'done'; prog.files[i].rows = r.rows.length; prog.done = i + 1; setProgress({ ...prog });
       }
-      const softExclude = areaOn ? ['area_state_mismatch'] : [];
-      const r = await api('/check', { method: 'POST', body: JSON.stringify({ files: uploadedRef.current, softExclude, sessionId: sessionRef.current }) });
-      setResult(r);
-      setDeepDone(false); // a fresh check clears prior line-type annotations
-    } catch (e) { toast(e.message); } finally { setBusy(false); }
+      mergedSummary.files = files.length;
+      setResult({ ok: true, headers, rows: mergedRows, summary: mergedSummary, multi });
+      setDeepDone(false);
+      setTimeout(() => setProgress(null), 800); // clear the bar shortly after finishing
+    } catch (e) { toast(e.message); setProgress(null); } finally { setBusy(false); }
   };
 
   // Re-run the check (reusing the cached upload) when the free Area≠state toggle
@@ -148,10 +176,25 @@ function CleanTab() {
 
   return (
     <div>
-      <div className="mb-5">
+      <div className="mb-4">
         <div className="text-lg font-extrabold text-[#050A1F]">🧹 Data Cleanup — WHOIS phone validation</div>
         <div className="text-[13px] text-slate-500 mt-0.5">Upload a newly-registered-domain datasheet. Each registrant phone is checked and any that are <b>toll-free</b>, <b>9-digit</b>, or <b>not a USA/Canada</b> number is highlighted in red. Download a cleaned file with those rows removed.</div>
       </div>
+
+      {/* Cleanup-DB connection status (so you can confirm the separate DB is live). */}
+      {dbStatus && (
+        <div className="mb-4 rounded-xl px-4 py-2.5 text-[12.5px] font-semibold flex items-center gap-2 border"
+          style={dbStatus.connected ? { background: '#F0FDF4', borderColor: '#BBF7D0', color: '#15803D' } : { background: '#FEF2F2', borderColor: '#FECACA', color: '#B91C1C' }}>
+          <span>{dbStatus.connected ? '✓' : '⚠'}</span>
+          <span>
+            {dbStatus.connected
+              ? (dbStatus.separate
+                ? `Data Cleanup database connected — using a separate database${dbStatus.name ? ` (${dbStatus.name})` : ''}, isolated from CRM/HRMS.`
+                : 'Data Cleanup database connected (using the main database — set CLEANUP_DB_NAME for full isolation).')
+              : `Data Cleanup database not reachable${dbStatus.error ? ` — ${dbStatus.error}` : ''}. Check the CLEANUP_DB variables on the app service.`}
+          </span>
+        </div>
+      )}
 
       {/* Upload — multiple files allowed; all combined into one table + one download */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-5">
@@ -163,7 +206,7 @@ function CleanTab() {
           <input type="file" multiple accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden"
             onChange={(e) => addFiles(e.target.files)} />
         </label>
-        {files.length > 0 && <>
+        {files.length > 0 && !progress && <>
           <div className="mt-3 flex flex-wrap gap-2">
             {files.map((f, i) => (
               <span key={i} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-[12px] text-slate-600 flex items-center gap-2">
@@ -177,6 +220,29 @@ function CleanTab() {
             <button onClick={run} disabled={busy} className="rounded-lg px-5 py-2 text-[13px] font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>{busy ? 'Checking…' : `✨ Check numbers (${files.length} file${files.length > 1 ? 's' : ''})`}</button>
           </div>
         </>}
+
+        {/* Progress — per-file status while processing multiple files. */}
+        {progress && (
+          <div className="mt-4">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[12.5px] font-bold text-[#050A1F]">Processing {progress.done} of {progress.total} files…</span>
+              <span className="text-[12px] text-slate-400 font-semibold">{Math.round((progress.done / progress.total) * 100)}%</span>
+            </div>
+            <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden mb-3">
+              <div className="h-full rounded-full transition-all duration-300" style={{ width: `${(progress.done / progress.total) * 100}%`, background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }} />
+            </div>
+            <div className="grid sm:grid-cols-2 gap-1.5 max-h-56 overflow-auto">
+              {progress.files.map((f, i) => (
+                <div key={i} className="flex items-center gap-2 text-[12px] px-2.5 py-1.5 rounded-lg border"
+                  style={f.status === 'done' ? { background: '#F0FDF4', borderColor: '#BBF7D0' } : f.status === 'processing' ? { background: '#FFF7ED', borderColor: '#FED7AA' } : { background: '#F8FAFC', borderColor: '#E2E8F0' }}>
+                  <span>{f.status === 'done' ? '✅' : f.status === 'processing' ? '⏳' : '⚪'}</span>
+                  <span className="font-semibold text-slate-700 truncate flex-1">{f.name}</span>
+                  <span className="text-slate-400">{f.status === 'done' ? `${f.rows.toLocaleString()} rows` : f.status === 'processing' ? 'checking…' : 'pending'}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {result && (
