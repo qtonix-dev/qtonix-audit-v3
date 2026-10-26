@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v663';
+const APP_VERSION = 'v696';
 global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
@@ -498,7 +498,19 @@ if (require('fs').existsSync(clientDist)) {
   // `index: false` stops express.static from auto-serving index.html at '/', so
   // our handler below runs for the root and can inject the surface flag on the
   // HRMS domain. Static still serves JS/CSS/assets normally.
-  app.use(express.static(clientDist, { index: false }));
+  // Hashed assets (index-<hash>.js/.css) are immutable — cache them hard. The
+  // non-hashed index.html is served by the handler below with no-cache, so a
+  // new deploy's index always loads and points at the new hashed bundle.
+  app.use(express.static(clientDist, {
+    index: false,
+    setHeaders: (res, filePath) => {
+      if (/\.(js|css|woff2?|png|jpe?g|svg|gif|ico)$/i.test(filePath) && /[-.][0-9a-f]{8,}\./i.test(filePath)) {
+        res.set('Cache-Control', 'public, max-age=31536000, immutable');
+      } else if (/index\.html$/i.test(filePath)) {
+        res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+      }
+    },
+  }));
   const indexHtmlPath = path.join(clientDist, 'index.html');
   let _indexHtmlCache = null;
   const readIndexHtml = () => { if (_indexHtmlCache == null) { try { _indexHtmlCache = require('fs').readFileSync(indexHtmlPath, 'utf8'); } catch { _indexHtmlCache = ''; } } return _indexHtmlCache; };
@@ -514,10 +526,14 @@ if (require('fs').existsSync(clientDist)) {
       // flag; main.jsx reads it to mount the right app at '/'.
       if (surface === 'hrms') {
         const html = readIndexHtml().replace('<head>', `<head>\n    <script>window.__SURFACE__="hrms";</script>`);
-        res.set('Cache-Control', 'no-cache');
+        res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
         return res.type('html').send(html);
       }
     } catch {}
+    // index.html must NEVER be cached by the browser/edge — it points at the
+    // hashed JS/CSS bundle filenames, and a stale index keeps the old app
+    // loading after a deploy. The hashed assets themselves can cache forever.
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.sendFile(indexHtmlPath);
   });
 }
