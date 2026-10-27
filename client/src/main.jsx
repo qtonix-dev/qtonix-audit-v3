@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import App from './App.jsx';
 import Admin from './Admin.jsx';
+import ErrorBoundary from './ErrorBoundary.jsx';
 import TicketSharePublic from './TicketSharePublic.jsx';
 import TicketPortal from './TicketPortal.jsx';
 import HrApp from './HrApp.jsx';
@@ -22,6 +23,7 @@ const HRMS_ROOT = typeof window !== 'undefined' && window.__SURFACE__ === 'hrms'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
+    <ErrorBoundary>
     {(TV_SEG === 'company' || TV_SEG === 'sales') ? (
       <TvDisplay kind={TV_SEG} />
     ) : (
@@ -44,5 +46,6 @@ ReactDOM.createRoot(document.getElementById('root')).render(
       )}
     </BrowserRouter>
     )}
+    </ErrorBoundary>
   </React.StrictMode>
 );

@@ -1042,7 +1042,7 @@ function ApiKeys({ settings, setSettings, say }) {
   const hasMask = (id) => settings.apiKeys && String(settings.apiKeys[id] || '').startsWith('••');
 
   const test = async (id) => {
-    const key = (settings.apiKeys[id] || '').trim();
+    const key = ((settings.apiKeys || {})[id] || '').trim();
     setTests((t) => ({ ...t, [id]: { testing: true } }));
     try {
       const r = await api('/admin/settings/test-key', { method: 'POST', body: JSON.stringify({ service: id === 'pagespeed' ? 'pagespeed' : id, key: hasMask(id) ? '' : key }) });
@@ -1089,7 +1089,7 @@ function ApiKeys({ settings, setSettings, say }) {
                 : r.required && <span className="rounded bg-red-50 text-red-600 px-1.5 py-0.5 text-[8px] font-bold">REQUIRED</span>}
             </div>
             <div className="flex items-stretch gap-2">
-              <input type="password" className={inputCls} value={settings.apiKeys[id] || ''} placeholder="Paste key…" onChange={(e) => { setSettings({ ...settings, apiKeys: { ...settings.apiKeys, [id]: e.target.value } }); setTests((x) => ({ ...x, [id]: null })); }} />
+              <input type="password" className={inputCls} value={(settings.apiKeys || {})[id] || ''} placeholder="Paste key…" onChange={(e) => { setSettings({ ...settings, apiKeys: { ...(settings.apiKeys || {}), [id]: e.target.value } }); setTests((x) => ({ ...x, [id]: null })); }} />
               <Btn size="sm" variant="ghost" onClick={() => test(id)} disabled={t && t.testing} className="shrink-0">{t && t.testing ? 'Testing…' : 'Test'}</Btn>
             </div>
             <p className="text-[11px] text-slate-400 mt-1">{r.hint}</p>
