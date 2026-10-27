@@ -1192,8 +1192,23 @@ Content-Type: application/json
   "service": "SEO",            // or "services": ["SEO","Social Media"]
   "message": "What they wrote / the chat message",
   "country": "United States",
-  "city": "Austin"
-}`;
+  "city": "Austin",
+
+  // CHAT only — if the visitor books a call with Novi, add any one of:
+  "callDate": "2026-10-29", "callTime": "15:30",   // preferred date + time
+  "timezone": "America/New_York",                   // visitor's timezone
+  // ...or a single timestamp:  "callAt": "2026-10-29T15:30:00-04:00"
+  // ...or a free slot:         "scheduleCall": true, "callSlot": "tomorrow PM"
+
+  // REPORT only — used for the auto-generated analysis report:
+  "businessName": "Acme Inc"
+}
+
+// Response (always HTTP 200/4xx, safe to show the visitor):
+// success:  { "status":"success", "message":"...", "leadId":12,
+//             "reportId":5, "callId":"a_..." }
+// declined: { "status":"declined", "reason":"missing_contact",
+//             "message":"Please share a name, email, or phone..." }`;
   return (
     <div className="max-w-2xl">
       <div className="text-sm font-bold text-[#050A1F] mb-1">Ranknovo → CRM lead intake</div>
@@ -1212,7 +1227,7 @@ Content-Type: application/json
         </div>
         <pre className="text-[11px] text-slate-600 overflow-auto leading-relaxed" style={{ fontFamily: 'ui-monospace, Menlo, monospace' }}>{sample}</pre>
       </div>
-      <p className="text-[11px] text-slate-400 mt-2">The URL contains a secret — keep it private. It always returns HTTP 200 so a form never breaks, with <code>{'{ ok: true, leadId }'}</code> on success.</p>
+      <p className="text-[11px] text-slate-400 mt-2">The URL contains a secret — keep it private. Every reply carries <code>status</code> (<b>success</b> or <b>declined</b>) and a ready-to-show <code>message</code>. A <b>chat</b> request that includes a call time also creates a <b>Call</b> task under the lead; a <b>report</b> request auto-generates the analysis report.</p>
     </div>
   );
 }
