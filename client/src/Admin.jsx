@@ -1065,9 +1065,12 @@ function ApiKeys({ settings, setSettings, say }) {
         <SubBtn id="api" label="API" />
         <SubBtn id="callhippo" label="CallHippo" />
         <SubBtn id="gmail" label="Gmail" />
+        <SubBtn id="ranknovo" label="Ranknovo" />
       </div>
 
       {sub === 'gmail' && <EmailPanel say={say} />}
+
+      {sub === 'ranknovo' && <RanknovoPanel say={say} />}
 
       {sub === 'callhippo' && (
         <div className="max-w-2xl">
@@ -1170,6 +1173,50 @@ function ApiKeys({ settings, setSettings, say }) {
 // CallHippo integration panel: stores the API token (encrypted, saved with the
 // main Save button via settings.apiKeys) and shows the webhook URL to paste into
 // CallHippo's Integrations → REST API → Webhook → Calling Activity.
+// Ranknovo → CRM lead intake. Shows the webhook URL + payload spec so the
+// Ranknovo site can POST its contact / chat / report submissions into the CRM.
+function RanknovoPanel({ say }) {
+  const [url, setUrl] = useState('');
+  const [copied, setCopied] = useState(false);
+  useEffect(() => { api('/public-leads/config').then((r) => setUrl(r.webhookUrl || '')).catch((e) => say && say(e.message, 'bad')); }, []);
+  const copy = (text) => { try { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch {} };
+  const sample = `POST ${url || '<webhook-url>'}
+Content-Type: application/json
+
+{
+  "type": "lead",              // "lead" | "chat" | "report"
+  "name": "John Doe",          // or firstName + lastName
+  "email": "john@acme.com",
+  "phone": "+1 555 123 4567",
+  "website": "acme.com",       // their site (used for report requests + dedupe)
+  "service": "SEO",            // or "services": ["SEO","Social Media"]
+  "message": "What they wrote / the chat message",
+  "country": "United States",
+  "city": "Austin"
+}`;
+  return (
+    <div className="max-w-2xl">
+      <div className="text-sm font-bold text-[#050A1F] mb-1">Ranknovo → CRM lead intake</div>
+      <p className="text-[12px] text-slate-500 mb-3">When someone submits a <b>contact form</b>, <b>chat request</b>, or <b>analysis report request</b> on Ranknovo, POST it to this URL and it becomes a lead in the CRM (owned by the admin, tagged by type, deduped by website).</p>
+
+      <label className="text-xs font-semibold text-slate-600">Webhook URL</label>
+      <div className="flex items-stretch gap-2 mt-1 mb-4">
+        <input readOnly className={inputCls + ' font-mono text-xs'} value={url} placeholder="Loading…" onFocus={(e) => e.target.select()} />
+        <Btn size="sm" variant="ghost" className="shrink-0" onClick={() => copy(url)}>{copied ? 'Copied ✓' : 'Copy'}</Btn>
+      </div>
+
+      <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
+        <div className="flex items-center justify-between mb-1.5">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">How Ranknovo should call it</div>
+          <button onClick={() => copy(sample)} className="text-[11px] font-bold text-orange-600">Copy example</button>
+        </div>
+        <pre className="text-[11px] text-slate-600 overflow-auto leading-relaxed" style={{ fontFamily: 'ui-monospace, Menlo, monospace' }}>{sample}</pre>
+      </div>
+      <p className="text-[11px] text-slate-400 mt-2">The URL contains a secret — keep it private. It always returns HTTP 200 so a form never breaks, with <code>{'{ ok: true, leadId }'}</code> on success.</p>
+    </div>
+  );
+}
+
 function CallHippoPanel({ settings, setSettings, say }) {
   const [cfg, setCfg] = useState(null);
   const [copied, setCopied] = useState(false);

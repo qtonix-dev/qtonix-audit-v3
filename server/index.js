@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v698';
+const APP_VERSION = 'v699';
 global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
@@ -226,6 +226,11 @@ app.use('/api/gmail', gmailRoutes);
 app.use('/api/track', require('./routes/track'));
 app.use('/api/callhippo', require('./routes/callhippo'));
 app.use('/api/icons', require('./routes/icons'));
+// Ranknovo → CRM lead intake. The /config route is admin-only; the public
+// /ranknovo/:secret webhook authenticates via its secret path, so no JWT.
+{ const { requireAuth } = require('./middleware/auth');
+  app.use('/api/public-leads/config', requireAuth);
+  app.use('/api/public-leads', require('./routes/publicLeads')); }
 
 // Public demo page. Only reachable when DEMO_MODE=true; the API routes behind
 // it enforce that independently, so serving the HTML is harmless either way.
