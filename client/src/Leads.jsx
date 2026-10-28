@@ -5078,13 +5078,38 @@ function DealModal({ lead, config, deal, onClose, onSaved }) {
     const next = rows.map((r, ri) => (ri === i ? { ...r, [k]: v } : r));
     setF((s) => ({ ...s, installments: next }));
   };
+  // Add a new installment row for whatever is still unpaid on the deal, so a
+  // schedule that doesn't yet cover the full amount (e.g. a $500 deal that only
+  // ever had one $250 row) can be completed. The new row's amount defaults to
+  // the remaining balance, and its due date to one month after the last row.
+  const scheduledTotal = rows.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+  const dealTotal = Number(f.amount) || 0;
+  const remaining = Math.max(0, dealTotal - scheduledTotal);
+  const addRow = () => {
+    const base = rows.length ? rows[rows.length - 1] : null;
+    let due;
+    if (base && base.dueDate) { const d = new Date(`${base.dueDate}T00:00:00`); d.setMonth(d.getMonth() + 1); due = d.toISOString().slice(0, 10); }
+    else { due = f.expectedClose || new Date().toISOString().slice(0, 10); }
+    const next = [...rows, { id: `inst_new_${Date.now()}`, seq: rows.length + 1, amount: remaining || 0, dueDate: due, paid: false, paidDate: null }];
+    setF((s) => ({ ...s, installments: next, paymentStructure: 'installments' }));
+  };
+  const removeRow = (i) => {
+    if (rows[i] && rows[i].paid) { toast('Can’t remove a paid installment.'); return; }
+    const next = rows.filter((_, ri) => ri !== i).map((r, ri) => ({ ...r, seq: ri + 1 }));
+    setF((s) => ({ ...s, installments: next }));
+  };
 
   const save = async () => {
     if (!String(f.name).trim()) { toast('Deal name is required.'); return; }
     setBusy(true);
     try {
       const payload = { ...f };
-      if (f.paymentStructure === 'installments') payload.installments = rows;
+      // Send the schedule whenever one is on screen (installments plan, or a
+      // one-time deal the user chose to split, or rows that were added by hand).
+      if (f.paymentStructure === 'installments' || rows.length > 1) {
+        payload.installments = rows;
+        if (rows.length > 1 && payload.paymentStructure !== 'installments') payload.paymentStructure = 'installments';
+      }
       const u = deal
         ? await api(`/leads/${lead._id}/deals/${deal.id}`, { method: 'PATCH', body: JSON.stringify(payload) })
         : await api(`/leads/${lead._id}/deals`, { method: 'POST', body: JSON.stringify(payload) });
@@ -5205,10 +5230,29 @@ function DealModal({ lead, config, deal, onClose, onSaved }) {
                     {deal ? (
                       <button type="button" onClick={() => markPaid(r)} className={`rounded px-2 py-1 text-[10px] font-bold ${r.paid ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-slate-500'}`}>{r.paid ? '✓ Paid' : 'Mark paid'}</button>
                     ) : <span className="text-[10px] text-slate-300 w-14 text-center">—</span>}
+                    {/* Remove an unpaid row (paid rows are locked so collected money can't vanish). */}
+                    <button type="button" onClick={() => removeRow(i)} disabled={r.paid}
+                      title={r.paid ? 'Paid installments can’t be removed' : 'Remove this installment'}
+                      className={`rounded px-1.5 py-1 text-[11px] font-bold ${r.paid ? 'text-slate-300 cursor-not-allowed' : 'text-red-500 hover:bg-red-50'}`}>✕</button>
                   </div>
                 ))}
               </div>
-              <div className="text-[10px] text-slate-400 mt-2">First installment is due on the closing date; the rest are spaced monthly. Adjust any date if the customer pays early or late.</div>
+              {/* Add a missing installment — covers a schedule that doesn't yet add up to the deal amount. */}
+              <button type="button" onClick={addRow}
+                className="mt-2 w-full rounded-lg border border-dashed border-orange-300 px-3 py-1.5 text-[11px] font-bold text-[#FF4500] hover:bg-orange-50">
+                + Add installment{remaining > 0 ? ` (${f.currency} ${remaining} remaining)` : ''}
+              </button>
+              {/* Live total vs deal amount so the schedule can't silently under/over-cover. */}
+              <div className="flex items-center justify-between mt-2 text-[10px]">
+                <span className="text-slate-400">Scheduled: <b className="text-slate-600">{f.currency} {scheduledTotal}</b> of {f.currency} {dealTotal}</span>
+                {dealTotal > 0 && scheduledTotal !== dealTotal && (
+                  <span className={scheduledTotal < dealTotal ? 'font-bold text-amber-600' : 'font-bold text-red-600'}>
+                    {scheduledTotal < dealTotal ? `${f.currency} ${dealTotal - scheduledTotal} not yet scheduled` : `Over by ${f.currency} ${scheduledTotal - dealTotal}`}
+                  </span>
+                )}
+                {dealTotal > 0 && scheduledTotal === dealTotal && <span className="font-bold text-emerald-600">✓ Fully scheduled</span>}
+              </div>
+              <div className="text-[10px] text-slate-400 mt-2">First installment is due on the closing date; the rest are spaced monthly. Adjust any date if the customer pays early or late. Use <b>+ Add installment</b> if the schedule doesn’t cover the full amount yet.</div>
             </div>
           )}
 
