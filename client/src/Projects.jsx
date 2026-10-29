@@ -1238,54 +1238,65 @@ function CompetitorWizard({ projectId, project, chooseProject, onClose, onStarte
     } catch (e) { setChecking(false); return launch(); } // validation is best-effort; don't block
   };
 
+  // Right-side slide-over pocket (matches the other report wizards).
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[230] p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-[560px] p-5 shadow-2xl max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start justify-between mb-1"><div className="text-[16px] font-extrabold text-[#050A1F]">⚔ Competitor Analysis</div><button onClick={onClose} className="text-slate-300 hover:text-slate-600 text-[20px] leading-none">×</button></div>
-        <div className="text-[11.5px] text-slate-400 mb-4">A side-by-side SEO comparison of your client against a named competitor.</div>
+    <div className="fixed inset-0 z-[230]">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <aside className="absolute top-0 right-0 h-full w-full max-w-[560px] bg-white shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between px-5 py-4 border-b border-slate-100">
+          <div><div className="text-[16px] font-extrabold text-[#050A1F]">⚔ Competitor Analysis</div><div className="text-[11.5px] text-slate-400 mt-0.5">A side-by-side SEO comparison of your client against a named competitor.</div></div>
+          <button onClick={onClose} className="text-slate-300 hover:text-slate-600 text-[20px] leading-none">×</button>
+        </div>
 
-        {chooseProject && (
-          <div className="mb-3">
-            <FLbl>Project <span className="font-normal text-slate-400 normal-case">(optional — fills in the client site &amp; name)</span></FLbl>
-            <select value={projectSel} onChange={(e) => { setProjectSel(e.target.value); const p = projectList.find((x) => String(x.id) === e.target.value); if (p) { setWebsite(p.website || website); setBizName(p.customerName || bizName); } }} className={inp}>
-              <option value="">— No project —</option>
-              {projectList.map((p) => <option key={p.id} value={p.id}>{p.customerName || p.name || ('Project #' + p.id)}</option>)}
+        <div className="flex-1 overflow-auto px-5 py-4">
+          {chooseProject && (
+            <div className="mb-3">
+              <FLbl>Project <span className="font-normal text-slate-400 normal-case">(optional — fills in the client name &amp; website)</span></FLbl>
+              <select value={projectSel} onChange={(e) => { setProjectSel(e.target.value); const p = projectList.find((x) => String(x.id) === e.target.value); if (p) { setBizName(p.customerName || bizName); setWebsite(p.website || website); } }} className={inp}>
+                <option value="">— No project —</option>
+                {projectList.map((p) => <option key={p.id} value={p.id}>{p.customerName || p.name || ('Project #' + p.id)}</option>)}
+              </select>
+            </div>
+          )}
+
+          <div className="text-[11px] font-extrabold text-slate-400 uppercase mb-2">Client</div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><FLbl>Business name</FLbl><input className={inp} placeholder="Oil Chef" value={bizName} onChange={(e) => setBizName(e.target.value)} /></div>
+            <div><FLbl>Website</FLbl><input className={inp} placeholder="oilchef.com" value={website} onChange={(e) => { setWebsite(e.target.value); setVerdict(null); setConfirmed(false); }} /></div>
+          </div>
+
+          <div className="text-[11px] font-extrabold text-slate-400 uppercase mb-2 mt-4">Competitor</div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><FLbl>Name</FLbl><input className={inp} placeholder="Frytec" value={competitorName} onChange={(e) => { setCompetitorName(e.target.value); setVerdict(null); setConfirmed(false); }} /></div>
+            <div><FLbl>Website</FLbl><input className={inp} placeholder="frytec.co.uk" value={competitorSite} onChange={(e) => { setCompetitorSite(e.target.value); setVerdict(null); setConfirmed(false); }} /></div>
+          </div>
+
+          <div className="mt-4">
+            <FLbl>Target market</FLbl>
+            <select value={market} onChange={(e) => setMarket(e.target.value)} className={inp}>
+              {COMP_MARKETS.map((m) => <option key={m.code || 'auto'} value={m.code}>{m.name}</option>)}
             </select>
           </div>
-        )}
 
-        <div className="grid grid-cols-2 gap-3">
-          <div><FLbl>Client website</FLbl><input className={inp} placeholder="oilchef.com" value={website} onChange={(e) => { setWebsite(e.target.value); setVerdict(null); setConfirmed(false); }} /></div>
-          <div><FLbl>Client business name</FLbl><input className={inp} placeholder="Oil Chef" value={bizName} onChange={(e) => setBizName(e.target.value)} /></div>
-        </div>
-        <div className="grid grid-cols-2 gap-3 mt-3">
-          <div><FLbl>Competitor name</FLbl><input className={inp} placeholder="Frytec" value={competitorName} onChange={(e) => { setCompetitorName(e.target.value); setVerdict(null); setConfirmed(false); }} /></div>
-          <div><FLbl>Competitor website</FLbl><input className={inp} placeholder="frytec.co.uk" value={competitorSite} onChange={(e) => { setCompetitorSite(e.target.value); setVerdict(null); setConfirmed(false); }} /></div>
-        </div>
-        <div className="mt-3">
-          <FLbl>Target market</FLbl>
-          <select value={market} onChange={(e) => setMarket(e.target.value)} className={inp}>
-            {COMP_MARKETS.map((m) => <option key={m.code || 'auto'} value={m.code}>{m.name}</option>)}
-          </select>
-        </div>
-
-        {verdict && verdict.isCompetitor === false && (
-          <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3.5">
-            <div className="text-[13px] font-bold text-amber-800 mb-1">This may not be a direct competitor</div>
-            <div className="text-[12px] text-amber-700 leading-snug mb-2.5">{verdict.reason || `${competitorName} doesn't look like a direct competitor of ${bizName || website}.`}</div>
-            <div className="flex gap-2">
-              <button onClick={() => { setConfirmed(true); setVerdict(null); launch(); }} className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-white" style={{ background: '#D97706' }}>Yes, it's correct — run anyway</button>
-              <button onClick={() => setVerdict(null)} className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-slate-600 border border-slate-300">Let me fix it</button>
+          {verdict && verdict.isCompetitor === false && (
+            <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3.5">
+              <div className="text-[13px] font-bold text-amber-800 mb-1">This may not be a direct competitor</div>
+              <div className="text-[12px] text-amber-700 leading-snug mb-2.5">{verdict.reason || `${competitorName} doesn't look like a direct competitor of ${bizName || website}.`}</div>
+              <div className="flex gap-2">
+                <button onClick={() => { setConfirmed(true); setVerdict(null); launch(); }} className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-white" style={{ background: '#D97706' }}>Yes, it's correct — run anyway</button>
+                <button onClick={() => setVerdict(null)} className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-slate-600 border border-slate-300">Let me fix it</button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <div className="flex justify-end gap-2 mt-5">
+          <div className="text-[10.5px] text-slate-400 mt-4 leading-snug">We pull Google data for both sites and read each website, then Claude writes the report. It takes a couple of minutes — you can close this and watch progress in the list.</div>
+        </div>
+
+        <div className="flex justify-end gap-2 px-5 py-4 border-t border-slate-100">
           <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
           <button onClick={onRun} disabled={!ready || busy || checking} className="rounded-lg px-6 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{checking ? 'Checking competitor…' : busy ? 'Starting…' : '▶ Run analysis'}</button>
         </div>
-        <div className="text-[10.5px] text-slate-400 mt-2">We pull Google data for both sites and read each website, then write the report. It takes a couple of minutes — you can close this and watch progress in the list.</div>
-      </div>
+      </aside>
     </div>
   );
 }

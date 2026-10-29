@@ -105,12 +105,19 @@ function crawlEvidence(crawl) {
   };
 }
 
-// Shared JSON extraction from a Claude reply.
+// Shared JSON extraction from a Claude reply. Tolerant of markdown fences,
+// leading/trailing prose, and trailing commas.
 function parseJson(txt) {
   if (!txt) return null;
-  const m = String(txt).match(/```json\s*([\s\S]*?)```/) || String(txt).match(/\{[\s\S]*\}/);
-  const raw = m ? (m[1] || m[0]) : txt;
-  try { return JSON.parse(raw.trim()); } catch { try { return JSON.parse(raw.replace(/```/g, '').trim()); } catch { return null; } }
+  let s = String(txt).trim();
+  // Strip a ```json ... ``` (or ``` ... ```) fence if present.
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) s = fence[1].trim();
+  // Otherwise slice from the first { to the last } so leading/trailing prose is dropped.
+  if (s[0] !== '{') { const i = s.indexOf('{'); const j = s.lastIndexOf('}'); if (i !== -1 && j > i) s = s.slice(i, j + 1); }
+  const attempts = [s, s.replace(/,\s*([}\]])/g, '$1')]; // 2nd: drop trailing commas
+  for (const a of attempts) { try { return JSON.parse(a); } catch { /* try next */ } }
+  return null;
 }
 
 // ---- competitor validation (used by the wizard, exported) ------------------
@@ -324,74 +331,88 @@ function buildNotes(marketShort, dataMonth, reviewDate) {
   };
 }
 
-// ---- the narrative call: one structured JSON from Claude, grounded, then verified
+// ---- the narrative: generated in THREE focused, resilient Claude calls -------
+// A single 8k-token JSON call was all-or-nothing: one malformed character made
+// the whole report drop to the generic fallback (which is what produced the thin
+// WebFx report). Splitting into three smaller, section-grouped calls means each
+// returns a small, reliably-parseable JSON, and a failure in one group only
+// degrades that group — the rest stay rich. Numbers are code-owned, so the
+// narrative can't invent figures regardless.
+const NARRATIVE_SYSTEM = [
+  'You are a senior SEO strategist writing a detailed, client-facing competitor analysis for a digital agency (Qtonix).',
+  'You are given VERIFIED DATA: SE Ranking metrics plus a crawl of each website (title, meta description, H1s, schema types, social links, a body-text sample).',
+  'Write genuinely insightful, specific analysis — the depth a senior consultant would deliver, not filler.',
+  'HARD RULES:',
+  '- Never invent numbers. Use only figures present in the data.',
+  '- Every claim about a website must be grounded in that site\'s crawl evidence. If the evidence does not support a claim, do not make it. Prefer fewer, true points over padding.',
+  '- Read the crawl closely and surface what actually matters for THIS pair: what each business sells and how it positions itself, placeholder/dummy text, missing reviews or proof, thin content, dead links, trust signals, the intent behind the keywords, open keyword gaps, link-profile quality and risks. You are NOT limited to any fixed set of points — add whatever is clearly evidenced and useful.',
+  '- Plain, confident British-business English. Concrete and specific. No hype, no emojis.',
+  'Return STRICT, VALID JSON only — no markdown fence, no prose around it.',
+].join('\n');
+
+function dataContext(data) {
+  return `VERIFIED DATA (client is "${data.client.name}" / ${data.client.domain}; competitor is "${data.competitor.name}" / ${data.competitor.domain}; market = Google ${data.market}; the stronger site on raw numbers is ${data.clientLeads ? 'the CLIENT' : 'the COMPETITOR'}):\n${JSON.stringify(data)}`;
+}
+
+async function callJson(anthropicKey, userContent, maxTokens) {
+  try {
+    const out = await callClaude(anthropicKey, { system: NARRATIVE_SYSTEM, messages: [{ role: 'user', content: userContent }], maxTokens: maxTokens || 2000 });
+    const j = parseJson(out);
+    if (!j) console.error('[competitor] narrative chunk returned unparseable JSON (first 200 chars):', String(out).slice(0, 200));
+    return j;
+  } catch (e) { console.error('[competitor] narrative chunk failed:', e.message); return null; }
+}
+
 async function generateNarrative(anthropicKey, data) {
   const fallback = fallbackNarrative(data);
   if (!anthropicKey) return fallback;
-  const system = [
-    'You are a senior SEO strategist writing a client-facing competitor analysis for a digital agency (Qtonix).',
-    'You are given VERIFIED DATA (SE Ranking metrics + a crawl of each site). Write the narrative AROUND this data.',
-    'HARD RULES:',
-    '- Never invent numbers. Use only the figures in the data. Do not state a figure the data does not contain.',
-    '- Every claim about a website must be supported by its crawl evidence (title, meta, h1s, body text, social links, schema). If the evidence does not support a claim, do not make it.',
-    '- Prefer specific, verifiable observations over generic filler. If you notice something important that is clearly evidenced (placeholder text, missing reviews, dead links, thin content, spam anchors, wrong-intent rankings, an open keyword gap), include it — you are NOT limited to a fixed set of points.',
-    '- Plain, confident British-business English. No hype, no emojis.',
-    'Return STRICT JSON only, matching the requested schema exactly.',
-  ].join('\n');
+  const ctx = dataContext(data);
 
-  const schema = `{
-  "cover": {"headlineHtml": "3-line cover headline; wrap the key phrase in <span>...</span> for orange; use <br> between lines"},
-  "backCoverHeadlineHtml": "2-line closing headline; one phrase in <span>...</span>; <br> between lines",
-  "sharedCount": <integer: how many keywords both sites rank for, from the data; 0 if none>,
-  "exec": {
-    "title": "one-line headline verdict",
-    "leadHtml": "2-3 sentence summary; <strong>/<em> allowed",
-    "kpiNotes": ["note under ranking-keywords kpi","note under visits kpi","note under linking-websites kpi","note under shared-keywords kpi"],
-    "findings": [{"n":"1","title":"Bold lead-in.","bodyHtml":"the finding","impact":"High|Medium|Medium–High|Big opportunity|Opportunity|Info","pill":"p-r|p-a|p-g|p-n|p-o"}],
-    "recommendation": "one-line recommendation"
-  },
-  "who": {
-    "title":"section headline","lead":"intro sentence",
-    "rows":[{"label":"What they sell","compHtml":"...","clientHtml":"..."}],
-    "compWins":["..."],"clientWins":["..."],
-    "sideNote":"OPTIONAL cross-site observation, ONLY if genuinely relevant (e.g. same platform/agency); else empty string"
-  },
-  "scorecard": {"title":"who-wins headline","calloutTitle":"...","calloutBody":"..."},
-  "ranks": {"title":"...","lead":"...","rows":[{"kw":"...","vol":"10","pos":"44","type":"Own brand|Brand misspelling|Other brands|Buyer search|Information search","pill":"p-n|p-a|p-o","strong":true|false}],"trafficTitle":"optional","trafficBody":"optional","calloutTitle":"...","calloutHtml":"...","note2Title":"optional","note2Body":"optional"},
-  "health": {"eyebrow":"<client> keyword health check","title":"...","leadHtml":"...","wrongTitle":"...","wrong":[{"kw":"...","vol":"...","pos":"...","why":"..."}],"rightTitle":"...","right":[{"kw":"...","vol":"...","pos":"...","status":"Keep|Push to page 1|Needs own page|Needs a guide","pill":"p-g|p-o|p-r"}],"calloutTitle":"...","calloutBody":"..."},
-  "tech": {"title":"...","clientRows":[{"issue":"...","sawHtml":"...","priority":"High|Medium|Strength","pill":"p-r|p-a|p-g"}],"compRows":[{"issue":"...","sawHtml":"..."}]},
-  "backlinkLead":"intro for backlink section",
-  "back": {"title":"backlink section headline","compPoints":["..."],"clientPoints":["..."],"risksTitle":"e.g. Two risks to fix OR empty","risks":[{"risk":"...","detailHtml":"...","priority":"High|Medium","pill":"p-r|p-a"}]},
-  "swot": {"strengths":["..."],"weaknesses":["..."],"opportunities":["..."],"threats":["..."],"calloutTitle":"...","calloutBody":"..."},
-  "opp": {"title":"...","lead":"...","rows":[{"kw":"...","vol":"...","diff":"...","client":"— or position","strong":true|false,"page":true|false,"rowspan":<int optional>,"pageShade":true|false,"pageHtml":"<b>Page name</b> description"}],"supportTitle":"optional","supportLeft":["..."],"supportRight":["..."],"calloutTitle":"...","calloutBody":"..."}
-}`;
+  // --- Group A: cover + exec + who-is + scorecard callout + backlink framing ---
+  const pA = callJson(anthropicKey, `${ctx}
 
-  const content = `VERIFIED DATA:\n${JSON.stringify(data)}\n\nWrite the report narrative as STRICT JSON matching this schema (keep all keys):\n${schema}\n\nNotes:\n- "ranks" describes the COMPETITOR's keywords (from competitor.topKeywords). Mark real buyer searches strong:true.\n- "health" describes the CLIENT's keywords sorted by intent (from client.topKeywords): wrong-intent (buying/unrelated) vs right-intent (the client's actual problem).\n- "opp" lists searches the client should target next; use rowspan to group rows under one "page to build" exactly like a real plan; set pageShade:true on grouped/standout rows.\n- Flip all winner language correctly: the stronger site is whichever the data shows (clientLeads=${data.clientLeads}).`;
-
-  let draft;
-  try {
-    const out = await callClaude(anthropicKey, { system, messages: [{ role: 'user', content }], maxTokens: 8000 });
-    draft = parseJson(out);
-  } catch (e) { console.error('[competitor] narrative failed:', e.message); }
-  if (!draft || !draft.exec) return fallback;
-
-  // ---- verification pass: drop unproven claims ----
-  const verified = await verifyNarrative(anthropicKey, data, draft);
-  return mergeNarrative(fallback, verified || draft);
+Write the opening + comparison sections. STRICT JSON:
+{
+ "cover":{"headlineHtml":"3-line cover headline; wrap the key phrase in <span>...</span>; <br> between lines"},
+ "backCoverHeadlineHtml":"2-line closing headline; one phrase in <span>...</span>; <br> between lines",
+ "sharedCount":<integer keywords both sites rank for; 0 if unknown/none>,
+ "exec":{"title":"one-line verdict","leadHtml":"2-3 sentence summary, <strong>/<em> ok","kpiNotes":["under ranking-keywords","under visits","under linking-websites","under shared-keywords"],"findings":[{"n":"1","title":"Bold lead-in.","bodyHtml":"specific finding","impact":"High|Medium|Medium–High|Big opportunity|Opportunity|Info","pill":"p-r|p-a|p-g|p-n|p-o"}],"recommendation":"one-line recommendation"},
+ "who":{"title":"headline","lead":"intro","rows":[{"label":"What they sell","compHtml":"...","clientHtml":"..."},{"label":"How customers buy","compHtml":"...","clientHtml":"..."},{"label":"Headline claim","compHtml":"...","clientHtml":"..."},{"label":"Positioning","compHtml":"...","clientHtml":"..."},{"label":"Proof & trust","compHtml":"...","clientHtml":"..."},{"label":"Website","compHtml":"...","clientHtml":"..."},{"label":"Social presence","compHtml":"...","clientHtml":"..."}],"compWins":["3-5 bullets"],"clientWins":["3-5 bullets"],"sideNote":"optional cross-site observation ONLY if genuinely relevant, else empty string"},
+ "scorecard":{"title":"who-wins headline","calloutTitle":"...","calloutBody":"2-3 sentences interpreting the gap"},
+ "backlinkLead":"1-2 sentence plain-English intro to backlinks",
+ "back":{"title":"backlink section headline","compPoints":["3-4 bullets on the competitor's link profile"],"clientPoints":["3-4 bullets on the client's link profile"],"risksTitle":"Two risks to fix OR empty string","risks":[{"risk":"...","detailHtml":"...","priority":"High|Medium","pill":"p-r|p-a"}]}
 }
+Give exactly 5 findings. Fill who-is rows ONLY from crawl evidence (use "—" where a site shows nothing). Make win-boxes specific to each business.`, 2600);
 
-// Second pass: hand the model its own draft + the evidence and have it return a
-// cleaned draft with any unsupported claim removed (not softened). Conservative:
-// on any failure we keep the original draft (which was already grounded-instructed).
-async function verifyNarrative(anthropicKey, data, draft) {
-  const system = 'You are a fact-checker. You are given VERIFIED DATA and a DRAFT report (JSON). Return the SAME JSON, but remove any sentence, bullet, row or claim that is NOT supported by the data/crawl evidence, and correct any number that does not match the data. Do not add new claims. Do not hedge — delete unsupported items. Keep the JSON schema and all top-level keys intact (use empty arrays/strings where you removed everything).';
-  const content = `VERIFIED DATA:\n${JSON.stringify(data)}\n\nDRAFT:\n${JSON.stringify(draft)}\n\nReturn the cleaned JSON only.`;
-  try {
-    const out = await callClaude(anthropicKey, { system, messages: [{ role: 'user', content }], maxTokens: 8000 });
-    const j = parseJson(out);
-    if (j && j.exec) return j;
-  } catch (e) { console.error('[competitor] verify failed:', e.message); }
-  return null;
+  // --- Group B: competitor keywords + client keyword health + opportunity map ---
+  const pB = callJson(anthropicKey, `${ctx}
+
+Write the keyword sections. "ranks" = the COMPETITOR's keywords (competitor.topKeywords). "health" = the CLIENT's keywords (client.topKeywords) split by search intent. "opp" = searches the CLIENT should target next. STRICT JSON:
+{
+ "ranks":{"title":"headline about what the competitor ranks for","lead":"1-2 sentences","rows":[{"kw":"keyword","vol":"volume","pos":"position","type":"Own brand|Brand misspelling|Other brands|Buyer search|Information search","pill":"p-n|p-a|p-o","strong":true}],"trafficTitle":"optional subhead","trafficBody":"optional","calloutTitle":"The gap it leaves open","calloutHtml":"2-3 sentences","note2Title":"optional","note2Body":"optional"},
+ "health":{"eyebrow":"${data.client.name} keyword health check","title":"headline","leadHtml":"1-2 sentences","wrongTitle":"short label for wrong/low-intent group","wrong":[{"kw":"...","vol":"...","pos":"...","why":"why this visitor isn't ideal"}],"rightTitle":"short label for right-intent group","right":[{"kw":"...","vol":"...","pos":"...","status":"Keep|Push to page 1|Needs own page|Needs a guide","pill":"p-g|p-o|p-r"}],"calloutTitle":"In plain words","calloutBody":"2-3 sentences"},
+ "opp":{"title":"The searches ${data.client.name} should own next","lead":"1-2 sentences","rows":[{"kw":"...","vol":"...","diff":"...","client":"— or current position","strong":true,"page":true,"rowspan":2,"pageShade":true,"pageHtml":"<b>Page name</b> description"}],"supportTitle":"Blog topics that support these pages","supportLeft":["2-4 blog ideas"],"supportRight":["2-4 blog ideas"],"calloutTitle":"Why this matters","calloutBody":"2-3 sentences"}
+}
+Use the real keyword/volume/position values from the data. In "opp", group rows that share a "page to build" using rowspan on the first row of the group (set page:true + pageHtml + rowspan on the first, and page:false on the rest), and set pageShade:true to tint a group.`, 2800);
+
+  // --- Group C: website & technical review + SWOT ---
+  const pC = callJson(anthropicKey, `${ctx}
+
+Write the website review + SWOT. STRICT JSON:
+{
+ "tech":{"title":"headline about both sites' technical/content state","clientRows":[{"issue":"short issue name","sawHtml":"what the crawl shows — specific","priority":"High|Medium|Strength","pill":"p-r|p-a|p-g"}],"compRows":[{"issue":"...","sawHtml":"..."}]},
+ "swot":{"strengths":["4-6 bullets — the COMPETITOR's strengths"],"weaknesses":["4-6 bullets — the COMPETITOR's weaknesses"],"opportunities":["4-6 bullets — opportunities for ${data.client.name}"],"threats":["4-6 bullets — threats to ${data.client.name}"],"calloutTitle":"The positioning message we recommend","calloutBody":"2-3 sentences"}
+}
+Base every tech row on actual crawl evidence (title/meta/h1s/body/social). Include a "What's working"/Strength row for the client when the evidence supports it. SWOT strengths/weaknesses describe the COMPETITOR; opportunities/threats describe what that means for the CLIENT.`, 2600);
+
+  const [A, B, C] = await Promise.all([pA, pB, pC]);
+  // Merge each group onto the fallback independently, so a failed group only
+  // falls back for its own sections.
+  let vm = fallback;
+  if (A) vm = mergeNarrative(vm, A);
+  if (B) vm = mergeNarrative(vm, B);
+  if (C) vm = mergeNarrative(vm, C);
+  return vm;
 }
 
 // Fill any missing keys from the fallback so the template never sees undefined.
