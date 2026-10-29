@@ -176,6 +176,7 @@ function PreSeoReports({ onBackTab }) {
   const [edit, setEdit] = useState(null); // a report object being edited
   const [run, setRun] = useState(false);
   const [runGuide, setRunGuide] = useState(false);
+  const [runComp, setRunComp] = useState(false); // competitor analysis wizard open
   const [editGuide, setEditGuide] = useState(null); // a brand-guide report being edited
   const [pickType, setPickType] = useState(false);
   const [err, setErr] = useState('');
@@ -191,8 +192,9 @@ function PreSeoReports({ onBackTab }) {
   if (view) return <PreSeoReportView id={view} onBack={() => { setView(null); load(); }} onEdit={(rep) => { setView(null); setEdit(rep); }} />;
 
   const isGuide = (r) => r.kind === 'brand_guideline';
+  const isComp = (r) => r.kind === 'competitor';
   const shown = (items || []).filter((r) => !q || (r.businessName || '').toLowerCase().includes(q.toLowerCase()) || (r.domain || '').toLowerCase().includes(q.toLowerCase()));
-  const base = (r) => isGuide(r) ? 'brandguide' : 'preseo';
+  const base = (r) => isGuide(r) ? 'brandguide' : isComp(r) ? 'competitor' : 'preseo';
   const download = (r) => { const t = localStorage.getItem(PRESEO_TOKEN) || ''; window.open(`${API_BASE}/api/hr/projects/${base(r)}/${r.id}/download?token=${encodeURIComponent(t)}`, '_blank'); };
   const openEdit = (r) => { if (isGuide(r)) setEditGuide(r); else setEdit(r); };
   const del = async (r) => { if (!confirm(`Permanently delete the report for ${r.businessName}? This cannot be undone.`)) return; try { await hrApi(`/projects/${base(r)}/${r.id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); } };
@@ -211,7 +213,9 @@ function PreSeoReports({ onBackTab }) {
   };
   const typeChip = (r) => isGuide(r)
     ? <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#f5f3ff', color: '#7c3aed' }}>Brand Guideline</span>
-    : <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#eff6ff', color: '#2563eb' }}>Pre-SEO</span>;
+    : isComp(r)
+      ? <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#fff1e5', color: '#c14e00' }}>Competitor</span>
+      : <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#eff6ff', color: '#2563eb' }}>Pre-SEO</span>;
 
   return (
     <div className="pb-8">
@@ -264,12 +268,14 @@ function PreSeoReports({ onBackTab }) {
                 <td className="px-3 py-3 text-right whitespace-nowrap">
                   <div className="inline-flex items-center gap-1.5 justify-end">
                     {r.status === 'complete' && <>
-                      {!isGuide(r)
-                        ? <button onClick={() => setView(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>
-                        : <button onClick={() => window.open(`${API_BASE}/api/hr/projects/brandguide/${r.id}/viewer?token=${encodeURIComponent(localStorage.getItem(TOKEN_KEY) || '')}`, '_blank')} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>}
+                      {isGuide(r)
+                        ? <button onClick={() => window.open(`${API_BASE}/api/hr/projects/brandguide/${r.id}/viewer?token=${encodeURIComponent(localStorage.getItem(TOKEN_KEY) || '')}`, '_blank')} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>
+                        : isComp(r)
+                          ? <button onClick={() => window.open(`${API_BASE}/api/hr/projects/competitor/${r.id}/view?token=${encodeURIComponent(localStorage.getItem(TOKEN_KEY) || '')}`, '_blank')} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>
+                          : <button onClick={() => setView(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>}
                       <button onClick={() => download(r)} className="rounded-lg px-2.5 py-1.5 text-[11.5px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>PDF</button>
-                      <button onClick={() => openEdit(r)} title="Edit" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:text-[#050A1F]">✎</button>
-                      <button onClick={() => rerun(r)} title="Re-run with a fresh crawl" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:text-[#050A1F]">↻</button>
+                      {!isComp(r) && <button onClick={() => openEdit(r)} title="Edit" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:text-[#050A1F]">✎</button>}
+                      <button onClick={() => rerun(r)} title="Re-run with fresh data" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:text-[#050A1F]">↻</button>
                     </>}
                     {(r.status === 'ready') && <>
                       <button onClick={() => openEdit(r)} className="rounded-lg border border-orange-300 px-2.5 py-1.5 text-[11.5px] font-bold text-orange-600 hover:bg-orange-50">Review</button>
@@ -286,11 +292,12 @@ function PreSeoReports({ onBackTab }) {
         </table></div>
       </div>
 
-      {pickType && <ReportTypePicker onClose={() => setPickType(false)} onPick={(k) => { setPickType(false); if (k === 'brand_guideline') setRunGuide(true); else setRun(true); }} />}
+      {pickType && <ReportTypePicker onClose={() => setPickType(false)} onPick={(k) => { setPickType(false); if (k === 'brand_guideline') setRunGuide(true); else if (k === 'competitor') setRunComp(true); else setRun(true); }} />}
       {run && <PreSeoReportWizard projectId={'none'} project={null} chooseProject onClose={() => setRun(false)} onStarted={() => { setRun(false); load(); }} onDone={load} />}
       {edit && <PreSeoReportWizard projectId={edit.projectId || 'none'} project={null} editReport={edit} onClose={() => { setEdit(null); load(); }} onDone={load} />}
       {runGuide && <BrandGuideWizard projectId={'none'} project={null} chooseProject onClose={() => setRunGuide(false)} onStarted={() => { setRunGuide(false); load(); }} onDone={load} />}
       {editGuide && <BrandGuideWizard projectId={editGuide.projectId || 'none'} project={null} editReport={editGuide} onClose={() => { setEditGuide(null); load(); }} onDone={load} />}
+      {runComp && <CompetitorWizard chooseProject onClose={() => setRunComp(false)} onStarted={() => { setRunComp(false); load(); }} />}
     </div>
   );
 }
@@ -719,7 +726,8 @@ function ReportsTab({ id, data, onReload }) {
     return () => clearInterval(t);
   }, [reports]);
   const isGuide = (r) => r.kind === 'brand_guideline';
-  const base = (r) => isGuide(r) ? 'brandguide' : 'preseo';
+  const isComp = (r) => r.kind === 'competitor';
+  const base = (r) => isGuide(r) ? 'brandguide' : isComp(r) ? 'competitor' : 'preseo';
   const canApprove = data.myPerms && (data.myPerms.admin || data.myPerms.approveDeliverables);
   const canUpload = data.myPerms && (data.myPerms.admin || data.myPerms.uploadDeliverables);
   const approve = async (d, ok) => { try { await hrApi(`/projects/${id}/deliverables/${d.id}/approve`, { method: 'POST', body: JSON.stringify({ approved: ok }) }); load(); } catch (e) { toast(e.message); } };
@@ -738,7 +746,9 @@ function ReportsTab({ id, data, onReload }) {
   };
   const typeChip = (r) => isGuide(r)
     ? <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#f5f3ff', color: '#7c3aed' }}>Brand Guideline</span>
-    : <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#eff6ff', color: '#2563eb' }}>Pre-SEO</span>;
+    : isComp(r)
+      ? <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#fff1e5', color: '#c14e00' }}>Competitor</span>
+      : <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#eff6ff', color: '#2563eb' }}>Pre-SEO</span>;
 
   if (viewRep) return <PreSeoReportView id={viewRep} onBack={() => { setViewRep(null); loadReports(); }} onEdit={(rep) => { setViewRep(null); setEditRep(rep); }} />;
   if (!dels) return <div className="text-slate-400 text-sm py-6 text-center">Loading…</div>;
@@ -760,12 +770,14 @@ function ReportsTab({ id, data, onReload }) {
                   <td className="px-3 py-2.5 text-right whitespace-nowrap">
                     <div className="inline-flex gap-1.5 justify-end">
                       {r.status === 'complete' && <>
-                        {!isGuide(r)
-                          ? <button onClick={() => setViewRep(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>
-                          : <button onClick={() => window.open(`${API_BASE}/api/hr/projects/brandguide/${r.id}/viewer?token=${encodeURIComponent(localStorage.getItem(TOKEN_KEY) || '')}`, '_blank')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>}
+                        {isGuide(r)
+                          ? <button onClick={() => window.open(`${API_BASE}/api/hr/projects/brandguide/${r.id}/viewer?token=${encodeURIComponent(localStorage.getItem(TOKEN_KEY) || '')}`, '_blank')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>
+                          : isComp(r)
+                            ? <button onClick={() => window.open(`${API_BASE}/api/hr/projects/competitor/${r.id}/view?token=${encodeURIComponent(localStorage.getItem(TOKEN_KEY) || '')}`, '_blank')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>
+                            : <button onClick={() => setViewRep(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>}
                         <button onClick={() => download(r)} className="rounded-lg px-2.5 py-1 text-[11px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>PDF</button>
-                        <button onClick={() => openEdit(r)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">Edit</button>
-                        <button onClick={() => rerun(r)} title="Re-run with a fresh crawl" className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-bold text-slate-600">↻</button>
+                        {!isComp(r) && <button onClick={() => openEdit(r)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">Edit</button>}
+                        <button onClick={() => rerun(r)} title="Re-run with fresh data" className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-bold text-slate-600">↻</button>
                       </>}
                       {r.status === 'ready' && <button onClick={() => openEdit(r)} className="rounded-lg border border-orange-300 px-2.5 py-1 text-[11px] font-bold text-orange-600">Review</button>}
                       {r.status === 'draft' && <button onClick={() => openEdit(r)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">Resume</button>}
@@ -1168,10 +1180,121 @@ function VerifyDialog({ verify, busy, onCancel, onConfirm }) {
 }
 
 // ---- Report type picker (shown when "Run Report" is clicked) --------------
+// ---- Competitor Analysis wizard ------------------------------------------
+const COMP_MARKETS = [
+  { code: '', name: 'Auto — let Claude choose from both sites' },
+  { code: 'us', name: 'United States' }, { code: 'uk', name: 'United Kingdom' },
+  { code: 'ca', name: 'Canada' }, { code: 'au', name: 'Australia' }, { code: 'in', name: 'India' },
+  { code: 'ae', name: 'United Arab Emirates' }, { code: 'sg', name: 'Singapore' }, { code: 'de', name: 'Germany' },
+  { code: 'fr', name: 'France' }, { code: 'es', name: 'Spain' }, { code: 'it', name: 'Italy' },
+  { code: 'nl', name: 'Netherlands' }, { code: 'za', name: 'South Africa' }, { code: 'ie', name: 'Ireland' },
+  { code: 'nz', name: 'New Zealand' }, { code: 'worldwide', name: 'Worldwide (all regions)' },
+];
+
+function CompetitorWizard({ projectId, project, chooseProject, onClose, onStarted }) {
+  const [projectSel, setProjectSel] = useState(projectId && projectId !== 'none' ? String(projectId) : '');
+  const [projectList, setProjectList] = useState([]);
+  const [website, setWebsite] = useState((project && project.website) || '');
+  const [bizName, setBizName] = useState((project && project.customerName) || '');
+  const [competitorName, setCompetitorName] = useState('');
+  const [competitorSite, setCompetitorSite] = useState('');
+  const [market, setMarket] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [verdict, setVerdict] = useState(null);   // {isCompetitor, confidence, reason} or null
+  const [confirmed, setConfirmed] = useState(false); // user insisted after a "not a competitor" verdict
+  useEffect(() => { if (chooseProject) hrApi('/projects').then((r) => setProjectList(r.projects || [])).catch(() => {}); }, [chooseProject]);
+
+  const inp = 'w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-[13.5px] focus:outline-none focus:ring-2 focus:ring-orange-200';
+  const ready = website.trim().length > 3 && competitorName.trim() && competitorSite.trim().length > 3;
+
+  const launch = async () => {
+    setBusy(true);
+    try {
+      const pid = projectSel || projectId || 'none';
+      const r = await hrApi(`/projects/${pid}/competitor`, { method: 'POST', body: JSON.stringify({
+        website: website.trim(), businessName: bizName.trim(), competitorName: competitorName.trim(),
+        competitorSite: competitorSite.trim(), market,
+      }) });
+      toast('Started — building the competitor analysis. Watch its progress in the list.');
+      if (onStarted) { onStarted(); return; }
+    } catch (e) { toast(e.message); }
+    setBusy(false);
+  };
+
+  // Validate the competitor first; only prompt if the AI thinks it's wrong.
+  const onRun = async () => {
+    if (!ready) { toast('Fill in the client site, competitor name and competitor website.'); return; }
+    if (confirmed) return launch(); // user already insisted
+    setChecking(true); setVerdict(null);
+    try {
+      const v = await hrApi('/projects/competitor/validate', { method: 'POST', body: JSON.stringify({
+        website: website.trim(), businessName: bizName.trim(), competitorName: competitorName.trim(), competitorSite: competitorSite.trim(),
+      }) });
+      setChecking(false);
+      if (v && v.isCompetitor === false) { setVerdict(v); return; } // show confirm banner, don't run yet
+      // genuine competitor (or couldn't verify) → run straight away
+      return launch();
+    } catch (e) { setChecking(false); return launch(); } // validation is best-effort; don't block
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[230] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-[560px] p-5 shadow-2xl max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between mb-1"><div className="text-[16px] font-extrabold text-[#050A1F]">⚔ Competitor Analysis</div><button onClick={onClose} className="text-slate-300 hover:text-slate-600 text-[20px] leading-none">×</button></div>
+        <div className="text-[11.5px] text-slate-400 mb-4">A side-by-side SEO comparison of your client against a named competitor.</div>
+
+        {chooseProject && (
+          <div className="mb-3">
+            <FLbl>Project <span className="font-normal text-slate-400 normal-case">(optional — fills in the client site &amp; name)</span></FLbl>
+            <select value={projectSel} onChange={(e) => { setProjectSel(e.target.value); const p = projectList.find((x) => String(x.id) === e.target.value); if (p) { setWebsite(p.website || website); setBizName(p.customerName || bizName); } }} className={inp}>
+              <option value="">— No project —</option>
+              {projectList.map((p) => <option key={p.id} value={p.id}>{p.customerName || p.name || ('Project #' + p.id)}</option>)}
+            </select>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-3">
+          <div><FLbl>Client website</FLbl><input className={inp} placeholder="oilchef.com" value={website} onChange={(e) => { setWebsite(e.target.value); setVerdict(null); setConfirmed(false); }} /></div>
+          <div><FLbl>Client business name</FLbl><input className={inp} placeholder="Oil Chef" value={bizName} onChange={(e) => setBizName(e.target.value)} /></div>
+        </div>
+        <div className="grid grid-cols-2 gap-3 mt-3">
+          <div><FLbl>Competitor name</FLbl><input className={inp} placeholder="Frytec" value={competitorName} onChange={(e) => { setCompetitorName(e.target.value); setVerdict(null); setConfirmed(false); }} /></div>
+          <div><FLbl>Competitor website</FLbl><input className={inp} placeholder="frytec.co.uk" value={competitorSite} onChange={(e) => { setCompetitorSite(e.target.value); setVerdict(null); setConfirmed(false); }} /></div>
+        </div>
+        <div className="mt-3">
+          <FLbl>Target market</FLbl>
+          <select value={market} onChange={(e) => setMarket(e.target.value)} className={inp}>
+            {COMP_MARKETS.map((m) => <option key={m.code || 'auto'} value={m.code}>{m.name}</option>)}
+          </select>
+        </div>
+
+        {verdict && verdict.isCompetitor === false && (
+          <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3.5">
+            <div className="text-[13px] font-bold text-amber-800 mb-1">This may not be a direct competitor</div>
+            <div className="text-[12px] text-amber-700 leading-snug mb-2.5">{verdict.reason || `${competitorName} doesn't look like a direct competitor of ${bizName || website}.`}</div>
+            <div className="flex gap-2">
+              <button onClick={() => { setConfirmed(true); setVerdict(null); launch(); }} className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-white" style={{ background: '#D97706' }}>Yes, it's correct — run anyway</button>
+              <button onClick={() => setVerdict(null)} className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-slate-600 border border-slate-300">Let me fix it</button>
+            </div>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={onRun} disabled={!ready || busy || checking} className="rounded-lg px-6 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{checking ? 'Checking competitor…' : busy ? 'Starting…' : '▶ Run analysis'}</button>
+        </div>
+        <div className="text-[10.5px] text-slate-400 mt-2">We pull Google data for both sites and read each website, then write the report. It takes a couple of minutes — you can close this and watch progress in the list.</div>
+      </div>
+    </div>
+  );
+}
+
 function ReportTypePicker({ onClose, onPick }) {
   const TYPES = [
     { k: 'pre_seo', icon: '🔍', name: 'Pre-SEO Audit', desc: 'Full technical + on-page SEO audit of a website, with screenshots, Core Web Vitals, NAP, schema and an AI-visibility check.', asks: 'Asks for: website, business name, sitemap and access details.' },
     { k: 'brand_guideline', icon: '★', name: 'Brand Guideline', desc: 'A complete brand book for the social team — foundation, logo, colour, typography, voice and a social-media playbook, built from the client\'s own site.', asks: 'Asks for: website, industry, audiences, posts per month, platforms and tone.' },
+    { k: 'competitor', icon: '⚔', name: 'Competitor Analysis', desc: 'A side-by-side SEO comparison of your client vs a named competitor — keywords, traffic, rankings, backlinks, website quality, SWOT and a keyword opportunity map.', asks: 'Asks for: client website, competitor name & website, and the target market.' },
   ];
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[230] p-4" onClick={onClose}>

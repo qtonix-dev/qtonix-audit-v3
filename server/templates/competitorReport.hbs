@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8" />
+<title>Competitor Analysis · {{h.client}} vs {{h.competitor}}</title>
+<style>
+{{#if forWeb}}
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+@font-face{font-family:"PJS";src:local('Plus Jakarta Sans');font-weight:400 800}
+{{else}}
+@font-face{font-family:"PJS";src:url('{{fontDir}}/PlusJakartaSans-Regular.ttf');font-weight:400}
+@font-face{font-family:"PJS";src:url('{{fontDir}}/PlusJakartaSans-Medium.ttf');font-weight:500}
+@font-face{font-family:"PJS";src:url('{{fontDir}}/PlusJakartaSans-SemiBold.ttf');font-weight:600}
+@font-face{font-family:"PJS";src:url('{{fontDir}}/PlusJakartaSans-Bold.ttf');font-weight:700}
+@font-face{font-family:"PJS";src:url('{{fontDir}}/PlusJakartaSans-ExtraBold.ttf');font-weight:800}
+{{/if}}
+:root{--navy:#050A1F;--navy2:#0E1733;--orange:#FF6A00;--orange2:#FF4600;--ink:#141A2E;--muted:#5B6275;--line:#E4E7EE;--soft:#F5F6FA;--green:#12A36B;--red:#E0412F;--amber:#E89A00;}
+*{box-sizing:border-box;margin:0;padding:0}
+@page{size:A4;margin:0}
+html,body{font-family:"PJS",sans-serif;color:var(--ink);font-size:10.2pt;line-height:1.55;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.page{width:210mm;height:296mm;position:relative;overflow:hidden;page-break-after:always;break-after:page;padding:20mm 18mm 22mm}
+.page:last-child{page-break-after:auto;break-after:auto}
+.cover{background:var(--navy);color:#fff;padding:0}
+.cover .glow{position:absolute;right:-60mm;top:-50mm;width:180mm;height:180mm;border-radius:50%;background:radial-gradient(circle,rgba(255,106,0,.55) 0%,rgba(255,70,0,.18) 45%,rgba(5,10,31,0) 70%)}
+.cover .rings{position:absolute;right:-40mm;top:40mm;width:150mm;height:150mm}
+.cover .grid{position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px);background-size:12mm 12mm}
+.cover .inner{position:relative;height:100%;padding:20mm 20mm 18mm;display:flex;flex-direction:column}
+.logo{font-weight:800;font-size:22pt;letter-spacing:-.02em;color:#fff}
+.logo b{color:var(--orange)}
+.cover .tag{margin-top:46mm;display:inline-block;align-self:flex-start;border:1px solid rgba(255,255,255,.25);border-radius:30px;padding:2mm 5mm;font-size:8.5pt;letter-spacing:.18em;text-transform:uppercase;color:#FFB27A}
+.cover h1{font-size:42pt;line-height:1.02;font-weight:800;letter-spacing:-.03em;margin-top:7mm}
+.cover h1 span{color:var(--orange)}
+.cover .sub{font-size:13pt;color:#C9CEDC;margin-top:6mm;max-width:140mm;font-weight:400}
+.vs{display:flex;align-items:center;gap:6mm;margin-top:14mm}
+.vs .site{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:4mm;padding:5mm 6mm;min-width:62mm}
+.vs .site small{display:block;font-size:7.5pt;letter-spacing:.16em;text-transform:uppercase;color:#8A93AE;margin-bottom:1.5mm}
+.vs .site div{font-size:13pt;font-weight:700}
+.vs .site.ours{border-color:rgba(255,106,0,.6);background:rgba(255,106,0,.1)}
+.vs .x{width:12mm;height:12mm;flex:none;border-radius:50%;background:var(--orange);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:10pt}
+.cover .metawrap{position:absolute;left:20mm;right:20mm;bottom:18mm}
+.cover .meta{display:grid;grid-template-columns:repeat(3,1fr);gap:6mm;border-top:1px solid rgba(255,255,255,.14);padding-top:7mm}
+.cover .meta small{display:block;font-size:7.5pt;letter-spacing:.16em;text-transform:uppercase;color:#8A93AE;margin-bottom:1.2mm}
+.cover .meta div{font-size:10pt;font-weight:600}
+.cover .conf{margin-top:6mm;font-size:7.5pt;color:#6E7792}
+.hdr{position:absolute;top:9mm;left:18mm;right:18mm;display:flex;justify-content:space-between;align-items:center;font-size:7.8pt;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:2.5mm}
+.hdr .logo{font-size:11pt;color:var(--navy)}
+.ftr{position:absolute;bottom:9mm;left:18mm;right:18mm;display:flex;justify-content:space-between;font-size:7.5pt;color:var(--muted)}
+.ftr .pn{font-weight:700;color:var(--navy)}
+.content{margin-top:4mm}
+.eyebrow{font-size:8pt;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--orange)}
+h2{font-size:21pt;font-weight:800;letter-spacing:-.02em;color:var(--navy);line-height:1.15;margin:1.5mm 0 4mm}
+h3{font-size:11.5pt;font-weight:700;color:var(--navy);margin:5mm 0 2mm}
+p{margin-bottom:2.6mm}
+.lead{font-size:11pt;color:#2A3148}
+.muted{color:var(--muted)}
+strong{font-weight:700}
+table{width:100%;border-collapse:collapse;font-size:8.8pt;margin:2mm 0 3mm}
+th{background:var(--navy);color:#fff;text-align:left;font-weight:600;padding:2.2mm 3mm;font-size:8pt}
+th:first-child{border-top-left-radius:2mm}th:last-child{border-top-right-radius:2mm}
+td{padding:2mm 3mm;border-bottom:1px solid var(--line);vertical-align:top}
+tr:nth-child(even) td{background:#FAFBFD}
+td.num,th.num{text-align:right}
+.pill{display:inline-block;font-size:7.3pt;font-weight:700;padding:.5mm 2.2mm;border-radius:10px;white-space:nowrap}
+.p-g{background:#E3F6EE;color:#0B7A4F}.p-r{background:#FDE8E5;color:#B42A1B}.p-a{background:#FFF2D9;color:#9A6400}.p-n{background:#EEF0F6;color:#3A4260}.p-o{background:#FFEBDD;color:#C14E00}
+.callout{border-left:4px solid var(--orange);background:#FFF6EF;padding:3.5mm 5mm;border-radius:0 3mm 3mm 0;margin:3mm 0}
+.callout.navy{border-color:var(--navy);background:var(--soft)}
+.callout b.t{display:block;color:var(--navy);margin-bottom:1mm;font-size:9.5pt}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:3.5mm;margin:4mm 0}
+.kpi{background:var(--soft);border-radius:3mm;padding:4mm}
+.kpi small{display:block;font-size:7.5pt;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.kpi .v{font-size:19pt;font-weight:800;color:var(--navy);line-height:1.1;margin-top:1.5mm}
+.kpi .v span{font-size:9pt;color:var(--muted);font-weight:600}
+.kpi .d{font-size:7.8pt;color:var(--muted);margin-top:1mm}
+.kpi.hl{background:var(--navy);color:#fff}.kpi.hl .v{color:#fff}.kpi.hl small,.kpi.hl .d{color:#A9B0C6}.kpi.hl .v span{color:#FFB27A}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:5mm}
+.card{border:1px solid var(--line);border-radius:3mm;padding:4mm 4.5mm}
+.card h4{font-size:10pt;color:var(--navy);margin-bottom:2mm;display:flex;align-items:center;gap:2mm}
+.card ul{padding-left:4.5mm}.card li{margin-bottom:1.2mm}
+ul.clean{padding-left:4.5mm}ul.clean li{margin-bottom:1.4mm}
+.dot{width:2.6mm;height:2.6mm;border-radius:50%;display:inline-block}
+.bars{margin:3mm 0}
+.brow{display:grid;grid-template-columns:42mm 1fr;align-items:center;gap:3mm;margin-bottom:3.2mm}
+.brow .lbl{font-size:8.6pt;font-weight:600;color:var(--navy)}
+.bpair{display:flex;flex-direction:column;gap:1.1mm}
+.bar{height:4.4mm;border-radius:1.2mm;display:flex;align-items:center;justify-content:flex-end;padding-right:1.6mm;font-size:7.2pt;font-weight:700;color:#fff;min-width:9mm}
+.b-oc{background:linear-gradient(90deg,var(--orange),var(--orange2))}
+.b-fy{background:#8C94AB}
+.legend{display:flex;gap:6mm;font-size:8pt;color:var(--muted);margin-bottom:2mm}
+.legend i{display:inline-block;width:3mm;height:3mm;border-radius:.8mm;margin-right:1.5mm;vertical-align:-.3mm}
+.toc{margin-top:6mm}
+.toc .row{display:flex;align-items:baseline;gap:3mm;padding:3.4mm 0;border-bottom:1px solid var(--line)}
+.toc .n{font-weight:800;color:var(--orange);width:9mm;font-size:12pt}
+.toc .t{font-weight:600;color:var(--navy);font-size:11pt}
+.toc .d{color:var(--muted);font-size:8.6pt;margin-left:auto;text-align:right;max-width:80mm}
+.swot{display:grid;grid-template-columns:1fr 1fr;gap:4mm}
+.sw{border-radius:3mm;padding:4mm 4.5mm}
+.sw h4{font-size:10pt;margin-bottom:2mm}
+.sw ul{padding-left:4.5mm}.sw li{margin-bottom:1.3mm;font-size:9pt}
+.sw.s{background:#FDECE8}.sw.s h4{color:#B42A1B}
+.sw.w{background:#E6F5EE}.sw.w h4{color:#0B7A4F}
+.sw.o{background:#FFF1E5}.sw.o h4{color:#C14E00}
+.sw.t{background:#EDEFF6}.sw.t h4{color:var(--navy)}
+.back{background:var(--navy);color:#fff;padding:0}
+.back .inner{position:relative;height:100%;padding:24mm 20mm}
+.back h2{color:#fff;font-size:30pt;margin-top:50mm}
+.back h2 span{color:var(--orange)}
+.back p{color:#C9CEDC;font-size:11pt;max-width:135mm}
+.contact{margin-top:12mm;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:4mm;padding:7mm 8mm;max-width:120mm}
+.contact .nm{font-size:15pt;font-weight:800}
+.contact .rl{color:#FFB27A;font-size:9.5pt;margin-bottom:4mm}
+.contact div{font-size:10pt;margin-bottom:1.4mm;color:#E4E7EE}
+.contact div b{color:#8A93AE;font-weight:600;display:inline-block;width:20mm;font-size:8.5pt;text-transform:uppercase;letter-spacing:.1em}
+.back .copyright{position:absolute;left:20mm;right:20mm;bottom:20mm;font-size:8pt;color:#6E7792}
+{{#if forWeb}}
+@media screen{html{background:#D9DCE3}body{padding:12mm 0;background:#D9DCE3}.page{margin:0 auto 10mm;box-shadow:0 4px 24px rgba(5,10,31,.18);background:#fff}.page.cover,.page.back{background:var(--navy)}}
+{{/if}}
+</style></head>
+<body>
+
+{{! ===== helper partial-ish: header reused via each section ===== }}
+<section class="page cover">
+  <div class="grid"></div><div class="glow"></div>
+  <svg class="rings" viewBox="0 0 200 200" fill="none">
+    <circle cx="100" cy="100" r="96" stroke="rgba(255,106,0,.35)" stroke-width=".6"/>
+    <circle cx="100" cy="100" r="74" stroke="rgba(255,255,255,.12)" stroke-width=".6"/>
+    <circle cx="100" cy="100" r="52" stroke="rgba(255,106,0,.25)" stroke-width=".6" stroke-dasharray="2 3"/>
+    <circle cx="100" cy="100" r="30" stroke="rgba(255,255,255,.1)" stroke-width=".6"/>
+    <circle cx="196" cy="100" r="2.4" fill="#FF6A00"/>
+    <circle cx="100" cy="26" r="1.8" fill="#fff" opacity=".6"/>
+  </svg>
+  <div class="inner">
+    <div class="logo">Qtonix<b>.</b></div>
+    <div class="tag">SEO Competitor Analysis · {{cover.marketLabel}}</div>
+    <h1>{{{cover.headlineHtml}}}</h1>
+    <div class="sub">{{cover.sub}}</div>
+    <div class="vs">
+      <div class="site ours"><small>Client</small><div>{{cover.clientDomain}}</div></div>
+      <div class="x">VS</div>
+      <div class="site"><small>Competitor</small><div>{{cover.compDomain}}</div></div>
+    </div>
+    <div class="metawrap">
+      <div class="meta">
+        <div><small>Prepared by</small><div>{{cover.preparedBy}}<br><span style="font-weight:400;color:#A9B0C6">{{cover.preparedByRole}}</span></div></div>
+        <div><small>Prepared for</small><div>{{cover.clientName}}<br><span style="font-weight:400;color:#A9B0C6">{{cover.preparedFor}}</span></div></div>
+        <div><small>Report date</small><div>{{cover.date}}<br><span style="font-weight:400;color:#A9B0C6">Data: Google {{cover.marketShort}}, {{cover.dataMonth}}</span></div></div>
+      </div>
+      <div class="conf">Confidential — prepared exclusively for {{cover.clientName}} by Qtonix Software Pvt. Ltd.</div>
+    </div>
+  </div>
+</section>
+
+<section class="page">
+  <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
+  <div class="content">
+    <div class="eyebrow">Inside this report</div>
+    <h2>Contents</h2>
+    <div class="toc">
+      {{#each toc}}<div class="row"><span class="n">{{this.n}}</span><span class="t">{{this.title}}</span><span class="d">{{this.desc}}</span></div>
+      {{/each}}
+    </div>
+  </div>
+  <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">02</span></div>
+</section>
+
+<section class="page">
+  <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
+  <div class="content">
+    <div class="eyebrow">01 · Executive summary</div>
+    <h2>{{exec.title}}</h2>
+    <p class="lead">{{{exec.leadHtml}}}</p>
+    <div class="kpis">
+      {{#each exec.kpis}}<div class="kpi hl"><small>{{this.k}}</small><div class="v">{{this.v}}{{#if this.vs}} <span>vs {{this.vs}}</span>{{/if}}</div><div class="d">{{this.d}}</div></div>
+      {{/each}}
+    </div>
+    <h3>The five things that matter most</h3>
+    <table>
+      <tr><th style="width:8mm">#</th><th>Finding</th><th style="width:30mm">Impact</th></tr>
+      {{#each exec.findings}}<tr><td><b>{{this.n}}</b></td><td><b>{{this.title}}</b> {{{this.bodyHtml}}}</td><td><span class="pill {{this.pill}}">{{this.impact}}</span></td></tr>
+      {{/each}}
+    </table>
+    <div class="callout"><b class="t">Our recommendation in one line</b>{{exec.recommendation}}</div>
+  </div>
+  <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">03</span></div>
+</section>
+
+<section class="page">
+  <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
+  <div class="content">
+    <div class="eyebrow">02 · Who {{h.competitor}} is</div>
+    <h2>{{who.title}}</h2>
+    <p class="lead">{{who.lead}}</p>
+    <table>
+      <tr><th style="width:34mm"></th><th>{{h.competitor}} ({{cover.compDomain}})</th><th>{{h.client}} ({{cover.clientDomain}})</th></tr>
+      {{#each who.rows}}<tr><td><b>{{this.label}}</b></td><td>{{{this.compHtml}}}</td><td>{{{this.clientHtml}}}</td></tr>
+      {{/each}}
+    </table>
+    <div class="two" style="margin-top:4mm">
+      <div class="card"><h4><span class="dot" style="background:var(--red)"></span>Where {{h.competitor}} can win a buyer</h4><ul>{{#each who.compWins}}<li>{{{this}}}</li>{{/each}}</ul></div>
+      <div class="card"><h4><span class="dot" style="background:var(--green)"></span>Where {{h.client}} clearly wins</h4><ul>{{#each who.clientWins}}<li>{{{this}}}</li>{{/each}}</ul></div>
+    </div>
+    {{#if who.sideNote}}<p class="muted" style="margin-top:4mm;font-size:8.6pt">{{who.sideNote}}</p>{{/if}}
+  </div>
+  <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">04</span></div>
+</section>
+
+<section class="page">
+  <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
+  <div class="content">
+    <div class="eyebrow">03 · Head-to-head scorecard</div>
+    <h2>{{scorecard.title}}</h2>
+    <p>{{scorecard.lead}}</p>
+    <div class="legend"><span><i class="b-oc"></i>{{h.client}}</span><span><i style="background:#8C94AB"></i>{{h.competitor}}</span></div>
+    <div class="bars">
+      {{#each scorecard.bars}}<div class="brow"><div class="lbl">{{this.label}}</div><div class="bpair"><div class="bar b-oc" style="width:{{this.clientPct}}%">{{this.clientVal}}</div><div class="bar b-fy" style="width:{{this.compPct}}%">{{this.compVal}}</div></div></div>
+      {{/each}}
+    </div>
+    <table>
+      <tr><th>Metric</th><th class="num">{{h.competitor}}</th><th class="num">{{h.client}}</th><th>What it means</th></tr>
+      {{#each scorecard.rows}}<tr><td>{{this.metric}}</td><td class="num">{{{this.compHtml}}}</td><td class="num">{{{this.clientHtml}}}</td><td>{{this.means}}</td></tr>
+      {{/each}}
+    </table>
+    <div class="callout"><b class="t">{{scorecard.calloutTitle}}</b>{{scorecard.calloutBody}}</div>
+  </div>
+  <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">05</span></div>
+</section>
+
+<section class="page">
+  <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
+  <div class="content">
+    <div class="eyebrow">04 · What {{h.competitor}} ranks for</div>
+    <h2>{{ranks.title}}</h2>
+    <p>{{ranks.lead}}</p>
+    <table>
+      <tr><th>Keyword</th><th class="num">Searches / mo</th><th class="num">Position</th><th>Type</th></tr>
+      {{#each ranks.rows}}<tr><td>{{#if this.strong}}<b>{{this.kw}}</b>{{else}}{{this.kw}}{{/if}}</td><td class="num">{{#if this.strong}}<b>{{this.vol}}</b>{{else}}{{this.vol}}{{/if}}</td><td class="num">{{this.pos}}</td><td><span class="pill {{this.pill}}">{{this.type}}</span></td></tr>
+      {{/each}}
+    </table>
+    {{#if ranks.trafficTitle}}<h3>{{ranks.trafficTitle}}</h3><p>{{ranks.trafficBody}}</p>{{/if}}
+    <div class="callout"><b class="t">{{ranks.calloutTitle}}</b>{{{ranks.calloutHtml}}}</div>
+    {{#if ranks.note2Title}}<div class="callout navy"><b class="t">{{ranks.note2Title}}</b>{{ranks.note2Body}}</div>{{/if}}
+  </div>
+  <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">06</span></div>
+</section>
+
+<section class="page">
+  <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
+  <div class="content">
+    <div class="eyebrow">05 · {{health.eyebrow}}</div>
+    <h2>{{health.title}}</h2>
+    <p>{{{health.leadHtml}}}</p>
+    <h3 style="margin-top:3mm"><span class="pill p-r" style="margin-right:2mm">Wrong intent</span>{{health.wrongTitle}}</h3>
+    <table>
+      <tr><th>Keyword</th><th class="num">Searches / mo</th><th class="num">Position</th><th>Why it's a problem</th></tr>
+      {{#each health.wrong}}<tr><td>{{this.kw}}</td><td class="num">{{this.vol}}</td><td class="num">{{this.pos}}</td><td>{{this.why}}</td></tr>
+      {{/each}}
+    </table>
+    <h3><span class="pill p-g" style="margin-right:2mm">Right intent</span>{{health.rightTitle}}</h3>
+    <table>
+      <tr><th>Keyword</th><th class="num">Searches / mo</th><th class="num">Position</th><th>Status</th></tr>
+      {{#each health.right}}<tr><td>{{this.kw}}</td><td class="num">{{this.vol}}</td><td class="num">{{this.pos}}</td><td><span class="pill {{this.pill}}">{{this.status}}</span></td></tr>
+      {{/each}}
+    </table>
+    <div class="callout"><b class="t">{{health.calloutTitle}}</b>{{health.calloutBody}}</div>
+  </div>
+  <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">07</span></div>
+</section>
+
+<section class="page">
+  <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
+  <div class="content">
+    <div class="eyebrow">06 · Website &amp; technical review</div>
+    <h2>{{tech.title}}</h2>
+    <h3 style="margin-top:2mm">{{h.client}} — issues found</h3>
+    <table>
+      <tr><th>Issue</th><th>What we saw</th><th style="width:22mm">Priority</th></tr>
+      {{#each tech.clientRows}}<tr><td><b>{{this.issue}}</b></td><td>{{{this.sawHtml}}}</td><td><span class="pill {{this.pill}}">{{this.priority}}</span></td></tr>
+      {{/each}}
+    </table>
+    <h3>{{h.competitor}} — issues found</h3>
+    <table>
+      <tr><th>Issue</th><th>What we saw</th></tr>
+      {{#each tech.compRows}}<tr><td><b>{{this.issue}}</b></td><td>{{{this.sawHtml}}}</td></tr>
+      {{/each}}
+    </table>
+  </div>
+  <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">08</span></div>
+</section>
+
+<section class="page">
+  <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
+  <div class="content">
+    <div class="eyebrow">07 · Backlink comparison</div>
+    <h2>{{back.title}}</h2>
+    <p>{{back.lead}}</p>
+    <div class="legend"><span><i class="b-oc"></i>{{h.client}}</span><span><i style="background:#8C94AB"></i>{{h.competitor}}</span></div>
+    <div class="bars">
+      {{#each back.bars}}<div class="brow"><div class="lbl">{{this.label}}</div><div class="bpair"><div class="bar b-oc" style="width:{{this.clientPct}}%">{{this.clientVal}}</div><div class="bar b-fy" style="width:{{this.compPct}}%">{{this.compVal}}</div></div></div>
+      {{/each}}
+    </div>
+    <div class="two">
+      <div class="card"><h4><span class="dot" style="background:var(--muted)"></span>{{h.competitor}}</h4><ul>{{#each back.compPoints}}<li>{{{this}}}</li>{{/each}}</ul></div>
+      <div class="card"><h4><span class="dot" style="background:var(--orange)"></span>{{h.client}}</h4><ul>{{#each back.clientPoints}}<li>{{{this}}}</li>{{/each}}</ul></div>
+    </div>
+    {{#if back.risks}}
+    <h3>{{back.risksTitle}}</h3>
+    <table>
+      <tr><th>Risk</th><th>Detail</th><th style="width:22mm">Priority</th></tr>
+      {{#each back.risks}}<tr><td><b>{{this.risk}}</b></td><td>{{{this.detailHtml}}}</td><td><span class="pill {{this.pill}}">{{this.priority}}</span></td></tr>
+      {{/each}}
+    </table>
+    {{/if}}
+  </div>
+  <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">09</span></div>
+</section>
+
+<section class="page">
+  <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
+  <div class="content">
+    <div class="eyebrow">08 · SWOT</div>
+    <h2>{{h.competitor}}, seen through {{h.client}}'s eyes</h2>
+    <p>Strengths and weaknesses describe <b>{{h.competitor}}</b>. Opportunities and threats describe what this means for <b>{{h.client}}</b>.</p>
+    <div class="swot">
+      <div class="sw s"><h4>{{h.competitor}}'s strengths — watch these</h4><ul>{{#each swot.strengths}}<li>{{{this}}}</li>{{/each}}</ul></div>
+      <div class="sw w"><h4>{{h.competitor}}'s weaknesses — exploit these</h4><ul>{{#each swot.weaknesses}}<li>{{{this}}}</li>{{/each}}</ul></div>
+      <div class="sw o"><h4>Opportunities for {{h.client}}</h4><ul>{{#each swot.opportunities}}<li>{{{this}}}</li>{{/each}}</ul></div>
+      <div class="sw t"><h4>Threats to {{h.client}}</h4><ul>{{#each swot.threats}}<li>{{{this}}}</li>{{/each}}</ul></div>
+    </div>
+    <div class="callout" style="margin-top:5mm"><b class="t">{{swot.calloutTitle}}</b>{{swot.calloutBody}}</div>
+  </div>
+  <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">10</span></div>
+</section>
+
+<section class="page">
+  <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
+  <div class="content">
+    <div class="eyebrow">09 · Keyword opportunity map</div>
+    <h2>{{opp.title}}</h2>
+    <p>{{opp.lead}}</p>
+    <table>
+      <tr><th>Keyword</th><th class="num">Searches / mo</th><th class="num">Difficulty</th><th class="num">{{h.client}} now</th><th>Page to build</th></tr>
+      {{#each opp.rows}}<tr><td>{{#if this.strong}}<b>{{this.kw}}</b>{{else}}{{this.kw}}{{/if}}</td><td class="num">{{this.vol}}</td><td class="num">{{this.diff}}</td><td class="num">{{this.client}}</td>{{#if this.page}}<td{{#if this.rowspan}} rowspan="{{this.rowspan}}"{{/if}}{{#if this.pageShade}} style="background:#FFF6EF"{{/if}}>{{{this.pageHtml}}}</td>{{/if}}</tr>
+      {{/each}}
+    </table>
+    {{#if opp.supportTitle}}
+    <h3>{{opp.supportTitle}}</h3>
+    <div class="two"><ul class="clean">{{#each opp.supportLeft}}<li>{{{this}}}</li>{{/each}}</ul><ul class="clean">{{#each opp.supportRight}}<li>{{{this}}}</li>{{/each}}</ul></div>
+    {{/if}}
+    <div class="callout navy" style="margin-top:4mm"><b class="t">{{opp.calloutTitle}}</b>{{opp.calloutBody}}</div>
+  </div>
+  <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">11</span></div>
+</section>
+
+<section class="page">
+  <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
+  <div class="content">
+    <div class="eyebrow">10 · How to read this report</div>
+    <h2>Data notes and definitions</h2>
+    <h3 style="margin-top:2mm">About the data</h3>
+    <ul class="clean">{{#each notes.about}}<li>{{{this}}}</li>{{/each}}</ul>
+    <h3>Key terms</h3>
+    <table>
+      <tr><th style="width:42mm">Term</th><th>Meaning in plain words</th></tr>
+      {{#each notes.terms}}<tr><td><b>{{this.term}}</b></td><td>{{this.def}}</td></tr>
+      {{/each}}
+    </table>
+  </div>
+  <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">12</span></div>
+</section>
+
+<section class="page back">
+  <div class="cover" style="position:absolute;inset:0;padding:0"><div class="grid"></div><div class="glow" style="top:auto;bottom:-70mm;right:-50mm"></div></div>
+  <div class="inner">
+    <div class="logo">Qtonix<b>.</b></div>
+    <h2>{{{back.headlineHtml}}}</h2>
+    <p>{{back.sub}}</p>
+    <div class="contact">
+      <div class="nm">{{cover.preparedBy}}</div>
+      <div class="rl">{{cover.preparedByRole}}</div>
+      <div><b>Email</b>{{back.email}}</div>
+      <div><b>Phone</b>{{back.phone}}</div>
+      <div><b>Web</b>{{back.web}}</div>
+    </div>
+    <div class="copyright">© {{back.year}} Qtonix Software Pvt. Ltd. This report is confidential and prepared exclusively for {{cover.clientName}}.</div>
+  </div>
+</section>
+
+</body></html>

@@ -63,6 +63,10 @@ const SCREEN_MARGIN_OVERRIDE = `
 function injectScreenMargin(html) {
   const s = String(html || '');
   if (s.includes('qtx-screen-margin')) return s; // already present
+  // The override is sized for the US-Letter Pre-SEO/Brand templates (816px). The
+  // Competitor Analysis template is A4 and ships its own @media screen rules, so
+  // skip injection for it or the on-screen layout would be distorted.
+  if (/width:\s*210mm/.test(s) || s.includes('competitorReport')) return s;
   if (s.includes('</head>')) return s.replace('</head>', SCREEN_MARGIN_OVERRIDE + '</head>');
   return SCREEN_MARGIN_OVERRIDE + s;
 }

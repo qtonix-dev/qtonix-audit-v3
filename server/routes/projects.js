@@ -183,7 +183,7 @@ router.get('/:id', guard, requireHrAdmin, async (req, res, next) => {
   // "preseo" and "preseo-diag" are reserved sub-paths (the Pre-SEO report
   // routes), not project ids — let those routes handle them. A real project id
   // is always numeric, so anything non-numeric falls through safely.
-  if (/^preseo/i.test(String(req.params.id))) return next();
+  if (/^(preseo|brandguide|competitor)/i.test(String(req.params.id))) return next();
   try {
     const act = await actor(req);
     const p = await Project.findByPk(req.params.id); if (!p) return res.status(404).json({ error: 'Project not found.' });
@@ -369,7 +369,7 @@ const shotUpload = multer({
   fileFilter: (req, file, cb) => (/\.(png|jpe?g|webp)$/i.test(file.originalname) && /^image\//.test(file.mimetype)) ? cb(null, true) : cb(new Error('Image files only')),
 });
 
-const { PreSeoReport } = require('../models');
+const { PreSeoReport, Settings } = require('../models');
 const preSeoRunner = require('../services/preSeoRunner');
 const brandGuideRunner = require('../services/brandGuidelineRunner');
 
@@ -979,6 +979,180 @@ router.get('/brandguide/:rid/share', guard, requireHrAdmin, async (req, res, nex
       downloadCount: views.filter((v) => v.type === 'download').length,
       lastViewedAt: views.length ? views[views.length - 1].at : null,
     });
+  } catch (e) { next(e); }
+});
+
+// ===========================================================================
+// COMPETITOR ANALYSIS reports — share the PreSeoReport table (kind='competitor')
+// so they reuse the same list/status/sharing/ImageKit plumbing. Parallel route
+// set under /competitor. Numbers come from SE Ranking + crawl; narrative from
+// Claude (grounded + verified). Runs autonomously.
+// ===========================================================================
+const COMP_KIND = 'competitor';
+const competitorRunner = require('../services/competitorRunner');
+const competitorAnalyze = require('../services/competitorAnalyze');
+
+function normWebsite(v) {
+  const s = String(v || '').trim();
+  if (!s) return '';
+  return s.startsWith('http') ? s : 'https://' + s;
+}
+function hostOf(v) {
+  try { return new URL(normWebsite(v)).hostname.replace(/^www\./, ''); } catch { return String(v || '').replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0]; }
+}
+
+// Validate whether the named competitor is a genuine competitor (wizard step).
+// Light: crawls both homepages + asks the AI. Returns a verdict the wizard uses
+// to decide whether to ask the user to confirm before running.
+router.post('/competitor/validate', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const clientSite = normWebsite(b.website);
+    const competitorSite = normWebsite(b.competitorSite || b.competitorWebsite);
+    if (!clientSite || !competitorSite) return res.status(400).json({ error: 'Both the client and competitor website are required.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const anthropicKey = s && s.getKey ? s.getKey('anthropic') : null;
+    const psKey = s && s.getKey ? s.getKey('pagespeed') : null;
+    const crawler = require('../services/crawler');
+    const [clientCrawl, compCrawl] = await Promise.all([
+      crawler.runTechnicalAudit(clientSite, psKey).catch(() => ({})),
+      crawler.runTechnicalAudit(competitorSite, psKey).catch(() => ({})),
+    ]);
+    const verdict = await competitorAnalyze.validateCompetitor({
+      anthropicKey, clientSite, clientName: b.businessName || hostOf(clientSite),
+      competitorName: b.competitorName || hostOf(competitorSite), competitorSite,
+      clientCrawl, compCrawl,
+    });
+    res.json(verdict);
+  } catch (e) { next(e); }
+});
+
+// Create + start a competitor analysis.
+router.post('/:id/competitor', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const act = await actor(req);
+    const project = req.params.id !== 'none' ? await Project.findByPk(req.params.id) : null;
+    const b = req.body || {};
+    const website = normWebsite(b.website || (project && project.website) || '');
+    const competitorSite = normWebsite(b.competitorSite || b.competitorWebsite);
+    if (!website || website.length < 8) return res.status(400).json({ error: 'A client website URL is required.' });
+    if (!competitorSite || competitorSite.length < 8) return res.status(400).json({ error: 'A competitor website URL is required.' });
+    const domain = hostOf(website);
+    const report = await PreSeoReport.create({
+      projectId: project ? project.id : null, kind: COMP_KIND, website,
+      domain, businessName: b.businessName || (project && project.customerName) || domain,
+      createdById: act.id, createdByName: act.name || 'Qtonix', status: 'capturing', progress: 5,
+      runOptions: {
+        competitorName: String(b.competitorName || hostOf(competitorSite)).slice(0, 190),
+        competitorSite,
+        source: String(b.market || b.source || '').toLowerCase().slice(0, 12),
+        preparedBy: act.name || 'Qtonix',
+        preparedByRole: 'Project Manager, Qtonix',
+        preparedFor: b.businessName || (project && project.customerName) || domain,
+      },
+      data: {},
+    });
+    competitorRunner.run(report.id).catch((e) => console.error('[competitor] run error:', e.message));
+    res.status(201).json({ id: report.id, status: report.status });
+  } catch (e) { next(e); }
+});
+
+// Poll status + current data.
+router.get('/competitor/:rid', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    res.json({ id: r.id, status: r.status, progress: r.progress, currentStep: r.currentStep, error: r.error, domain: r.domain, businessName: r.businessName, website: r.website, runOptions: r.runOptions || {}, data: r.data || null });
+  } catch (e) { next(e); }
+});
+
+// Re-run (fresh data + analysis).
+router.post('/competitor/:rid/rerun', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    r.status = 'capturing'; r.progress = 5; r.currentStep = 'Re-running the analysis'; r.error = null;
+    await r.save();
+    competitorRunner.run(r.id).catch((e) => console.error('[competitor] rerun error:', e.message));
+    res.json({ ok: true, status: 'capturing' });
+  } catch (e) { next(e); }
+});
+
+// Delete.
+router.delete('/competitor/:rid', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    try {
+      const ik = require('../services/imagekit');
+      if (r.pdfFileId) ik.deleteFile(r.pdfFileId).catch(() => {});
+      if (r.htmlFileId) ik.deleteFile(r.htmlFileId).catch(() => {});
+    } catch {}
+    await r.destroy();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Share link (same /pr/ public pattern as Pre-SEO reports).
+router.post('/competitor/:rid/share', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    if (!r.publicSlug) {
+      let slug = preseoSlug(r.businessName || r.domain);
+      const exists = await PreSeoReport.findOne({ where: { publicSlug: slug } });
+      if (exists && exists.id !== r.id) slug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
+      r.publicSlug = slug;
+    }
+    r.publicEnabled = true; await r.save();
+    const base = await publicUrl.baseFor('reports', req);
+    res.json({ slug: r.publicSlug, url: `${base}/pr/${r.publicSlug}`, enabled: true });
+  } catch (e) { next(e); }
+});
+router.post('/competitor/:rid/share/disable', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    r.publicEnabled = false; await r.save();
+    res.json({ enabled: false });
+  } catch (e) { next(e); }
+});
+router.get('/competitor/:rid/share', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    const base = await publicUrl.baseFor('reports', req);
+    const views = Array.isArray(r.publicViews) ? r.publicViews : [];
+    res.json({
+      slug: r.publicSlug, enabled: !!r.publicEnabled,
+      url: r.publicSlug ? `${base}/pr/${r.publicSlug}` : null,
+      views, viewCount: views.filter((v) => v.type === 'view').length,
+      downloadCount: views.filter((v) => v.type === 'download').length,
+      lastViewedAt: views.length ? views[views.length - 1].at : null,
+    });
+  } catch (e) { next(e); }
+});
+
+// Download / view the generated report.
+router.get('/competitor/:rid/download', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    const cn = (r.runOptions && r.runOptions.competitorName) || 'competitor';
+    const fname = `${(r.businessName || r.domain || 'report').replace(/[^\w-]/g, '_')}-vs-${String(cn).replace(/[^\w-]/g, '_')}-Competitor-Analysis.pdf`;
+    if (r.pdfPath && fsSync.existsSync(r.pdfPath)) return res.download(r.pdfPath, fname);
+    if (r.pdfUrl) return res.redirect(302, r.pdfUrl);
+    return res.status(404).json({ error: 'PDF not ready.' });
+  } catch (e) { next(e); }
+});
+router.get('/competitor/:rid/view', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    res.set('Cache-Control', 'no-store');
+    if (r.htmlPath && fsSync.existsSync(r.htmlPath)) return res.sendFile(path.resolve(r.htmlPath));
+    if (r.htmlUrl) return res.redirect(302, r.htmlUrl);
+    return res.status(404).json({ error: 'Not ready.' });
   } catch (e) { next(e); }
 });
 

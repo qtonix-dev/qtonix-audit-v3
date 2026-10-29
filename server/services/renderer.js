@@ -549,6 +549,44 @@ async function renderPreSeo(data, slugBase) {
   return { pdfPath, htmlPath, pdfUrl, htmlUrl, pdfFileId, htmlFileId };
 }
 
+// ---- Competitor Analysis report: separate template, same WeasyPrint pipeline -
+async function renderCompetitorHtml(vm, opts = {}) {
+  const tplSrc = await fs.readFile(path.join(__dirname, '../templates/competitorReport.hbs'), 'utf8');
+  const tpl = Handlebars.compile(tplSrc);
+  return tpl({ ...vm, forWeb: !!opts.forWeb, fontDir: 'file://' + FONT_DIR });
+}
+
+async function renderCompetitor(vm, slugBase) {
+  await fs.mkdir(OUT_DIR, { recursive: true });
+  const slug = `competitor-${String(slugBase || 'report').replace(/[^a-z0-9]/gi, '-')}`;
+  const htmlPath = path.join(OUT_DIR, `${slug}.html`);
+  const pdfPath = path.join(OUT_DIR, `${slug}.pdf`);
+  await fs.writeFile(htmlPath, await renderCompetitorHtml(vm, { forWeb: true }), 'utf8');
+  const pdfHtmlPath = path.join(OUT_DIR, `${slug}.pdf.html`);
+  await fs.writeFile(pdfHtmlPath, await renderCompetitorHtml(vm, { forWeb: false }), 'utf8');
+  await new Promise((resolve, reject) => {
+    const { execFile } = require('child_process');
+    execFile('python3', ['-m', 'weasyprint', '-e', 'utf-8', '-u', path.dirname(pdfHtmlPath), pdfHtmlPath, pdfPath], { timeout: 120000 },
+      (err, stdout, stderr) => err ? reject(new Error(`WeasyPrint failed: ${stderr || err.message}`)) : resolve());
+  });
+  let pdfUrl = null, htmlUrl = null, pdfFileId = null, htmlFileId = null;
+  try {
+    const ik = require('./imagekit');
+    const { Settings } = require('../models');
+    const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+    if (ik.isConfigured(settings)) {
+      const webHtml = await renderCompetitorHtml(vm, { forWeb: true });
+      const [pr, hr] = await Promise.all([
+        fs.readFile(pdfPath).then((buf) => ik.uploadFile({ base64: buf.toString('base64'), fileName: `${slug}.pdf`, folder: '/qtonix/competitor/reports' })),
+        ik.uploadFile({ base64: Buffer.from(webHtml, 'utf8').toString('base64'), fileName: `${slug}.html`, folder: '/qtonix/competitor/reports' }),
+      ]);
+      pdfUrl = pr.url; pdfFileId = pr.fileId || null;
+      htmlUrl = hr.url; htmlFileId = hr.fileId || null;
+    }
+  } catch (e) { console.error('[renderCompetitor] ImageKit upload failed, keeping local only:', e.message); }
+  return { pdfPath, htmlPath, pdfUrl, htmlUrl, pdfFileId, htmlFileId };
+}
+
 // ---------------------------------------------------------------------------
 // Brand Guideline renderer (landscape slide deck, Raleway, site-derived palette)
 // ---------------------------------------------------------------------------
@@ -869,4 +907,4 @@ async function renderBrandGuideline(data, slugBase) {
   return { pdfPath, htmlPath, pdfUrl, htmlUrl, pdfFileId, htmlFileId };
 }
 
-module.exports = { renderReport, renderHtml, buildViewModel, renderPreSeo, renderPreSeoHtml, renderBrandGuideline, renderBrandGuidelineHtml };
+module.exports = { renderReport, renderHtml, buildViewModel, renderPreSeo, renderPreSeoHtml, renderBrandGuideline, renderBrandGuidelineHtml, renderCompetitor, renderCompetitorHtml };
