@@ -219,8 +219,19 @@ router.post('/settings/test-key', async (req, res) => {
   try {
     if (service === 'seranking') {
       const se = new SERanking(useKey);
-      const sub = await se.getSubscription();
-      return res.json({ ok: true, detail: sub });
+      // getBalance() normalises /account/subscription to a flat shape. Return a
+      // plain STRING detail (like every other service) — the admin UI renders
+      // `detail` directly as a React child, so returning the raw object here
+      // crashed the whole screen with React error #31 ("object with keys
+      // {subscription_info}").
+      const bal = await se.getBalance();
+      const parts = [];
+      if (bal.status) parts.push(`status: ${bal.status}`);
+      if (bal.remaining != null) parts.push(`${bal.remaining} credits left`);
+      if (bal.limit != null) parts.push(`of ${bal.limit}`);
+      if (bal.expiresAt) parts.push(`expires ${String(bal.expiresAt).slice(0, 10)}`);
+      const detail = parts.length ? `Key is valid — ${parts.join(', ')}.` : 'Key is valid.';
+      return res.json({ ok: true, detail, subscription: bal });
     }
     if (service === 'anthropic') {
       const r = await fetch('https://api.anthropic.com/v1/messages', {
@@ -641,7 +652,7 @@ router.get('/stats', async (req, res, next) => {
           anthropic: !!s.getKey('anthropic'),
           googlePlaces: !!s.getKey('googlePlaces'),
         };
-        if (s.getKey('seranking')) seCredits = await new SERanking(s.getKey('seranking')).getSubscription();
+        if (s.getKey('seranking')) seCredits = await new SERanking(s.getKey('seranking')).getBalance();
       }
     } catch { /* credit balance is nice-to-have, never block the dashboard */ }
 

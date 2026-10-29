@@ -13,6 +13,16 @@ import { formatPhone } from './countries.js';
 // ---- brand palette (mirrors the sandbox C object) ----
 const C = { navy: '#050A1F', orange: '#FF6A00', orangeDeep: '#FF4500', blue: '#2563EB' };
 
+// Coerce an API field to a safe string before putting it in JSX. React throws
+// (error #31) if an object is rendered as a child, which blanks the whole
+// screen — so never trust a `detail`/`error` field to be a string.
+function asText(v, fallback = '') {
+  if (v == null) return fallback;
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  try { return JSON.stringify(v); } catch { return fallback; }
+}
+
 // Upload an avatar to ImageKit (via server-issued auth) and return its URL.
 // Falls back to a downscaled base64 data URL if ImageKit isn't connected, so
 // avatars keep working before the keys are entered.
@@ -1046,7 +1056,7 @@ function ApiKeys({ settings, setSettings, say }) {
     setTests((t) => ({ ...t, [id]: { testing: true } }));
     try {
       const r = await api('/admin/settings/test-key', { method: 'POST', body: JSON.stringify({ service: id === 'pagespeed' ? 'pagespeed' : id, key: hasMask(id) ? '' : key }) });
-      setTests((t) => ({ ...t, [id]: { ok: true, msg: r.detail || 'Key is valid.' } }));
+      setTests((t) => ({ ...t, [id]: { ok: true, msg: asText(r.detail, 'Key is valid.') } }));
       say && say(`${RULES[id].label}: valid`, 'good');
     } catch (e) {
       setTests((t) => ({ ...t, [id]: { ok: false, msg: e.message } }));
@@ -1250,7 +1260,7 @@ function CallHippoPanel({ settings, setSettings, say }) {
     setTest({ testing: true });
     try {
       const r = await api('/admin/settings/test-key', { method: 'POST', body: JSON.stringify({ service: 'callHippoToken', key: tokenVal }) });
-      setTest({ ok: !!r.ok, msg: r.ok ? (r.detail || 'Token is valid.') : (r.error || 'Failed') });
+      setTest({ ok: !!r.ok, msg: r.ok ? asText(r.detail, 'Token is valid.') : asText(r.error, 'Failed') });
     } catch (e) { setTest({ ok: false, msg: e.message }); }
   };
   const verifyNumbers = async () => {
