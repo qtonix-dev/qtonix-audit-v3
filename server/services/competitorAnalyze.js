@@ -17,7 +17,7 @@
  * who-is comparison, SWOT, opportunity-map page recommendations, callouts — all
  * written around the numbers the code computed.
  */
-const { callClaude } = require('./aiVisibility');
+const { callClaude, callAI } = require('./aiVisibility');
 
 // ---- small helpers ---------------------------------------------------------
 function toDomain(url) {
@@ -151,7 +151,7 @@ module.exports = { fetchSide, crawlEvidence, parseJson, validateCompetitor, sugg
 // ---- the big one: assemble the whole view model ----------------------------
 async function buildCompetitorViewModel(input) {
   const {
-    anthropicKey, source, clientName, competitorName,
+    anthropicKey, openaiKey, source, clientName, competitorName,
     clientSide, compSide, clientCrawl, compCrawl,
     preparedBy, preparedByRole, preparedFor, today = new Date(),
   } = input;
@@ -199,7 +199,9 @@ async function buildCompetitorViewModel(input) {
     clientLeads,
   };
 
-  const narrative = await generateNarrative(anthropicKey, dataForAI);
+  const narrativeOut = await generateNarrative({ anthropicKey, openaiKey }, dataForAI);
+  const narrative = narrativeOut.vm;
+  const aiDiag = narrativeOut.diag;
 
   // ---- assemble view model (numbers from code, prose from narrative) ----
   const vm = {
@@ -253,6 +255,7 @@ async function buildCompetitorViewModel(input) {
   vm.back.phone = input.phone || '+91-8249016547';
   vm.back.web = input.web || 'www.qtonix.com';
   vm.back.year = String(today.getFullYear());
+  vm._aiDiag = aiDiag; // diagnostics for the runner to persist (not rendered)
   return vm;
 }
 
@@ -354,22 +357,36 @@ function dataContext(data) {
   return `VERIFIED DATA (client is "${data.client.name}" / ${data.client.domain}; competitor is "${data.competitor.name}" / ${data.competitor.domain}; market = Google ${data.market}; the stronger site on raw numbers is ${data.clientLeads ? 'the CLIENT' : 'the COMPETITOR'}):\n${JSON.stringify(data)}`;
 }
 
-async function callJson(anthropicKey, userContent, maxTokens) {
+// Returns { json, status } where status is 'ok' | 'empty' | 'parse-failed' |
+// 'error:<msg>'. Uses callAI so a Claude failure falls back to OpenAI (if a key
+// is set) before giving up. The status is recorded on the report for diagnosis.
+async function callJson(keys, userContent, maxTokens, diag, label) {
+  let out = '';
   try {
-    const out = await callClaude(anthropicKey, { system: NARRATIVE_SYSTEM, messages: [{ role: 'user', content: userContent }], maxTokens: maxTokens || 2000 });
-    const j = parseJson(out);
-    if (!j) console.error('[competitor] narrative chunk returned unparseable JSON (first 200 chars):', String(out).slice(0, 200));
-    return j;
-  } catch (e) { console.error('[competitor] narrative chunk failed:', e.message); return null; }
+    out = await callAI({ anthropicKey: keys.anthropicKey, openaiKey: keys.openaiKey, system: NARRATIVE_SYSTEM, messages: [{ role: 'user', content: userContent }], maxTokens: maxTokens || 2000 });
+  } catch (e) {
+    const msg = String(e.message || e).slice(0, 160);
+    console.error(`[competitor] narrative ${label} call failed:`, msg);
+    diag[label] = 'error: ' + msg; return null;
+  }
+  if (!out || !out.trim()) { diag[label] = 'empty'; console.error(`[competitor] narrative ${label} empty response`); return null; }
+  const j = parseJson(out);
+  if (!j) { diag[label] = 'parse-failed'; console.error(`[competitor] narrative ${label} unparseable (first 300):`, String(out).slice(0, 300)); return null; }
+  diag[label] = 'ok'; return j;
 }
 
-async function generateNarrative(anthropicKey, data) {
+// generateNarrative returns { vm, diag } so the runner can store diagnostics.
+async function generateNarrative(keys, data) {
+  const anthropicKey = keys && keys.anthropicKey;
+  const openaiKey = keys && keys.openaiKey;
   const fallback = fallbackNarrative(data);
-  if (!anthropicKey) return fallback;
+  const diag = { hasAnthropicKey: !!anthropicKey, hasOpenaiKey: !!openaiKey };
+  if (!anthropicKey && !openaiKey) { diag.result = 'no-ai-key'; return { vm: fallback, diag }; }
   const ctx = dataContext(data);
 
   // --- Group A: cover + exec + who-is + scorecard callout + backlink framing ---
-  const pA = callJson(anthropicKey, `${ctx}
+  const keysObj = { anthropicKey, openaiKey };
+  const pA = callJson(keysObj, `${ctx}
 
 Write the opening + comparison sections. STRICT JSON:
 {
@@ -382,10 +399,10 @@ Write the opening + comparison sections. STRICT JSON:
  "backlinkLead":"1-2 sentence plain-English intro to backlinks",
  "back":{"title":"backlink section headline","compPoints":["3-4 bullets on the competitor's link profile"],"clientPoints":["3-4 bullets on the client's link profile"],"risksTitle":"Two risks to fix OR empty string","risks":[{"risk":"...","detailHtml":"...","priority":"High|Medium","pill":"p-r|p-a"}]}
 }
-Give exactly 5 findings. Fill who-is rows ONLY from crawl evidence (use "—" where a site shows nothing). Make win-boxes specific to each business.`, 2600);
+Give exactly 5 findings. Fill who-is rows ONLY from crawl evidence (use "—" where a site shows nothing). Make win-boxes specific to each business.`, 2600, diag, 'A');
 
   // --- Group B: competitor keywords + client keyword health + opportunity map ---
-  const pB = callJson(anthropicKey, `${ctx}
+  const pB = callJson(keysObj, `${ctx}
 
 Write the keyword sections. "ranks" = the COMPETITOR's keywords (competitor.topKeywords). "health" = the CLIENT's keywords (client.topKeywords) split by search intent. "opp" = searches the CLIENT should target next. STRICT JSON:
 {
@@ -393,17 +410,17 @@ Write the keyword sections. "ranks" = the COMPETITOR's keywords (competitor.topK
  "health":{"eyebrow":"${data.client.name} keyword health check","title":"headline","leadHtml":"1-2 sentences","wrongTitle":"short label for wrong/low-intent group","wrong":[{"kw":"...","vol":"...","pos":"...","why":"why this visitor isn't ideal"}],"rightTitle":"short label for right-intent group","right":[{"kw":"...","vol":"...","pos":"...","status":"Keep|Push to page 1|Needs own page|Needs a guide","pill":"p-g|p-o|p-r"}],"calloutTitle":"In plain words","calloutBody":"2-3 sentences"},
  "opp":{"title":"The searches ${data.client.name} should own next","lead":"1-2 sentences","rows":[{"kw":"...","vol":"...","diff":"...","client":"— or current position","strong":true,"page":true,"rowspan":2,"pageShade":true,"pageHtml":"<b>Page name</b> description"}],"supportTitle":"Blog topics that support these pages","supportLeft":["2-4 blog ideas"],"supportRight":["2-4 blog ideas"],"calloutTitle":"Why this matters","calloutBody":"2-3 sentences"}
 }
-Use the real keyword/volume/position values from the data. In "opp", group rows that share a "page to build" using rowspan on the first row of the group (set page:true + pageHtml + rowspan on the first, and page:false on the rest), and set pageShade:true to tint a group.`, 2800);
+Use the real keyword/volume/position values from the data. In "opp", group rows that share a "page to build" using rowspan on the first row of the group (set page:true + pageHtml + rowspan on the first, and page:false on the rest), and set pageShade:true to tint a group.`, 2800, diag, 'B');
 
   // --- Group C: website & technical review + SWOT ---
-  const pC = callJson(anthropicKey, `${ctx}
+  const pC = callJson(keysObj, `${ctx}
 
 Write the website review + SWOT. STRICT JSON:
 {
  "tech":{"title":"headline about both sites' technical/content state","clientRows":[{"issue":"short issue name","sawHtml":"what the crawl shows — specific","priority":"High|Medium|Strength","pill":"p-r|p-a|p-g"}],"compRows":[{"issue":"...","sawHtml":"..."}]},
  "swot":{"strengths":["4-6 bullets — the COMPETITOR's strengths"],"weaknesses":["4-6 bullets — the COMPETITOR's weaknesses"],"opportunities":["4-6 bullets — opportunities for ${data.client.name}"],"threats":["4-6 bullets — threats to ${data.client.name}"],"calloutTitle":"The positioning message we recommend","calloutBody":"2-3 sentences"}
 }
-Base every tech row on actual crawl evidence (title/meta/h1s/body/social). Include a "What's working"/Strength row for the client when the evidence supports it. SWOT strengths/weaknesses describe the COMPETITOR; opportunities/threats describe what that means for the CLIENT.`, 2600);
+Base every tech row on actual crawl evidence (title/meta/h1s/body/social). Include a "What's working"/Strength row for the client when the evidence supports it. SWOT strengths/weaknesses describe the COMPETITOR; opportunities/threats describe what that means for the CLIENT.`, 2600, diag, 'C');
 
   const [A, B, C] = await Promise.all([pA, pB, pC]);
   // Merge each group onto the fallback independently, so a failed group only
@@ -412,7 +429,8 @@ Base every tech row on actual crawl evidence (title/meta/h1s/body/social). Inclu
   if (A) vm = mergeNarrative(vm, A);
   if (B) vm = mergeNarrative(vm, B);
   if (C) vm = mergeNarrative(vm, C);
-  return vm;
+  diag.result = (A || B || C) ? 'ai' : 'all-fallback';
+  return { vm, diag };
 }
 
 // Fill any missing keys from the fallback so the template never sees undefined.

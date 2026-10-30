@@ -28,6 +28,7 @@ async function run(reportId) {
     const opts = report.runOptions || {};
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     const anthropicKey = s && s.getKey ? s.getKey('anthropic') : null;
+    const openaiKey = s && s.getKey ? s.getKey('openai') : null;
     const serKey = s && s.getKey ? s.getKey('seranking') : null;
     const psKey = s && s.getKey ? s.getKey('pagespeed') : null;
 
@@ -65,17 +66,19 @@ async function run(reportId) {
     // 4. Build the view model (code owns numbers; AI owns prose; then verify).
     await setStatus(reportId, { status: 'analyzing', progress: 68, currentStep: 'Writing and fact-checking the analysis' });
     const vm = await analyze.buildCompetitorViewModel({
-      anthropicKey, source, clientName, competitorName,
+      anthropicKey, openaiKey, source, clientName, competitorName,
       clientSide, compSide, clientCrawl, compCrawl,
       preparedBy: opts.preparedBy || report.createdByName || 'Qtonix',
       preparedByRole: opts.preparedByRole || 'Project Manager, Qtonix',
       preparedFor: opts.preparedFor || clientName,
     });
+    const aiDiag = vm._aiDiag || {}; delete vm._aiDiag;
+    console.log('[competitor] narrative diagnostics for report', reportId, JSON.stringify(aiDiag));
 
     // Persist the view model as `data` + the raw crawl for later re-runs.
     await setStatus(reportId, {
       data: vm, crawl: { client: analyze.crawlEvidence(clientCrawl), competitor: analyze.crawlEvidence(compCrawl) },
-      runOptions: { ...opts, source, competitorName, competitorSite },
+      runOptions: { ...opts, source, competitorName, competitorSite, aiDiag },
       status: 'rendering', progress: 85, currentStep: 'Rendering the report',
     });
 
