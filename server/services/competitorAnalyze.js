@@ -128,6 +128,23 @@ function parseJson(txt) {
       try { return JSON.parse(a); } catch { /* next */ }
     }
   }
+  // Last resort: a response cut off mid-value where repair still can't balance.
+  // Walk back from the end, cutting at each top-level `}` boundary and trying to
+  // close the object, so we keep every fully-formed section and drop only the
+  // truncated tail. This recovers e.g. cover+exec+who when `back` was cut off.
+  let depth = 0, inStr2 = false, esc2 = false;
+  const topCuts = [];
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr2) { if (esc2) esc2 = false; else if (ch === '\\') esc2 = true; else if (ch === '"') inStr2 = false; continue; }
+    if (ch === '"') inStr2 = true;
+    else if (ch === '{' || ch === '[') depth++;
+    else if (ch === '}' || ch === ']') { depth--; if (depth === 1 && ch === '}') topCuts.push(i); }
+  }
+  for (let k = topCuts.length - 1; k >= 0; k--) {
+    const head = s.slice(0, topCuts[k] + 1).replace(/,\s*$/, '') + '}';
+    try { return JSON.parse(head); } catch { /* keep walking back */ }
+  }
   return null;
 }
 
@@ -539,7 +556,7 @@ Write the opening + comparison sections. STRICT JSON:
  "back":{"title":"backlink section headline","compPoints":["3-4 bullets on the competitor's link profile"],"clientPoints":["3-4 bullets on the client's link profile"],"risksTitle":"Risks worth reviewing OR empty string","risks":[{"risk":"...","detailHtml":"...","priority":"High|Medium","pill":"p-r|p-a"}]}
 }
 Give exactly 5 findings, each the kind of thing a sharp consultant would flag — and QUOTE the real evidence (placeholder text, anchor text, title tags, review figures) in double quotes wherever you can. Fill who-is rows ONLY from crawl evidence (use "—" where a site shows nothing). Make win-boxes specific to each business.
-BACKLINK CARE: "refdomainsByTld" counts referring domains by their web address ending (e.g. .ca as a TLD); "refdomainsByCountry" counts them by geographic location. These are DIFFERENT measures — never merge them into one "Canadian domains" number, and say which one you mean. For any suspicious anchor/TLD pattern, recommend a "backlink review" only — NEVER recommend disavowing links or name a count of domains to disavow, and never predict a penalty. Do not claim links were bought or are a link farm; say the pattern "is consistent with" low-quality links and "warrants review".${data.primaryMarketNote ? ' IMPORTANT: ' + data.primaryMarketNote + ' Reflect this in the exec lead and the scorecard callout so the client is framed fairly.' : ''}`, 4000, diag, 'A');
+BACKLINK CARE: "refdomainsByTld" counts referring domains by their web address ending (e.g. .ca as a TLD); "refdomainsByCountry" counts them by geographic location. These are DIFFERENT measures — never merge them into one "Canadian domains" number, and say which one you mean. For any suspicious anchor/TLD pattern, recommend a "backlink review" only — NEVER recommend disavowing links or name a count of domains to disavow, and never predict a penalty. Do not claim links were bought or are a link farm; say the pattern "is consistent with" low-quality links and "warrants review".${data.primaryMarketNote ? ' IMPORTANT: ' + data.primaryMarketNote + ' Reflect this in the exec lead and the scorecard callout so the client is framed fairly.' : ''}`, 8000, diag, 'A');
 
   // --- Group B: competitor keywords + client keyword health + opportunity map ---
   const pB = callJson(keysObj, `${ctx}
@@ -550,7 +567,7 @@ Write the keyword sections. "ranks" = the COMPETITOR's keywords (competitor.topK
  "health":{"eyebrow":"${data.client.name} keyword health check","title":"headline","leadHtml":"1-2 sentences","wrongTitle":"short label for wrong/low-intent group","wrong":[{"kw":"...","vol":"...","pos":"...","why":"why this visitor isn't ideal"}],"rightTitle":"short label for right-intent group","right":[{"kw":"...","vol":"...","pos":"...","status":"Keep|Push to page 1|Needs own page|Needs a guide","pill":"p-g|p-o|p-r"}],"calloutTitle":"In plain words","calloutBody":"2-3 sentences"},
  "opp":{"title":"The searches ${data.client.name} should own next","lead":"1-2 sentences","rows":[{"kw":"...","vol":"...","diff":"...","client":"— or current position","strong":true,"page":true,"rowspan":2,"pageShade":true,"pageHtml":"<b>Page name</b> description"}],"supportTitle":"Blog topics that support these pages","supportLeft":["2-4 blog ideas"],"supportRight":["2-4 blog ideas"],"calloutTitle":"Why this matters","calloutBody":"2-3 sentences"}
 }
-Use the real keyword/volume/position values from the data. In "opp", group rows that share a "page to build" using rowspan on the first row of the group (set page:true + pageHtml + rowspan on the first, and page:false on the rest), and set pageShade:true to tint a group.`, 4000, diag, 'B');
+Use the real keyword/volume/position values from the data. In "opp", group rows that share a "page to build" using rowspan on the first row of the group (set page:true + pageHtml + rowspan on the first, and page:false on the rest), and set pageShade:true to tint a group.`, 6000, diag, 'B');
 
   // --- Group C: website & technical review + SWOT ---
   const pC = callJson(keysObj, `${ctx}
@@ -560,7 +577,7 @@ Write the website review + SWOT. STRICT JSON:
  "tech":{"title":"headline about both sites' technical/content state","clientRows":[{"issue":"short issue name","sawHtml":"what the crawl shows — specific","priority":"High|Medium|Strength","pill":"p-r|p-a|p-g"}],"compRows":[{"issue":"...","sawHtml":"..."}]},
  "swot":{"strengths":["4-6 bullets — the COMPETITOR's strengths"],"weaknesses":["4-6 bullets — the COMPETITOR's weaknesses"],"opportunities":["4-6 bullets — opportunities for ${data.client.name}"],"threats":["4-6 bullets — threats to ${data.client.name}"],"calloutTitle":"The positioning message we recommend","calloutBody":"2-3 sentences"}
 }
-Base every tech row on actual crawl evidence (title/meta/h1s/body/social) and QUOTE the specific string you saw in double quotes in the "sawHtml" (e.g. the exact placeholder, title tag, or anchor). Each "sawHtml" must end with WHY it matters for the business. Include a "What's working"/Strength row for the client when the evidence supports it. SWOT bullets describe consequences, not just facts: strengths/weaknesses describe the COMPETITOR; opportunities/threats describe what that means for the CLIENT and what to do about it.`, 4000, diag, 'C');
+Base every tech row on actual crawl evidence (title/meta/h1s/body/social) and QUOTE the specific string you saw in double quotes in the "sawHtml" (e.g. the exact placeholder, title tag, or anchor). Each "sawHtml" must end with WHY it matters for the business. Include a "What's working"/Strength row for the client when the evidence supports it. SWOT bullets describe consequences, not just facts: strengths/weaknesses describe the COMPETITOR; opportunities/threats describe what that means for the CLIENT and what to do about it.`, 6000, diag, 'C');
 
   const [A, B, C] = await Promise.all([pA, pB, pC]);
   // Merge each group onto the fallback independently, so a failed group only
