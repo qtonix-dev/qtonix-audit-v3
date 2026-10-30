@@ -173,6 +173,7 @@ function PreSeoReports({ onBackTab }) {
   const [items, setItems] = useState(null);
   const [q, setQ] = useState('');
   const [view, setView] = useState(null); // a report id being viewed
+  const [compView, setCompView] = useState(null); // a competitor report id being viewed
   const [edit, setEdit] = useState(null); // a report object being edited
   const [run, setRun] = useState(false);
   const [runGuide, setRunGuide] = useState(false);
@@ -190,6 +191,7 @@ function PreSeoReports({ onBackTab }) {
   }, [items]);
 
   if (view) return <PreSeoReportView id={view} onBack={() => { setView(null); load(); }} onEdit={(rep) => { setView(null); setEdit(rep); }} />;
+  if (compView) return <CompetitorReportView id={compView} onBack={() => { setCompView(null); load(); }} />;
 
   const isGuide = (r) => r.kind === 'brand_guideline';
   const isComp = (r) => r.kind === 'competitor';
@@ -287,7 +289,7 @@ function PreSeoReports({ onBackTab }) {
                       {isGuide(r)
                         ? <button onClick={() => window.open(`${API_BASE}/api/hr/projects/brandguide/${r.id}/viewer?token=${encodeURIComponent(localStorage.getItem(TOKEN_KEY) || '')}`, '_blank')} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>
                         : isComp(r)
-                          ? <button onClick={() => window.open(`${API_BASE}/api/hr/projects/competitor/${r.id}/view?token=${encodeURIComponent(localStorage.getItem(TOKEN_KEY) || '')}`, '_blank')} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>
+                          ? <button onClick={() => setCompView(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>
                           : <button onClick={() => setView(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>}
                       <button onClick={() => download(r)} className="rounded-lg px-2.5 py-1.5 text-[11.5px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>PDF</button>
                       {!isComp(r) && <button onClick={() => openEdit(r)} title="Edit" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:text-[#050A1F]">✎</button>}
@@ -407,6 +409,109 @@ function PreSeoReportView({ id, onBack, onEdit }) {
             <h4 className="text-[12.5px] font-extrabold text-[#050A1F] mb-1.5">Details</h4>
             <div className="flex justify-between text-[12px] py-1.5 border-b border-dashed border-slate-100"><span className="text-slate-400">Website</span><span className="text-slate-700">{rep.domain}</span></div>
             {rep.data && rep.data.report && (rep.data.report.services || []).length > 0 && <div className="flex justify-between text-[12px] py-1.5 border-b border-dashed border-slate-100"><span className="text-slate-400">Services</span><span className="text-slate-700">{rep.data.report.services.join(' · ')}</span></div>}
+            <div className="flex justify-between text-[12px] py-1.5"><span className="text-slate-400">Agent</span><span className="text-slate-700">{rep.createdByName || '—'}</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Full-page competitor-report view — live preview + trackable-link rail.
+// Mirrors PreSeoReportView but uses the /competitor/:id/* endpoints, so a
+// competitor report gets the same shareable, trackable public link (the backend
+// share/view/download endpoints already exist).
+function CompetitorReportView({ id, onBack }) {
+  const [rep, setRep] = useState(null);
+  const [share, setShare] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const [rerunning, setRerunning] = useState(false);
+  const token = localStorage.getItem(TOKEN_KEY) || '';
+  const loadShare = () => hrApi(`/projects/competitor/${id}/share`).then(setShare).catch(() => {});
+  const loadRep = () => hrApi(`/projects/competitor/${id}`).then(setRep).catch(() => {});
+  useEffect(() => { loadRep(); loadShare(); }, [id]);
+  const enable = async () => { try { await hrApi(`/projects/competitor/${id}/share`, { method: 'POST' }); loadShare(); } catch (e) { toast(e.message); } };
+  const disable = async () => { try { await hrApi(`/projects/competitor/${id}/share/disable`, { method: 'POST' }); loadShare(); } catch (e) { toast(e.message); } };
+  const copy = () => { if (share && share.url) { try { navigator.clipboard.writeText(share.url); } catch {} setCopied(true); setTimeout(() => setCopied(false), 1500); } };
+  const download = () => window.open(`${API_BASE}/api/hr/projects/competitor/${id}/download?token=${encodeURIComponent(token)}`, '_blank');
+  const rerun = async (forceData = false) => {
+    const msg = forceData
+      ? 'Re-run with FRESH search data from SE Ranking? This uses API credits. Use this only if the numbers may have changed.'
+      : 'Re-run the analysis (new write-up)? Search data fetched in the last 24 hours is reused, so no SE Ranking credits are spent unless the market changed.';
+    if (!confirm(msg)) return;
+    setRerunning(true);
+    try {
+      await hrApi(`/projects/competitor/${id}/rerun`, { method: 'POST', body: JSON.stringify({ forceData }) });
+      toast('Re-running — hold on…');
+      const poll = setInterval(async () => {
+        try { const r = await hrApi(`/projects/competitor/${id}`); setRep(r); if (['complete', 'failed'].includes(r.status)) { clearInterval(poll); setRerunning(false); loadShare(); } } catch {}
+      }, 2500);
+    } catch (e) { toast('Re-run failed: ' + e.message); setRerunning(false); }
+  };
+  if (!rep) return <div className="p-10 text-center text-slate-400 text-sm">Loading report…</div>;
+  const compName = (rep.runOptions && rep.runOptions.competitorName) || '';
+
+  return (
+    <div className="pb-8">
+      <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center text-white font-extrabold text-[13px]" style={{ background: favColor(rep.businessName) }}>{reportInitials(rep.businessName)}</div>
+          <div>
+            <h1 className="text-[18px] font-extrabold text-[#050A1F]">{rep.businessName}{compName ? ` vs ${compName}` : ''} — Competitor Analysis</h1>
+            <div className="text-[12px] text-slate-400">{rep.domain}{rep.completedAt ? ` · ${new Date(rep.completedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}` : ''}</div>
+          </div>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={onBack} className="rounded-lg border border-slate-300 px-4 py-2 text-[13px] font-bold text-slate-600 hover:border-slate-400">← Back</button>
+          <button onClick={() => rerun(false)} disabled={rerunning} className="rounded-lg border border-slate-300 px-4 py-2 text-[13px] font-bold text-slate-600 hover:border-slate-400" title="New write-up; reuses search data from the last 24h (no credits unless the market changed)">{rerunning ? 'Re-running…' : '↻ Re-run'}</button>
+          <button onClick={() => rerun(true)} disabled={rerunning} className="rounded-lg border border-slate-300 px-4 py-2 text-[13px] font-bold text-slate-600 hover:border-slate-400" title="Pull fresh numbers from SE Ranking (uses credits)">↻ Fresh data</button>
+          <button onClick={download} className="rounded-lg px-5 py-2 text-[13px] font-extrabold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>↓ Download PDF</button>
+        </div>
+      </div>
+
+      <div className="grid gap-4" style={{ gridTemplateColumns: 'minmax(0,1fr) 300px' }}>
+        <div className="rounded-2xl border border-slate-200 overflow-hidden bg-white" style={{ height: '80vh' }}>
+          <iframe title="report" src={`${API_BASE}/api/hr/projects/competitor/${id}/view?token=${encodeURIComponent(token)}&v=${rep.completedAt || ''}`} className="w-full h-full border-0" />
+        </div>
+        <div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 mb-3">
+            <h4 className="text-[12.5px] font-extrabold text-[#050A1F] mb-1.5">🔗 Trackable link</h4>
+            {!share || !share.enabled ? (
+              <>
+                <div className="text-[11.5px] text-slate-500 mb-2">Share this report with the client. Every open and download is logged with time and IP.</div>
+                <button onClick={enable} className="rounded-lg px-4 py-2 text-[12.5px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Create public link</button>
+              </>
+            ) : (
+              <>
+                <div className="flex gap-2 items-center">
+                  <input readOnly value={share.url} className="flex-1 min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-mono text-slate-600" />
+                  <button onClick={copy} className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-white" style={{ background: '#2563eb' }}>{copied ? 'Copied!' : 'Copy'}</button>
+                </div>
+                <div className="flex gap-4 mt-3">
+                  <div><div className="text-[18px] font-extrabold text-[#050A1F]" style={{ fontVariantNumeric: 'tabular-nums' }}>{share.viewCount || 0}</div><div className="text-[10px] text-slate-400">views</div></div>
+                  <div><div className="text-[18px] font-extrabold text-[#050A1F]" style={{ fontVariantNumeric: 'tabular-nums' }}>{share.downloadCount || 0}</div><div className="text-[10px] text-slate-400">downloads</div></div>
+                  <div><div className="text-[18px] font-extrabold" style={{ color: share.lastViewedAt ? '#16a34a' : '#cbd5e1' }}>●</div><div className="text-[10px] text-slate-400">{share.lastViewedAt ? 'seen' : 'unseen'}</div></div>
+                </div>
+                <button onClick={disable} className="mt-2 text-[11px] font-bold text-slate-400">Disable link</button>
+              </>
+            )}
+          </div>
+          {share && share.enabled && (share.views || []).length > 0 && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 mb-3">
+              <h4 className="text-[12.5px] font-extrabold text-[#050A1F] mb-1.5">Activity</h4>
+              {(share.views || []).slice(-6).reverse().map((v, i) => (
+                <div key={i} className="flex justify-between gap-2 text-[11.5px] py-1.5 border-b border-dashed border-slate-100 last:border-0">
+                  <span className="text-slate-600">{v.type === 'download' ? '📎 Downloaded' : '📖 Opened'}{v.ip ? ` · ${v.ip}` : ''}</span>
+                  <span className="text-slate-400 whitespace-nowrap">{new Date(v.at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <h4 className="text-[12.5px] font-extrabold text-[#050A1F] mb-1.5">Details</h4>
+            <div className="flex justify-between text-[12px] py-1.5 border-b border-dashed border-slate-100"><span className="text-slate-400">Client</span><span className="text-slate-700">{rep.domain}</span></div>
+            {compName && <div className="flex justify-between text-[12px] py-1.5 border-b border-dashed border-slate-100"><span className="text-slate-400">Competitor</span><span className="text-slate-700">{(rep.runOptions && rep.runOptions.competitorSite) || compName}</span></div>}
+            {rep.runOptions && rep.runOptions.source && <div className="flex justify-between text-[12px] py-1.5 border-b border-dashed border-slate-100"><span className="text-slate-400">Market</span><span className="text-slate-700 uppercase">{rep.runOptions.source}</span></div>}
             <div className="flex justify-between text-[12px] py-1.5"><span className="text-slate-400">Agent</span><span className="text-slate-700">{rep.createdByName || '—'}</span></div>
           </div>
         </div>
@@ -730,6 +835,7 @@ function ReportsTab({ id, data, onReload }) {
   const [reports, setReports] = useState(null); // this project's reports (both kinds)
   const [editRep, setEditRep] = useState(null);
   const [viewRep, setViewRep] = useState(null);
+  const [compViewRep, setCompViewRep] = useState(null);
   const [editGuide, setEditGuide] = useState(null);
   const cycle = (data.cycles || [])[0];
   const load = () => hrApi(`/projects/${id}/deliverables`).then((r) => setDels(r.deliverables || [])).catch(() => setDels([]));
@@ -767,6 +873,7 @@ function ReportsTab({ id, data, onReload }) {
       : <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#eff6ff', color: '#2563eb' }}>Pre-SEO</span>;
 
   if (viewRep) return <PreSeoReportView id={viewRep} onBack={() => { setViewRep(null); loadReports(); }} onEdit={(rep) => { setViewRep(null); setEditRep(rep); }} />;
+  if (compViewRep) return <CompetitorReportView id={compViewRep} onBack={() => { setCompViewRep(null); loadReports(); }} />;
   if (!dels) return <div className="text-slate-400 text-sm py-6 text-center">Loading…</div>;
   return (
     <div>
@@ -789,7 +896,7 @@ function ReportsTab({ id, data, onReload }) {
                         {isGuide(r)
                           ? <button onClick={() => window.open(`${API_BASE}/api/hr/projects/brandguide/${r.id}/viewer?token=${encodeURIComponent(localStorage.getItem(TOKEN_KEY) || '')}`, '_blank')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>
                           : isComp(r)
-                            ? <button onClick={() => window.open(`${API_BASE}/api/hr/projects/competitor/${r.id}/view?token=${encodeURIComponent(localStorage.getItem(TOKEN_KEY) || '')}`, '_blank')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>
+                            ? <button onClick={() => setCompViewRep(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>
                             : <button onClick={() => setViewRep(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>}
                         <button onClick={() => download(r)} className="rounded-lg px-2.5 py-1 text-[11px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>PDF</button>
                         {!isComp(r) && <button onClick={() => openEdit(r)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">Edit</button>}

@@ -1072,6 +1072,11 @@ router.post('/competitor/:rid/rerun', guard, requireHrAdmin, async (req, res, ne
   try {
     const r = await PreSeoReport.findByPk(req.params.rid);
     if (!r) return res.status(404).json({ error: 'Report not found.' });
+    // Within 24h of the last SE Ranking fetch (same domains + market), the runner
+    // reuses the stored search data and spends no credits. Pass forceData:true to
+    // override that and pull fresh numbers regardless.
+    const forceData = !!(req.body && req.body.forceData);
+    r.runOptions = { ...(r.runOptions || {}), forceData };
     r.status = 'capturing'; r.progress = 5; r.currentStep = 'Re-running the analysis'; r.error = null;
     await r.save();
     competitorRunner.run(r.id).catch((e) => console.error('[competitor] rerun error:', e.message));
