@@ -440,7 +440,7 @@ router.get('/preseo', guard, requireHrAdmin, async (req, res, next) => {
     // Second pass: just id + the two JSON columns we summarise, no ORDER BY.
     const blobMap = {};
     if (ids.length) {
-      const blobs = await PreSeoReport.findAll({ attributes: ['id', 'data', 'shots'], where: { id: ids } });
+      const blobs = await PreSeoReport.findAll({ attributes: ['id', 'data', 'shots', 'runOptions'], where: { id: ids } });
       for (const b of blobs) blobMap[b.id] = b;
     }
     const items = rows.map((r) => {
@@ -455,6 +455,7 @@ router.get('/preseo', guard, requireHrAdmin, async (req, res, next) => {
         createdAt: r.createdAt, completedAt: r.completedAt,
         shared: !!r.publicEnabled, publicSlug: r.publicSlug || null,
         shotCount: Object.values((b.shots) || {}).filter((s) => s && s.source === 'upload').length,
+        aiDiag: (b.runOptions && b.runOptions.aiDiag) || null, // competitor: narrative diagnostics
       };
     }).filter((it) => !q || (it.businessName || '').toLowerCase().includes(q) || (it.domain || '').toLowerCase().includes(q));
     res.json({ items });

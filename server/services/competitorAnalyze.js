@@ -136,6 +136,7 @@ async function validateCompetitor({ anthropicKey, clientSite, clientName, compet
 }
 
 // ---- market suggestion (when no target market is set) ---------------------
+// AI guess from the crawl — used only as one candidate for the data-driven pick.
 async function suggestMarket({ anthropicKey, clientCrawl, compCrawl }) {
   if (!anthropicKey) return 'us';
   const ev = { client: crawlEvidence(clientCrawl), competitor: crawlEvidence(compCrawl) };
@@ -146,13 +147,58 @@ async function suggestMarket({ anthropicKey, clientCrawl, compCrawl }) {
   return 'us';
 }
 
-module.exports = { fetchSide, crawlEvidence, parseJson, validateCompetitor, suggestMarket, marketLabels, toDomain, num, fmt, pct, fullDate, monthName, buildCompetitorViewModel };
+// Data-driven market resolution. Probes BOTH domains' overviews across a handful
+// of candidate markets and returns:
+//   { market }            — the COMPETITOR's strongest market (run the head-to-
+//                           head on the competitor's home turf, as requested)
+//   { clientStronghold }  — the CLIENT's own strongest market + its figures
+//                           there, when it DIFFERS from the primary market, so
+//                           the report can note where the client is actually
+//                           strong (and not look tiny on the competitor's turf).
+// Cheap: domain overview is a light call; we probe at most ~5 markets per domain.
+async function resolveMarkets(se, clientDomain, competitorDomain, { aiGuess, clientCrawl, compCrawl } = {}) {
+  const tld = (d) => { const m = String(d || '').toLowerCase().match(/\.([a-z]{2})$/); return m ? m[1] : null; };
+  const tldToMkt = { uk: 'uk', co: 'uk', us: 'us', ca: 'ca', au: 'au', in: 'in', ie: 'ie', nz: 'nz', de: 'de', fr: 'fr', es: 'es', it: 'it', nl: 'nl', za: 'za', ae: 'ae', sg: 'sg' };
+  const cand = new Set();
+  if (aiGuess && MARKETS[aiGuess] && aiGuess !== 'worldwide') cand.add(aiGuess);
+  for (const h of [clientCrawl && clientCrawl.finalUrl, clientDomain, compCrawl && compCrawl.finalUrl, competitorDomain]) { const t = tld(toDomain(h)); if (t && tldToMkt[t]) cand.add(tldToMkt[t]); }
+  ['us', 'uk'].forEach((m) => cand.add(m)); // always consider the two biggest English markets
+  const list = [...cand].slice(0, 5);
+
+  const probe = async (domain) => {
+    let best = null, bestKw = -1, figures = null;
+    for (const m of list) {
+      try {
+        const ov = await se.getDomainOverview(domain, m);
+        const org = (ov && ov.organic) || ov || {};
+        const kw = num(org.keywords_count ?? org.keywords ?? 0);
+        if (kw > bestKw) { bestKw = kw; best = m; figures = { keywords: kw, traffic: num(org.traffic_sum ?? org.traffic) }; }
+      } catch (e) { /* skip a market that errors */ }
+    }
+    return { market: best, keywords: bestKw < 0 ? 0 : bestKw, figures };
+  };
+
+  const [compBest, clientBest] = await Promise.all([probe(competitorDomain), probe(clientDomain)]);
+  // Primary = competitor's strongest market (their home turf). Fall back to the
+  // client's best, then the AI guess, then US.
+  const market = compBest.market || clientBest.market || aiGuess || 'us';
+  // Client stronghold note — only when the client is genuinely stronger in a
+  // DIFFERENT market than the one we're running in.
+  let clientStronghold = null;
+  if (clientBest.market && clientBest.market !== market && clientBest.keywords > 0) {
+    const [label, short] = marketLabels(clientBest.market);
+    clientStronghold = { market: clientBest.market, label, short, keywords: clientBest.figures ? clientBest.figures.keywords : clientBest.keywords, traffic: clientBest.figures ? clientBest.figures.traffic : 0 };
+  }
+  return { market, clientStronghold };
+}
+
+module.exports = { fetchSide, crawlEvidence, parseJson, validateCompetitor, suggestMarket, resolveMarkets, marketLabels, toDomain, num, fmt, pct, fullDate, monthName, buildCompetitorViewModel };
 
 // ---- the big one: assemble the whole view model ----------------------------
 async function buildCompetitorViewModel(input) {
   const {
     anthropicKey, openaiKey, source, clientName, competitorName,
-    clientSide, compSide, clientCrawl, compCrawl,
+    clientSide, compSide, clientCrawl, compCrawl, clientStronghold,
     preparedBy, preparedByRole, preparedFor, today = new Date(),
   } = input;
   const [marketLabel, marketShort] = marketLabels(source);
@@ -197,6 +243,11 @@ async function buildCompetitorViewModel(input) {
     client: { name: clientName, domain: clientDomain, ...numsFor(client), topKeywords: client.kwRows.slice(0, 40), topAnchors: client.topAnchors, topPages: client.topPages, crawl: crawlEvidence(clientCrawl) },
     competitor: { name: competitorName, domain: compDomain, ...numsFor(comp), topKeywords: comp.kwRows.slice(0, 40), topAnchors: comp.topAnchors, topPages: comp.topPages, topTlds: comp.topTlds, topCountries: comp.topCountries, crawl: crawlEvidence(compCrawl) },
     clientLeads,
+    // When the comparison runs in the competitor's market but the client is
+    // actually strongest elsewhere, the model should acknowledge this so the
+    // client isn't framed as weak on the competitor's home turf.
+    clientStronghold: clientStronghold ? { market: clientStronghold.label, keywords: clientStronghold.keywords, visits: clientStronghold.traffic } : null,
+    primaryMarketNote: clientStronghold ? `This comparison runs in ${marketLabel} (the competitor's strongest market). ${clientName} is strongest in ${clientStronghold.label} (${fmt(clientStronghold.keywords)} keywords, ~${fmt(clientStronghold.traffic)} visits/mo) — acknowledge this so the client is not framed as weak here.` : null,
   };
 
   const narrativeOut = await generateNarrative({ anthropicKey, openaiKey }, dataForAI);
@@ -230,11 +281,15 @@ async function buildCompetitorViewModel(input) {
     who: narrative.who,
     scorecard: {
       title: narrative.scorecard.title,
-      lead: `These are Google ${marketShort} figures for ${monthName(today)}. "Top 10" means page one of Google — where almost all clicks happen.`,
+      lead: `These are Google ${marketShort} figures for ${monthName(today)}${clientStronghold ? ` — ${competitorName}'s strongest market` : ''}. "Top 10" means page one of Google — where almost all clicks happen.`,
       bars: scorecardBars,
       rows: buildScorecardRows(client, comp, clientName, clientLeads),
       calloutTitle: narrative.scorecard.calloutTitle,
-      calloutBody: narrative.scorecard.calloutBody,
+      // Always append the client-stronghold note when the comparison runs on the
+      // competitor's turf, so the client's real strength is acknowledged.
+      calloutBody: (narrative.scorecard.calloutBody || '') + (clientStronghold
+        ? ` Note: this comparison is run in ${marketLabel}, ${competitorName}'s strongest market. ${clientName}'s own stronghold is ${clientStronghold.label}, where it ranks for ${fmt(clientStronghold.keywords)} keywords (~${fmt(clientStronghold.traffic)} visits/month) — a fairer picture of its real reach.`
+        : ''),
     },
     ranks: narrative.ranks,
     health: narrative.health,
@@ -246,7 +301,7 @@ async function buildCompetitorViewModel(input) {
     },
     swot: narrative.swot,
     opp: narrative.opp,
-    notes: buildNotes(marketShort, monthName(today), fullDate(today)),
+    notes: buildNotes(marketShort, monthName(today), fullDate(today), clientStronghold ? { clientName, competitorName, marketLabel, strongholdLabel: clientStronghold.label } : null),
   };
   // back cover text
   vm.back.headlineHtml = narrative.backCoverHeadlineHtml;
@@ -309,14 +364,16 @@ function buildScorecardRows(client, comp, clientName, clientLeads) {
   ];
 }
 
-function buildNotes(marketShort, dataMonth, reviewDate) {
+function buildNotes(marketShort, dataMonth, reviewDate, stronghold) {
+  const about = [
+    `All search figures are for <b>Google ${marketShort}, ${dataMonth}</b>, and include all subdomains of each website.`,
+    'Search volumes and visits are <b>estimates</b> based on industry search data. They show scale and direction, not exact counts. Your own Google Search Console and Analytics will show the precise numbers.',
+    `Website observations were taken from a live review of both sites on ${reviewDate}.`,
+    'Backlink figures reflect links found at the time of the review; numbers change as links are added or removed.',
+  ];
+  if (stronghold) about.push(`This comparison is run in <b>${stronghold.marketLabel}</b> — ${stronghold.competitorName}'s strongest market — so the two sites are measured on the same ground. ${stronghold.clientName}'s own strongest market is <b>${stronghold.strongholdLabel}</b>, where its figures are higher than shown here.`);
   return {
-    about: [
-      `All search figures are for <b>Google ${marketShort}, ${dataMonth}</b>, and include all subdomains of each website.`,
-      'Search volumes and visits are <b>estimates</b> based on industry search data. They show scale and direction, not exact counts. Your own Google Search Console and Analytics will show the precise numbers.',
-      `Website observations were taken from a live review of both sites on ${reviewDate}.`,
-      'Backlink figures reflect links found at the time of the review; numbers change as links are added or removed.',
-    ],
+    about,
     terms: [
       { term: 'Keyword', def: 'A word or phrase people type into Google.' },
       { term: 'Searches / month', def: `About how many times that phrase is searched in ${marketShort === 'Worldwide' ? 'total' : 'the ' + marketShort} each month.` },
@@ -371,7 +428,7 @@ async function callJson(keys, userContent, maxTokens, diag, label) {
   }
   if (!out || !out.trim()) { diag[label] = 'empty'; console.error(`[competitor] narrative ${label} empty response`); return null; }
   const j = parseJson(out);
-  if (!j) { diag[label] = 'parse-failed'; console.error(`[competitor] narrative ${label} unparseable (first 300):`, String(out).slice(0, 300)); return null; }
+  if (!j) { diag[label] = 'parse-failed'; diag[label + '_sample'] = String(out).slice(0, 160); console.error(`[competitor] narrative ${label} unparseable (first 300):`, String(out).slice(0, 300)); return null; }
   diag[label] = 'ok'; return j;
 }
 
@@ -399,7 +456,7 @@ Write the opening + comparison sections. STRICT JSON:
  "backlinkLead":"1-2 sentence plain-English intro to backlinks",
  "back":{"title":"backlink section headline","compPoints":["3-4 bullets on the competitor's link profile"],"clientPoints":["3-4 bullets on the client's link profile"],"risksTitle":"Two risks to fix OR empty string","risks":[{"risk":"...","detailHtml":"...","priority":"High|Medium","pill":"p-r|p-a"}]}
 }
-Give exactly 5 findings. Fill who-is rows ONLY from crawl evidence (use "—" where a site shows nothing). Make win-boxes specific to each business.`, 2600, diag, 'A');
+Give exactly 5 findings. Fill who-is rows ONLY from crawl evidence (use "—" where a site shows nothing). Make win-boxes specific to each business. ${data.primaryMarketNote ? 'IMPORTANT: ' + data.primaryMarketNote + ' Reflect this in the exec lead and the scorecard callout so the client is framed fairly.' : ''}`, 2600, diag, 'A');
 
   // --- Group B: competitor keywords + client keyword health + opportunity map ---
   const pB = callJson(keysObj, `${ctx}

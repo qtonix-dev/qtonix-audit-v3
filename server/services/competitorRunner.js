@@ -44,17 +44,25 @@ async function run(reportId) {
       crawler.runTechnicalAudit(competitorSite, psKey).catch((e) => { console.error('[competitor] comp crawl:', e.message); return {}; }),
     ]);
 
-    // 2. Resolve the market (explicit, else let AI pick from both sites).
-    let source = String(opts.source || opts.market || '').toLowerCase();
-    if (!source || !analyze.marketLabels(source)) {
-      source = await analyze.suggestMarket({ anthropicKey, clientCrawl, compCrawl });
-    }
-
     if (!serKey) {
       await setStatus(reportId, { status: 'failed', error: 'SE Ranking API key not configured. Add it in Admin → API keys.' });
       return;
     }
     const se = new SERanking(serKey);
+
+    // 2. Resolve the market. If the user picked one, use it. Otherwise run the
+    // head-to-head in the COMPETITOR's strongest market (their home turf) and, if
+    // the client is actually strong in a different country, note that stronghold.
+    let source = String(opts.source || opts.market || '').toLowerCase();
+    let clientStronghold = null;
+    if (!source) {
+      await setStatus(reportId, { progress: 30, currentStep: 'Choosing the best market to compare in' });
+      const aiGuess = await analyze.suggestMarket({ anthropicKey, clientCrawl, compCrawl });
+      const resolved = await analyze.resolveMarkets(se, analyze.toDomain(clientSite), analyze.toDomain(competitorSite), { aiGuess, clientCrawl, compCrawl });
+      source = resolved.market;
+      clientStronghold = resolved.clientStronghold;
+    }
+    source = source || 'us';
 
     // 3. SE Ranking for both domains.
     await setStatus(reportId, { status: 'analyzing', progress: 45, currentStep: `Fetching Google ${analyze.marketLabels(source)[1]} data for both sites` });
@@ -67,7 +75,7 @@ async function run(reportId) {
     await setStatus(reportId, { status: 'analyzing', progress: 68, currentStep: 'Writing and fact-checking the analysis' });
     const vm = await analyze.buildCompetitorViewModel({
       anthropicKey, openaiKey, source, clientName, competitorName,
-      clientSide, compSide, clientCrawl, compCrawl,
+      clientSide, compSide, clientCrawl, compCrawl, clientStronghold,
       preparedBy: opts.preparedBy || report.createdByName || 'Qtonix',
       preparedByRole: opts.preparedByRole || 'Project Manager, Qtonix',
       preparedFor: opts.preparedFor || clientName,

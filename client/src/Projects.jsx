@@ -199,6 +199,22 @@ function PreSeoReports({ onBackTab }) {
   const openEdit = (r) => { if (isGuide(r)) setEditGuide(r); else setEdit(r); };
   const del = async (r) => { if (!confirm(`Permanently delete the report for ${r.businessName}? This cannot be undone.`)) return; try { await hrApi(`/projects/${base(r)}/${r.id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); } };
   const rerun = async (r) => { if (!confirm(`Re-run ${r.businessName} with a fresh crawl?`)) return; try { await hrApi(`/projects/${base(r)}/${r.id}/rerun`, { method: 'POST' }); toast('Re-running — fresh crawl started.'); load(); } catch (e) { toast('Re-run failed: ' + e.message); } };
+  // Competitor-only: a compact AI-narrative diagnostic chip so a thin report
+  // tells you WHY on screen (no logs needed). Green when all sections used AI;
+  // amber/red with the reason when it fell back.
+  const aiDiagChip = (r) => {
+    if (!isComp(r) || !r.aiDiag) return null;
+    const d = r.aiDiag;
+    const groups = ['A', 'B', 'C'].map((g) => d[g]).filter(Boolean);
+    const allOk = groups.length === 3 && groups.every((x) => x === 'ok');
+    const anyOk = groups.some((x) => x === 'ok');
+    const bg = allOk ? '#ecfdf3' : anyOk ? '#fff7ed' : '#fef2f2';
+    const fg = allOk ? '#16a34a' : anyOk ? '#c2410c' : '#b91c1c';
+    const label = allOk ? 'AI ✓' : anyOk ? 'AI partial' : (d.result === 'no-ai-key' ? 'No AI key' : 'AI failed');
+    // Full reason for the hover title.
+    const reason = `result=${d.result || '?'} · claudeKey=${d.hasAnthropicKey ? 'yes' : 'no'} · openaiKey=${d.hasOpenaiKey ? 'yes' : 'no'}\nA=${d.A || '-'}\nB=${d.B || '-'}\nC=${d.C || '-'}`;
+    return <span title={reason} className="text-[9.5px] font-bold rounded px-1.5 py-0.5 cursor-help" style={{ background: bg, color: fg }}>{label}</span>;
+  };
   // Status cell: live progress while building, pill otherwise.
   const statusCell = (r) => {
     if (['capturing', 'analyzing', 'rendering', 'draft'].includes(r.status)) {
@@ -209,7 +225,7 @@ function PreSeoReports({ onBackTab }) {
         </div>
       );
     }
-    return psPill(r.status);
+    return <div className="flex items-center gap-1.5">{psPill(r.status)}{aiDiagChip(r)}</div>;
   };
   const typeChip = (r) => isGuide(r)
     ? <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#f5f3ff', color: '#7c3aed' }}>Brand Guideline</span>
