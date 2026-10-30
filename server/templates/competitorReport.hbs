@@ -14,10 +14,33 @@
 {{/if}}
 :root{--navy:#050A1F;--navy2:#0E1733;--orange:#FF6A00;--orange2:#FF4600;--ink:#141A2E;--muted:#5B6275;--line:#E4E7EE;--soft:#F5F6FA;--green:#12A36B;--red:#E0412F;--amber:#E89A00;}
 *{box-sizing:border-box;margin:0;padding:0}
+/* Cover/back are full-bleed single pages (no margin). */
 @page{size:A4;margin:0}
+/* Interior content pages: real page margins + a running header/footer in the
+   margin boxes, so when a section's content is taller than one page it FLOWS
+   onto a second page and the header/footer repeat automatically (instead of
+   being clipped). */
+@page content{
+  size:A4; margin:18mm 18mm 16mm 18mm;
+  @top-left{ content:"Qtonix"; font-family:"PJS"; font-size:9pt; font-weight:800; color:#050A1F; }
+  @top-right{ content:"Competitor Analysis · {{h.client}} vs {{h.competitor}}"; font-family:"PJS"; font-size:7.8pt; color:#5B6275; }
+  @bottom-left{ content:"Qtonix Software Pvt. Ltd. · Confidential"; font-family:"PJS"; font-size:7.5pt; color:#5B6275; }
+  @bottom-right{ content:counter(page, decimal-leading-zero); font-family:"PJS"; font-size:7.5pt; font-weight:700; color:#050A1F; }
+}
 html,body{font-family:"PJS",sans-serif;color:var(--ink);font-size:10.2pt;line-height:1.55;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+/* Full-bleed fixed pages (cover, back). */
 .page{width:210mm;height:296mm;position:relative;overflow:hidden;page-break-after:always;break-after:page;padding:20mm 18mm 22mm}
 .page:last-child{page-break-after:auto;break-after:auto}
+/* Flowing interior section: starts on a new page, then auto-paginates. The old
+   per-page .hdr/.ftr divs are hidden (the @page margin boxes replace them). */
+.sheet{page:content;page-break-before:always;break-before:page}
+.sheet:first-of-type{page-break-before:avoid;break-before:avoid}
+.sheet .hdr,.sheet .ftr{display:none}
+/* Keep rows, cards, callouts and bar rows from splitting across a page break. */
+tr{break-inside:avoid;page-break-inside:avoid}
+.callout,.card,.sw,.kpi,.brow{break-inside:avoid;page-break-inside:avoid}
+h2,h3{break-after:avoid;page-break-after:avoid}
+thead{display:table-header-group}
 .cover{background:var(--navy);color:#fff;padding:0}
 .cover .glow{position:absolute;right:-60mm;top:-50mm;width:180mm;height:180mm;border-radius:50%;background:radial-gradient(circle,rgba(255,106,0,.55) 0%,rgba(255,70,0,.18) 45%,rgba(5,10,31,0) 70%)}
 .cover .rings{position:absolute;right:-40mm;top:40mm;width:150mm;height:150mm}
@@ -110,7 +133,15 @@ ul.clean{padding-left:4.5mm}ul.clean li{margin-bottom:1.4mm}
 .contact div b{color:#8A93AE;font-weight:600;display:inline-block;width:20mm;font-size:8.5pt;text-transform:uppercase;letter-spacing:.1em}
 .back .copyright{position:absolute;left:20mm;right:20mm;bottom:20mm;font-size:8pt;color:#6E7792}
 {{#if forWeb}}
-@media screen{html{background:#D9DCE3}body{padding:12mm 0;background:#D9DCE3}.page{margin:0 auto 10mm;box-shadow:0 4px 24px rgba(5,10,31,.18);background:#fff}.page.cover,.page.back{background:var(--navy)}}
+@media screen{
+  html{background:#D9DCE3}body{padding:12mm 0;background:#D9DCE3}
+  .page{width:210mm;margin:0 auto 10mm;box-shadow:0 4px 24px rgba(5,10,31,.18);background:#fff}
+  .page.cover,.page.back{background:var(--navy)}
+  /* On screen, flowing sheets render as white cards with their own header rail
+     (the @page margin boxes are print-only). */
+  .sheet{width:210mm;margin:0 auto 10mm;background:#fff;box-shadow:0 4px 24px rgba(5,10,31,.18);padding:18mm 18mm 16mm;position:relative}
+  .sheet .hdr{display:flex}
+}
 {{/if}}
 </style></head>
 <body>
@@ -139,7 +170,7 @@ ul.clean{padding-left:4.5mm}ul.clean li{margin-bottom:1.4mm}
     <div class="metawrap">
       <div class="meta">
         <div><small>Prepared by</small><div>{{cover.preparedBy}}<br><span style="font-weight:400;color:#A9B0C6">{{cover.preparedByRole}}</span></div></div>
-        <div><small>Prepared for</small><div>{{cover.clientName}}<br><span style="font-weight:400;color:#A9B0C6">{{cover.preparedFor}}</span></div></div>
+        <div><small>Prepared for</small><div>{{cover.clientName}}{{#if cover.preparedForSub}}<br><span style="font-weight:400;color:#A9B0C6">{{cover.preparedForSub}}</span>{{/if}}</div></div>
         <div><small>Report date</small><div>{{cover.date}}<br><span style="font-weight:400;color:#A9B0C6">Data: Google {{cover.marketShort}}, {{cover.dataMonth}}</span></div></div>
       </div>
       <div class="conf">Confidential — prepared exclusively for {{cover.clientName}} by Qtonix Software Pvt. Ltd.</div>
@@ -147,7 +178,7 @@ ul.clean{padding-left:4.5mm}ul.clean li{margin-bottom:1.4mm}
   </div>
 </section>
 
-<section class="page">
+<section class="sheet">
   <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
   <div class="content">
     <div class="eyebrow">Inside this report</div>
@@ -160,7 +191,7 @@ ul.clean{padding-left:4.5mm}ul.clean li{margin-bottom:1.4mm}
   <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">02</span></div>
 </section>
 
-<section class="page">
+<section class="sheet">
   <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
   <div class="content">
     <div class="eyebrow">01 · Executive summary</div>
@@ -181,7 +212,7 @@ ul.clean{padding-left:4.5mm}ul.clean li{margin-bottom:1.4mm}
   <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">03</span></div>
 </section>
 
-<section class="page">
+<section class="sheet">
   <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
   <div class="content">
     <div class="eyebrow">02 · Who {{h.competitor}} is</div>
@@ -201,7 +232,7 @@ ul.clean{padding-left:4.5mm}ul.clean li{margin-bottom:1.4mm}
   <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">04</span></div>
 </section>
 
-<section class="page">
+<section class="sheet">
   <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
   <div class="content">
     <div class="eyebrow">03 · Head-to-head scorecard</div>
@@ -222,7 +253,7 @@ ul.clean{padding-left:4.5mm}ul.clean li{margin-bottom:1.4mm}
   <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">05</span></div>
 </section>
 
-<section class="page">
+<section class="sheet">
   <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
   <div class="content">
     <div class="eyebrow">04 · What {{h.competitor}} ranks for</div>
@@ -240,7 +271,7 @@ ul.clean{padding-left:4.5mm}ul.clean li{margin-bottom:1.4mm}
   <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">06</span></div>
 </section>
 
-<section class="page">
+<section class="sheet">
   <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
   <div class="content">
     <div class="eyebrow">05 · {{health.eyebrow}}</div>
@@ -263,7 +294,7 @@ ul.clean{padding-left:4.5mm}ul.clean li{margin-bottom:1.4mm}
   <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">07</span></div>
 </section>
 
-<section class="page">
+<section class="sheet">
   <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
   <div class="content">
     <div class="eyebrow">06 · Website &amp; technical review</div>
@@ -284,7 +315,7 @@ ul.clean{padding-left:4.5mm}ul.clean li{margin-bottom:1.4mm}
   <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">08</span></div>
 </section>
 
-<section class="page">
+<section class="sheet">
   <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
   <div class="content">
     <div class="eyebrow">07 · Backlink comparison</div>
@@ -311,7 +342,7 @@ ul.clean{padding-left:4.5mm}ul.clean li{margin-bottom:1.4mm}
   <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">09</span></div>
 </section>
 
-<section class="page">
+<section class="sheet">
   <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
   <div class="content">
     <div class="eyebrow">08 · SWOT</div>
@@ -328,7 +359,7 @@ ul.clean{padding-left:4.5mm}ul.clean li{margin-bottom:1.4mm}
   <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">10</span></div>
 </section>
 
-<section class="page">
+<section class="sheet">
   <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
   <div class="content">
     <div class="eyebrow">09 · Keyword opportunity map</div>
@@ -348,7 +379,7 @@ ul.clean{padding-left:4.5mm}ul.clean li{margin-bottom:1.4mm}
   <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">11</span></div>
 </section>
 
-<section class="page">
+<section class="sheet">
   <div class="hdr"><div class="logo">Qtonix<b style="color:var(--orange)">.</b></div><div>Competitor Analysis · {{h.client}} vs {{h.competitor}}</div></div>
   <div class="content">
     <div class="eyebrow">10 · How to read this report</div>

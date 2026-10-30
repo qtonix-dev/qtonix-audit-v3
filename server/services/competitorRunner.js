@@ -50,19 +50,17 @@ async function run(reportId) {
     }
     const se = new SERanking(serKey);
 
-    // 2. Resolve the market. If the user picked one, use it. Otherwise run the
-    // head-to-head in the COMPETITOR's strongest market (their home turf) and, if
-    // the client is actually strong in a different country, note that stronghold.
-    let source = String(opts.source || opts.market || '').toLowerCase();
-    let clientStronghold = null;
-    if (!source) {
-      await setStatus(reportId, { progress: 30, currentStep: 'Choosing the best market to compare in' });
-      const aiGuess = await analyze.suggestMarket({ anthropicKey, clientCrawl, compCrawl });
-      const resolved = await analyze.resolveMarkets(se, analyze.toDomain(clientSite), analyze.toDomain(competitorSite), { aiGuess, clientCrawl, compCrawl });
-      source = resolved.market;
-      clientStronghold = resolved.clientStronghold;
-    }
-    source = source || 'us';
+    // 2. Resolve the market. Always probe both domains across markets (cheap) so
+    // we know where each is strongest. Primary market = the user's choice if set,
+    // else the COMPETITOR's strongest market (their home turf). ALWAYS compute the
+    // client's stronghold relative to the primary market, so if the client is
+    // strongest elsewhere the report notes it — even when a market was chosen.
+    await setStatus(reportId, { progress: 30, currentStep: 'Choosing the best market to compare in' });
+    const chosen = String(opts.source || opts.market || '').toLowerCase();
+    const aiGuess = await analyze.suggestMarket({ anthropicKey, clientCrawl, compCrawl });
+    const resolved = await analyze.resolveMarkets(se, analyze.toDomain(clientSite), analyze.toDomain(competitorSite), { aiGuess, clientCrawl, compCrawl, primaryOverride: (chosen && analyze.marketLabels(chosen)) ? chosen : null });
+    let source = (chosen && analyze.marketLabels(chosen)) ? chosen : (resolved.market || 'us');
+    let clientStronghold = resolved.clientStronghold;
 
     // 3. SE Ranking for both domains.
     await setStatus(reportId, { status: 'analyzing', progress: 45, currentStep: `Fetching Google ${analyze.marketLabels(source)[1]} data for both sites` });

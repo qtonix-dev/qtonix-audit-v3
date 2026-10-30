@@ -23,8 +23,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV CHROMIUM_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
-# 2. WeasyPrint (the PDF engine the report renderer calls).
-RUN pip3 install --no-cache-dir --break-system-packages weasyprint
+# 2. WeasyPrint (the PDF engine the report renderer calls) + pypdf (used by the
+#    report self-check to verify a rendered PDF is complete before it's served).
+RUN pip3 install --no-cache-dir --break-system-packages weasyprint pypdf
 
 # 3. Plus Jakarta Sans fonts, so the PDF matches the brand design.
 RUN mkdir -p /usr/share/fonts/truetype/jakarta \

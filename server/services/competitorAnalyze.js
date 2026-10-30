@@ -194,14 +194,15 @@ async function suggestMarket({ anthropicKey, clientCrawl, compCrawl }) {
 //                           the report can note where the client is actually
 //                           strong (and not look tiny on the competitor's turf).
 // Cheap: domain overview is a light call; we probe at most ~5 markets per domain.
-async function resolveMarkets(se, clientDomain, competitorDomain, { aiGuess, clientCrawl, compCrawl } = {}) {
+async function resolveMarkets(se, clientDomain, competitorDomain, { aiGuess, clientCrawl, compCrawl, primaryOverride } = {}) {
   const tld = (d) => { const m = String(d || '').toLowerCase().match(/\.([a-z]{2})$/); return m ? m[1] : null; };
   const tldToMkt = { uk: 'uk', co: 'uk', us: 'us', ca: 'ca', au: 'au', in: 'in', ie: 'ie', nz: 'nz', de: 'de', fr: 'fr', es: 'es', it: 'it', nl: 'nl', za: 'za', ae: 'ae', sg: 'sg' };
   const cand = new Set();
+  if (primaryOverride && MARKETS[primaryOverride]) cand.add(primaryOverride); // make sure we probe the chosen market
   if (aiGuess && MARKETS[aiGuess] && aiGuess !== 'worldwide') cand.add(aiGuess);
   for (const h of [clientCrawl && clientCrawl.finalUrl, clientDomain, compCrawl && compCrawl.finalUrl, competitorDomain]) { const t = tld(toDomain(h)); if (t && tldToMkt[t]) cand.add(tldToMkt[t]); }
   ['us', 'uk'].forEach((m) => cand.add(m)); // always consider the two biggest English markets
-  const list = [...cand].slice(0, 5);
+  const list = [...cand].slice(0, 6);
 
   const probe = async (domain) => {
     let best = null, bestKw = -1, figures = null;
@@ -217,17 +218,17 @@ async function resolveMarkets(se, clientDomain, competitorDomain, { aiGuess, cli
   };
 
   const [compBest, clientBest] = await Promise.all([probe(competitorDomain), probe(clientDomain)]);
-  // Primary = competitor's strongest market (their home turf). Fall back to the
-  // client's best, then the AI guess, then US.
-  const market = compBest.market || clientBest.market || aiGuess || 'us';
+  // Primary market: the user's explicit choice if given, else the competitor's
+  // strongest market (home turf), else the client's best, else AI guess, else US.
+  const market = (primaryOverride && MARKETS[primaryOverride]) ? primaryOverride : (compBest.market || clientBest.market || aiGuess || 'us');
   // Client stronghold note — only when the client is genuinely stronger in a
-  // DIFFERENT market than the one we're running in.
+  // DIFFERENT market than the primary one we're running in.
   let clientStronghold = null;
   if (clientBest.market && clientBest.market !== market && clientBest.keywords > 0) {
     const [label, short] = marketLabels(clientBest.market);
     clientStronghold = { market: clientBest.market, label, short, keywords: clientBest.figures ? clientBest.figures.keywords : clientBest.keywords, traffic: clientBest.figures ? clientBest.figures.traffic : 0 };
   }
-  return { market, clientStronghold };
+  return { market, clientStronghold, compBest, clientBest };
 }
 
 module.exports = { fetchSide, crawlEvidence, parseJson, validateCompetitor, suggestMarket, resolveMarkets, marketLabels, toDomain, num, fmt, pct, fullDate, monthName, buildCompetitorViewModel };
@@ -297,11 +298,19 @@ async function buildCompetitorViewModel(input) {
     h: { client: clientName, competitor: competitorName },
     cover: {
       marketLabel, marketShort, dataMonth: monthName(today),
-      headlineHtml: narrative.cover.headlineHtml,
+      // Guard against a too-long / description-style headline from the AI: if the
+      // visible text runs past ~42 chars or has no <span>, use a short default so
+      // the cover never overflows into a messy multi-line block.
+      headlineHtml: tidyCoverHeadline(narrative.cover.headlineHtml, clientName, competitorName),
       sub: `A side-by-side look at how ${clientName} and ${competitorName} perform in Google ${marketShort} — keywords, traffic, links, website quality — and the plan to pull ahead.`,
       clientDomain, compDomain,
       preparedBy: preparedBy || 'Qtonix', preparedByRole: preparedByRole || 'Qtonix Software Pvt. Ltd.',
-      clientName, preparedFor: preparedFor || clientName, date: fullDate(today),
+      clientName,
+      // Sub-line under the client name on the cover (e.g. a parent company).
+      // Only show it when it's genuinely different from the client name, so the
+      // cover never prints "Oil Chef / Oil Chef".
+      preparedForSub: (preparedFor && preparedFor.trim() && preparedFor.trim().toLowerCase() !== String(clientName).trim().toLowerCase()) ? preparedFor.trim() : '',
+      date: fullDate(today),
     },
     toc: buildToc(competitorName, clientName, clientLeads),
     exec: {
@@ -342,7 +351,7 @@ async function buildCompetitorViewModel(input) {
     notes: buildNotes(marketShort, monthName(today), fullDate(today), clientStronghold ? { clientName, competitorName, marketLabel, strongholdLabel: clientStronghold.label } : null),
   };
   // back cover text
-  vm.back.headlineHtml = narrative.backCoverHeadlineHtml;
+  vm.back.headlineHtml = tidyCoverHeadline(narrative.backCoverHeadlineHtml, clientName, competitorName, `Ready to pull <span>ahead</span>?`);
   vm.back.sub = "We'd be glad to walk you through this report on a call and agree the first steps. The first fixes can begin within days of approval.";
   vm.back.email = input.email || 'adam@qtonix.com';
   vm.back.phone = input.phone || '+91-8249016547';
@@ -361,6 +370,17 @@ function numsFor(s) {
     nofollowBacklinks: s.nofollowBacklinks, domainAuthority: s.da, fromHomepageRefdomains: s.fromHomeRef,
     newThisMonth: s.newCount, lostThisMonth: s.lostCount, upThisMonth: s.upCount, downThisMonth: s.downCount,
   };
+}
+
+// Keep the cover headline short and editorial. Reject a headline that reads like
+// a description (too long, or contains the title/market words) and fall back to a
+// clean default with one orange phrase.
+function tidyCoverHeadline(html, clientName, competitorName, fallback) {
+  const raw = String(html || '');
+  const text = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const bad = !raw || !/<span>/i.test(raw) || text.length < 6 || text.length > 46 || /competitor analysis|seo competitor|where the gap/i.test(text);
+  if (!bad) return raw;
+  return fallback || `Beating a <span>stronger rival</span><br>in search`;
 }
 
 function buildToc(competitor, client, clientLeads) {
@@ -458,7 +478,7 @@ function dataContext(data) {
 async function callJson(keys, userContent, maxTokens, diag, label) {
   let out = '';
   try {
-    out = await callAI({ anthropicKey: keys.anthropicKey, openaiKey: keys.openaiKey, system: NARRATIVE_SYSTEM, messages: [{ role: 'user', content: userContent }], maxTokens: maxTokens || 2000 });
+    out = await callAI({ anthropicKey: keys.anthropicKey, openaiKey: keys.openaiKey, system: NARRATIVE_SYSTEM, messages: [{ role: 'user', content: userContent }], maxTokens: maxTokens || 2000, temperature: 0.2 });
   } catch (e) {
     const msg = String(e.message || e).slice(0, 160);
     console.error(`[competitor] narrative ${label} call failed:`, msg);
@@ -485,7 +505,7 @@ async function generateNarrative(keys, data) {
 
 Write the opening + comparison sections. STRICT JSON:
 {
- "cover":{"headlineHtml":"3-line cover headline; wrap the key phrase in <span>...</span>; <br> between lines"},
+ "cover":{"headlineHtml":"A SHORT, punchy editorial cover headline — a hook, NOT a description. Max 7 words total across up to 3 lines (use <br> between lines). Wrap ONE key phrase in <span>...</span> to colour it orange. Do NOT include the words 'competitor analysis', the market name, or the company names (those appear elsewhere on the cover). Think magazine cover line, e.g. 'Beating the filtration giant in search' or 'Winning the fryer-oil search market'."},
  "backCoverHeadlineHtml":"2-line closing headline; one phrase in <span>...</span>; <br> between lines",
  "sharedCount":<integer keywords both sites rank for; 0 if unknown/none>,
  "exec":{"title":"one-line verdict","leadHtml":"2-3 sentence summary, <strong>/<em> ok","kpiNotes":["under ranking-keywords","under visits","under linking-websites","under shared-keywords"],"findings":[{"n":"1","title":"Bold lead-in.","bodyHtml":"specific finding","impact":"High|Medium|Medium–High|Big opportunity|Opportunity|Info","pill":"p-r|p-a|p-g|p-n|p-o"}],"recommendation":"one-line recommendation"},
@@ -528,11 +548,32 @@ Base every tech row on actual crawl evidence (title/meta/h1s/body/social). Inclu
   return { vm, diag };
 }
 
+// Strip model-introduced code formatting from a narrative string. The model
+// sometimes wraps quoted website text in `backticks` or <code>/<pre>, which
+// WeasyPrint renders as monospace — jarring in a client report. Convert those to
+// normal emphasis and drop fences/stray backticks. Keeps the allowed inline tags
+// (<b> <strong> <i> <em> <span> <br>).
+function sanitizeHtml(v) {
+  if (typeof v !== 'string') return v;
+  return v
+    .replace(/<\/?(code|pre|tt|kbd|samp)\b[^>]*>/gi, '') // drop code tags, keep text
+    .replace(/`([^`]+)`/g, '$1')                          // `quoted` → quoted
+    .replace(/`/g, '')                                     // any stray backtick
+    .replace(/^```[a-z]*\s*|\s*```$/gi, '');               // stray fences
+}
+function sanitizeDeep(x) {
+  if (typeof x === 'string') return sanitizeHtml(x);
+  if (Array.isArray(x)) return x.map(sanitizeDeep);
+  if (x && typeof x === 'object') { const o = {}; for (const k of Object.keys(x)) o[k] = sanitizeDeep(x[k]); return o; }
+  return x;
+}
+
 // Fill any missing keys from the fallback so the template never sees undefined.
 function mergeNarrative(base, got) {
   const out = JSON.parse(JSON.stringify(base));
+  const clean = sanitizeDeep(got); // scrub model code-formatting before merge
   const deep = (t, s) => { for (const k of Object.keys(s || {})) { if (s[k] && typeof s[k] === 'object' && !Array.isArray(s[k])) { t[k] = t[k] || {}; deep(t[k], s[k]); } else if (s[k] !== undefined && s[k] !== null && !(Array.isArray(s[k]) && s[k].length === 0 && Array.isArray(t[k]) && t[k].length)) { t[k] = s[k]; } } };
-  deep(out, got);
+  deep(out, clean);
   return out;
 }
 

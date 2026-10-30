@@ -569,6 +569,28 @@ async function renderCompetitor(vm, slugBase) {
     execFile('python3', ['-m', 'weasyprint', '-e', 'utf-8', '-u', path.dirname(pdfHtmlPath), pdfHtmlPath, pdfPath], { timeout: 120000 },
       (err, stdout, stderr) => err ? reject(new Error(`WeasyPrint failed: ${stderr || err.message}`)) : resolve());
   });
+
+  // ---- Self-check before the report is ever served -----------------------
+  // Confirm the PDF rendered to a sane, complete document (not empty/clipped).
+  // The report has 13 fixed sections; with flowing content the page count is
+  // >= 13, never less. A smaller count means a broken render — fail loudly
+  // instead of handing the user a broken file.
+  try {
+    const st = await fs.stat(pdfPath);
+    if (!st.size) throw new Error('Report self-check failed: the PDF is empty.');
+    const pageCount = await new Promise((resolve) => {
+      const { execFile } = require('child_process');
+      execFile('python3', ['-c', `import sys\nfrom pypdf import PdfReader\nprint(len(PdfReader(sys.argv[1]).pages))`, pdfPath], { timeout: 20000 },
+        (err, stdout) => resolve(err ? -1 : parseInt(String(stdout).trim(), 10) || -1));
+    });
+    if (pageCount !== -1 && pageCount < 13) {
+      throw new Error(`Report self-check failed: PDF has ${pageCount} pages (expected at least 13). The render looks incomplete.`);
+    }
+  } catch (e) {
+    if (/self-check/.test(e.message)) throw e;
+    console.error('[renderCompetitor] self-check skipped (could not verify):', e.message);
+  }
+
   let pdfUrl = null, htmlUrl = null, pdfFileId = null, htmlFileId = null;
   try {
     const ik = require('./imagekit');
