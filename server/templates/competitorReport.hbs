@@ -87,6 +87,13 @@ td.num,th.num{text-align:right}
 .callout.navy{border-color:var(--navy);background:var(--soft)}
 .callout b.t{display:block;color:var(--navy);margin-bottom:1mm;font-size:9.5pt}
 .fnote{font-size:7.5pt;color:#6E7792;margin:1.5mm 0 0;line-height:1.4}
+.rdintro{font-size:9pt;color:#596078;margin:1mm 0 2.5mm}
+.rdtwo{gap:6mm}
+.rdhead{font-weight:700;color:var(--navy);font-size:9.5pt;margin-bottom:1.5mm;display:flex;align-items:center;gap:2mm}
+.rdtable{width:100%;border-collapse:collapse;font-size:8.5pt}
+.rdtable th{text-align:left;color:#8A91A6;font-weight:600;font-size:7.5pt;text-transform:uppercase;letter-spacing:.3px;padding:1mm 1.5mm;border-bottom:1px solid #E6E9F0}
+.rdtable td{padding:1.3mm 1.5mm;border-bottom:1px solid #F0F2F6;color:#2A3148;word-break:break-all}
+.rdtable td.num,.rdtable th.num{text-align:right;white-space:nowrap;word-break:normal}
 .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:3.5mm;margin:4mm 0}
 .kpi{background:var(--soft);border-radius:3mm;padding:4mm}
 .kpi small{display:block;font-size:7.5pt;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em}
@@ -328,6 +335,28 @@ ul.clean{padding-left:4.5mm}ul.clean li{margin-bottom:1.4mm}
       {{#each back.bars}}<div class="brow"><div class="lbl">{{this.label}}</div><div class="bpair"><div class="bar b-oc" style="width:{{this.clientPct}}%">{{this.clientVal}}</div><div class="bar b-fy" style="width:{{this.compPct}}%">{{this.compVal}}</div></div></div>
       {{/each}}
     </div>
+    {{#if back.refDomains}}{{#if back.refDomains.client.length}}
+    <h3>Top referring domains</h3>
+    <p class="rdintro">The strongest sites linking to each domain, by link authority (0–100). A “Review” flag marks address endings commonly used by low-quality or paid links — a prompt to check them, not a verdict.</p>
+    <div class="two rdtwo">
+      <div>
+        <div class="rdhead"><span class="dot" style="background:var(--orange)"></span>{{back.refDomains.clientName}}</div>
+        <table class="rdtable">
+          <tr><th>Domain</th><th class="num">Auth.</th><th class="num">Links</th><th></th></tr>
+          {{#each back.refDomains.client}}<tr><td>{{this.domain}}</td><td class="num">{{this.authority}}</td><td class="num">{{this.backlinks}}</td><td>{{#if this.flag}}<span class="pill {{this.pill}}">{{this.flag}}</span>{{/if}}</td></tr>
+          {{/each}}
+        </table>
+      </div>
+      <div>
+        <div class="rdhead"><span class="dot" style="background:var(--muted)"></span>{{back.refDomains.competitorName}}</div>
+        <table class="rdtable">
+          <tr><th>Domain</th><th class="num">Auth.</th><th class="num">Links</th><th></th></tr>
+          {{#each back.refDomains.competitor}}<tr><td>{{this.domain}}</td><td class="num">{{this.authority}}</td><td class="num">{{this.backlinks}}</td><td>{{#if this.flag}}<span class="pill {{this.pill}}">{{this.flag}}</span>{{/if}}</td></tr>
+          {{/each}}
+        </table>
+      </div>
+    </div>
+    {{/if}}{{/if}}
     <div class="two">
       <div class="card"><h4><span class="dot" style="background:var(--muted)"></span>{{h.competitor}}</h4><ul>{{#each back.compPoints}}<li>{{{this}}}</li>{{/each}}</ul></div>
       <div class="card"><h4><span class="dot" style="background:var(--orange)"></span>{{h.client}}</h4><ul>{{#each back.clientPoints}}<li>{{{this}}}</li>{{/each}}</ul></div>

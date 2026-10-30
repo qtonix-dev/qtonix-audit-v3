@@ -48,10 +48,11 @@ function marketLabels(code) { const m = MARKETS[String(code).toLowerCase()]; ret
 // report still renders. keywordLimit keeps credit spend predictable.
 async function fetchSide(se, domain, source) {
   const safe = async (fn, fallback) => { try { return await fn(); } catch (e) { console.error(`[competitor] ${domain} call failed:`, e.message); return fallback; } };
-  const [overview, keywordsRes, backlinks] = await Promise.all([
+  const [overview, keywordsRes, backlinks, refDomainsRes] = await Promise.all([
     safe(() => se.getDomainOverview(domain, source), {}),
     safe(() => se.getDomainKeywords(domain, source, { limit: 100 }), {}),
     safe(() => se.getBacklinkSummary(domain, 'domain'), {}),
+    safe(() => se.getReferringDomains(domain, 'domain', 15), {}),
   ]);
   // Normalise overview (organic block) — SE Ranking shapes vary by endpoint.
   const org = (overview && overview.organic) || overview || {};
@@ -89,7 +90,22 @@ async function fetchSide(se, domain, source) {
     topPages: (bl.top_pages_by_refdomains || bl.top_pages_by_backlinks || []).slice(0, 6),
     topTlds: (bl.top_tlds || []).slice(0, 10),
     topCountries: (bl.top_countries || []).slice(0, 10),
+    // Top referring domains (by authority) — the real, checkable list behind the
+    // link numbers. Shape varies, so pull the common fields defensively.
+    refDomainsList: normRefDomains(refDomainsRes),
   };
+}
+
+// Normalise the /backlinks/refdomains response into a small, display-ready list:
+// { domain, authority (domain_inlink_rank 0-100), backlinks, dofollow }.
+function normRefDomains(res) {
+  const rows = Array.isArray(res) ? res : (res && (res.domains || res.refdomains || res.data || res.rows)) || [];
+  return rows.map((r) => ({
+    domain: r.referring_domain || r.domain || r.refdomain || r.ref_domain || r.host || '',
+    authority: num(r.domain_inlink_rank ?? r.inlink_rank ?? r.domain_authority ?? r.rank),
+    backlinks: num(r.backlinks ?? r.backlinks_count ?? r.links),
+    dofollow: num(r.dofollow_backlinks ?? r.dofollow),
+  })).filter((r) => r.domain).slice(0, 12);
 }
 
 // Crawl summary trimmed to what the model needs as evidence (keeps tokens sane).
@@ -363,8 +379,17 @@ async function buildCompetitorViewModel(input) {
       title: narrative.back.title, lead: narrative.backlinkLead,
       bars: backBars, compPoints: narrative.back.compPoints, clientPoints: narrative.back.clientPoints,
       risksTitle: narrative.back.risksTitle, risks: narrative.back.risks,
+      // Real referring-domain lists (from SE Ranking), so the link claims are
+      // backed by a checkable table on the page.
+      refDomains: {
+        clientName, competitorName,
+        client: buildRefDomainRows(client.refDomainsList),
+        competitor: buildRefDomainRows(comp.refDomainsList),
+      },
     },
-    swot: narrative.swot,
+    // Hard cap SWOT at 4 bullets/box so the page stays skimmable even if the AI
+    // over-delivers; the prompt asks for 4, this guarantees it.
+    swot: capSwot(narrative.swot),
     opp: narrative.opp,
     notes: buildNotes(marketShort, monthName(today), fullDate(today), clientStronghold ? { clientName, competitorName, marketLabel, strongholdLabel: clientStronghold.label } : null),
   };
@@ -399,6 +424,34 @@ function tidyCoverHeadline(html, clientName, competitorName, fallback) {
   const bad = !raw || !/<span>/i.test(raw) || text.length < 6 || text.length > 46 || /competitor analysis|seo competitor|where the gap/i.test(text);
   if (!bad) return raw;
   return fallback || `Beating a <span>stronger rival</span><br>in search`;
+}
+
+// Format referring-domain rows for the backlink page's evidence table, flagging
+// the TLDs commonly associated with low-quality / purchased links so the client
+// can see WHICH domains the "backlink review" note refers to. The flag is a
+// signal to review, not a verdict (see the calibration rules).
+const SPAMMY_TLDS = new Set(['store', 'site', 'shop', 'online', 'space', 'website', 'xyz', 'top', 'click', 'link', 'icu', 'buzz']);
+function buildRefDomainRows(list) {
+  if (!Array.isArray(list)) return [];
+  return list.slice(0, 10).map((r) => {
+    const m = String(r.domain || '').toLowerCase().match(/\.([a-z]{2,})$/);
+    const tld = m ? m[1] : '';
+    return {
+      domain: r.domain,
+      authority: r.authority || 0,
+      backlinks: r.backlinks || 0,
+      flag: SPAMMY_TLDS.has(tld) ? 'Review' : '',
+      pill: SPAMMY_TLDS.has(tld) ? 'p-a' : '',
+    };
+  });
+}
+
+// Keep SWOT skimmable: at most 4 bullets per box. The prompt asks for 4, but
+// this is the guarantee — a client should see four sharp points, not a wall.
+function capSwot(sw) {
+  if (!sw || typeof sw !== 'object') return sw;
+  const cap = (a) => Array.isArray(a) ? a.slice(0, 4) : a;
+  return { ...sw, strengths: cap(sw.strengths), weaknesses: cap(sw.weaknesses), opportunities: cap(sw.opportunities), threats: cap(sw.threats) };
 }
 
 function buildToc(competitor, client, clientLeads) {
@@ -549,7 +602,7 @@ Write the opening + comparison sections. STRICT JSON:
  "cover":{"headlineHtml":"A SHORT, punchy editorial cover headline — a hook, NOT a description. Max 7 words total across up to 3 lines (use <br> between lines). Wrap ONE key phrase in <span>...</span> to colour it orange. Do NOT include the words 'competitor analysis', the market name, or the company names (those appear elsewhere on the cover). Think magazine cover line, e.g. 'Beating the filtration giant in search' or 'Winning the fryer-oil search market'."},
  "backCoverHeadlineHtml":"2-line closing headline; one phrase in <span>...</span>; <br> between lines",
  "sharedCount":<integer keywords both sites rank for; 0 if unknown/none>,
- "exec":{"title":"a VERDICT headline — a judgement with a consequence, not a description (e.g. 'X leads on visibility, but its lead sits on its own brand name — and that gap is closeable'). 8-16 words.","leadHtml":"2-3 sentences. State who leads and WHY, name the real limiting factor, and end with what the client should do. Use a quoted figure with its business meaning. <strong>/<em> ok.","kpiNotes":["under ranking-keywords: what the gap means in one phrase","under visits: what it means","under linking-websites: what it means","under shared-keywords: what it means"],"findings":[{"n":"1","title":"Bold lead-in that states the finding as a claim.","bodyHtml":"The specific finding, QUOTING the crawl/anchor/title evidence in double quotes, then its business consequence. This is the most important section — make each finding feel like a human spotted it.","impact":"High|Medium|Medium–High|Big opportunity|Opportunity|Info","pill":"p-r|p-a|p-g|p-n|p-o"}],"recommendation":"one-line recommendation — the single most important next move, stated as an instruction"},
+ "exec":{"title":"a VERDICT headline — a judgement with a consequence, not a description (e.g. 'X leads on visibility, but its lead sits on its own brand name — and that gap is closeable'). 8-16 words.","leadHtml":"2-3 sentences. State who leads and WHY, name the real limiting factor, and end with what the client should do. Use a quoted figure with its business meaning. <strong>/<em> ok.","kpiNotes":["ONE short line (max ~12 words) on what the ranking-keywords gap means","ONE short line on what the visits gap means","ONE short line on linking-websites","ONE short line on shared-keywords"],"findings":[{"n":"1","title":"Bold lead-in that states the finding as a claim.","bodyHtml":"KEEP IT SHORT — 2 to 3 sentences MAX, roughly 45 words. Quote the one key piece of evidence in double quotes, then its business consequence in a few words. Do not pile on multiple data points or caveats; one sharp point per finding. A reader should take it in at a glance.","impact":"High|Medium|Medium–High|Big opportunity|Opportunity|Info","pill":"p-r|p-a|p-g|p-n|p-o"}],"recommendation":"one-line recommendation — the single most important next move, stated as an instruction"},
  "who":{"title":"headline","lead":"intro","rows":[{"label":"What they sell","compHtml":"quote the site's own wording where possible","clientHtml":"..."},{"label":"How customers buy","compHtml":"...","clientHtml":"..."},{"label":"Headline claim","compHtml":"quote the actual H1/hero claim in double quotes","clientHtml":"..."},{"label":"Positioning","compHtml":"...","clientHtml":"..."},{"label":"Proof & trust","compHtml":"name the actual certifications/awards/review figures found","clientHtml":"..."},{"label":"Website","compHtml":"...","clientHtml":"..."},{"label":"Social presence","compHtml":"...","clientHtml":"..."}],"compWins":["3-5 bullets — concrete, each tied to evidence"],"clientWins":["3-5 bullets"],"sideNote":"optional cross-site observation ONLY if genuinely relevant, else empty string"},
  "scorecard":{"title":"a VERDICT headline about who really leads (e.g. 'On raw numbers X leads — but the margin is smaller than it looks')","calloutTitle":"...","calloutBody":"2-3 sentences interpreting the gap: what the numbers mean for the business and why the leader's lead is or isn't solid. Not a restatement of the numbers."},
  "backlinkLead":"1-2 sentence plain-English intro to backlinks",
@@ -574,10 +627,11 @@ Use the real keyword/volume/position values from the data. In "opp", group rows 
 
 Write the website review + SWOT. STRICT JSON:
 {
- "tech":{"title":"headline about both sites' technical/content state","clientRows":[{"issue":"short issue name","sawHtml":"what the crawl shows — specific","priority":"High|Medium|Strength","pill":"p-r|p-a|p-g"}],"compRows":[{"issue":"...","sawHtml":"..."}]},
- "swot":{"strengths":["4-6 bullets — the COMPETITOR's strengths"],"weaknesses":["4-6 bullets — the COMPETITOR's weaknesses"],"opportunities":["4-6 bullets — opportunities for ${data.client.name}"],"threats":["4-6 bullets — threats to ${data.client.name}"],"calloutTitle":"The positioning message we recommend","calloutBody":"2-3 sentences"}
+ "tech":{"title":"SHORT headline (max ~12 words, ONE line) about both sites' technical/content state","clientRows":[{"issue":"short issue name","sawHtml":"what the crawl shows — specific but concise (1-2 sentences)","priority":"High|Medium|Strength","pill":"p-r|p-a|p-g"}],"compRows":[{"issue":"...","sawHtml":"..."}]},
+ "swot":{"strengths":["EXACTLY 4 bullets — the COMPETITOR's strengths"],"weaknesses":["EXACTLY 4 bullets — the COMPETITOR's weaknesses"],"opportunities":["EXACTLY 4 bullets — opportunities for ${data.client.name}"],"threats":["EXACTLY 4 bullets — threats to ${data.client.name}"],"calloutTitle":"The positioning message we recommend","calloutBody":"2-3 sentences"}
 }
-Base every tech row on actual crawl evidence (title/meta/h1s/body/social) and QUOTE the specific string you saw in double quotes in the "sawHtml" (e.g. the exact placeholder, title tag, or anchor). Each "sawHtml" must end with WHY it matters for the business. Include a "What's working"/Strength row for the client when the evidence supports it. SWOT bullets describe consequences, not just facts: strengths/weaknesses describe the COMPETITOR; opportunities/threats describe what that means for the CLIENT and what to do about it.`, 6000, diag, 'C');
+Base every tech row on actual crawl evidence (title/meta/h1s/body/social) and QUOTE the specific string you saw in double quotes in the "sawHtml". Keep each "sawHtml" to 1-2 sentences ending with WHY it matters. Include a "What's working"/Strength row for the client when the evidence supports it.
+SWOT: give EXACTLY 4 bullets per box, and keep each bullet to ONE short line (max ~18 words) — a single sharp point, not a paragraph. Pick the 4 most important; do not pad. Strengths/weaknesses describe the COMPETITOR; opportunities/threats describe what that means for the CLIENT. The title headline must be ONE short line, not multiple.`, 6000, diag, 'C');
 
   const [A, B, C] = await Promise.all([pA, pB, pC]);
   // Merge each group onto the fallback independently, so a failed group only
