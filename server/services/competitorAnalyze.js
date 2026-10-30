@@ -105,19 +105,57 @@ function crawlEvidence(crawl) {
   };
 }
 
-// Shared JSON extraction from a Claude reply. Tolerant of markdown fences,
-// leading/trailing prose, and trailing commas.
+// Shared JSON extraction from a model reply. Tolerant of markdown fences,
+// leading/trailing prose, trailing commas, AND truncation (a response cut off by
+// the token limit) — which it salvages by closing any open strings/brackets.
 function parseJson(txt) {
   if (!txt) return null;
   let s = String(txt).trim();
-  // Strip a ```json ... ``` (or ``` ... ```) fence if present.
   const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) s = fence[1].trim();
-  // Otherwise slice from the first { to the last } so leading/trailing prose is dropped.
-  if (s[0] !== '{') { const i = s.indexOf('{'); const j = s.lastIndexOf('}'); if (i !== -1 && j > i) s = s.slice(i, j + 1); }
-  const attempts = [s, s.replace(/,\s*([}\]])/g, '$1')]; // 2nd: drop trailing commas
-  for (const a of attempts) { try { return JSON.parse(a); } catch { /* try next */ } }
+  // Start at the first { ; drop any leading prose.
+  const start = s.indexOf('{');
+  if (start > 0) s = s.slice(start);
+  if (s[0] !== '{') return null;
+  // Candidate 1: whole string trimmed to the last } (handles trailing prose).
+  const lastClose = s.lastIndexOf('}');
+  const cands = [];
+  if (lastClose > 0) cands.push(s.slice(0, lastClose + 1));
+  cands.push(s);
+  cands.push(repairTruncatedJson(s)); // salvage a cut-off object
+  for (let c of cands) {
+    for (const a of [c, c.replace(/,\s*([}\]])/g, '$1')]) { // also try without trailing commas
+      try { return JSON.parse(a); } catch { /* next */ }
+    }
+  }
   return null;
+}
+
+// Close any unterminated string, then any open [ and { in the right order, so a
+// JSON object truncated by the token limit becomes valid (the last, incomplete
+// value is dropped). Good enough to recover the bulk of a long response.
+function repairTruncatedJson(s) {
+  let inStr = false, esc = false; const stack = [];
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    out += ch;
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === '{' || ch === '[') stack.push(ch);
+    else if (ch === '}' || ch === ']') stack.pop();
+  }
+  if (inStr) out += '"';
+  // Drop a dangling partial token after the last comma/colon so we don't close
+  // on an incomplete value (e.g. `"key": "half a sen` → remove `"key": "half a sen`).
+  out = out.replace(/,\s*"[^"]*$/,'').replace(/,\s*$/,'').replace(/:\s*("[^"]*|\d*|tru?e?|fals?e?|nul?l?)?\s*$/,'');
+  for (let i = stack.length - 1; i >= 0; i--) out += (stack[i] === '{' ? '}' : ']');
+  return out;
 }
 
 // ---- competitor validation (used by the wizard, exported) ------------------
@@ -456,7 +494,7 @@ Write the opening + comparison sections. STRICT JSON:
  "backlinkLead":"1-2 sentence plain-English intro to backlinks",
  "back":{"title":"backlink section headline","compPoints":["3-4 bullets on the competitor's link profile"],"clientPoints":["3-4 bullets on the client's link profile"],"risksTitle":"Two risks to fix OR empty string","risks":[{"risk":"...","detailHtml":"...","priority":"High|Medium","pill":"p-r|p-a"}]}
 }
-Give exactly 5 findings. Fill who-is rows ONLY from crawl evidence (use "—" where a site shows nothing). Make win-boxes specific to each business. ${data.primaryMarketNote ? 'IMPORTANT: ' + data.primaryMarketNote + ' Reflect this in the exec lead and the scorecard callout so the client is framed fairly.' : ''}`, 2600, diag, 'A');
+Give exactly 5 findings. Fill who-is rows ONLY from crawl evidence (use "—" where a site shows nothing). Make win-boxes specific to each business. ${data.primaryMarketNote ? 'IMPORTANT: ' + data.primaryMarketNote + ' Reflect this in the exec lead and the scorecard callout so the client is framed fairly.' : ''}`, 4000, diag, 'A');
 
   // --- Group B: competitor keywords + client keyword health + opportunity map ---
   const pB = callJson(keysObj, `${ctx}
@@ -467,7 +505,7 @@ Write the keyword sections. "ranks" = the COMPETITOR's keywords (competitor.topK
  "health":{"eyebrow":"${data.client.name} keyword health check","title":"headline","leadHtml":"1-2 sentences","wrongTitle":"short label for wrong/low-intent group","wrong":[{"kw":"...","vol":"...","pos":"...","why":"why this visitor isn't ideal"}],"rightTitle":"short label for right-intent group","right":[{"kw":"...","vol":"...","pos":"...","status":"Keep|Push to page 1|Needs own page|Needs a guide","pill":"p-g|p-o|p-r"}],"calloutTitle":"In plain words","calloutBody":"2-3 sentences"},
  "opp":{"title":"The searches ${data.client.name} should own next","lead":"1-2 sentences","rows":[{"kw":"...","vol":"...","diff":"...","client":"— or current position","strong":true,"page":true,"rowspan":2,"pageShade":true,"pageHtml":"<b>Page name</b> description"}],"supportTitle":"Blog topics that support these pages","supportLeft":["2-4 blog ideas"],"supportRight":["2-4 blog ideas"],"calloutTitle":"Why this matters","calloutBody":"2-3 sentences"}
 }
-Use the real keyword/volume/position values from the data. In "opp", group rows that share a "page to build" using rowspan on the first row of the group (set page:true + pageHtml + rowspan on the first, and page:false on the rest), and set pageShade:true to tint a group.`, 2800, diag, 'B');
+Use the real keyword/volume/position values from the data. In "opp", group rows that share a "page to build" using rowspan on the first row of the group (set page:true + pageHtml + rowspan on the first, and page:false on the rest), and set pageShade:true to tint a group.`, 4000, diag, 'B');
 
   // --- Group C: website & technical review + SWOT ---
   const pC = callJson(keysObj, `${ctx}
@@ -477,7 +515,7 @@ Write the website review + SWOT. STRICT JSON:
  "tech":{"title":"headline about both sites' technical/content state","clientRows":[{"issue":"short issue name","sawHtml":"what the crawl shows — specific","priority":"High|Medium|Strength","pill":"p-r|p-a|p-g"}],"compRows":[{"issue":"...","sawHtml":"..."}]},
  "swot":{"strengths":["4-6 bullets — the COMPETITOR's strengths"],"weaknesses":["4-6 bullets — the COMPETITOR's weaknesses"],"opportunities":["4-6 bullets — opportunities for ${data.client.name}"],"threats":["4-6 bullets — threats to ${data.client.name}"],"calloutTitle":"The positioning message we recommend","calloutBody":"2-3 sentences"}
 }
-Base every tech row on actual crawl evidence (title/meta/h1s/body/social). Include a "What's working"/Strength row for the client when the evidence supports it. SWOT strengths/weaknesses describe the COMPETITOR; opportunities/threats describe what that means for the CLIENT.`, 2600, diag, 'C');
+Base every tech row on actual crawl evidence (title/meta/h1s/body/social). Include a "What's working"/Strength row for the client when the evidence supports it. SWOT strengths/weaknesses describe the COMPETITOR; opportunities/threats describe what that means for the CLIENT.`, 4000, diag, 'C');
 
   const [A, B, C] = await Promise.all([pA, pB, pC]);
   // Merge each group onto the fallback independently, so a failed group only
