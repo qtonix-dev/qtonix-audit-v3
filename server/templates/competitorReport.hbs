@@ -86,6 +86,7 @@ td.num,th.num{text-align:right}
 .callout{border-left:4px solid var(--orange);background:#FFF6EF;padding:3.5mm 5mm;border-radius:0 3mm 3mm 0;margin:3mm 0}
 .callout.navy{border-color:var(--navy);background:var(--soft)}
 .callout b.t{display:block;color:var(--navy);margin-bottom:1mm;font-size:9.5pt}
+.fnote{font-size:7.5pt;color:#6E7792;margin:1.5mm 0 0;line-height:1.4}
 .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:3.5mm;margin:4mm 0}
 .kpi{background:var(--soft);border-radius:3mm;padding:4mm}
 .kpi small{display:block;font-size:7.5pt;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em}
@@ -248,6 +249,7 @@ ul.clean{padding-left:4.5mm}ul.clean li{margin-bottom:1.4mm}
       {{#each scorecard.rows}}<tr><td>{{this.metric}}</td><td class="num">{{{this.compHtml}}}</td><td class="num">{{{this.clientHtml}}}</td><td>{{this.means}}</td></tr>
       {{/each}}
     </table>
+    {{#if scorecard.footnote}}<div class="fnote">{{scorecard.footnote}}</div>{{/if}}
     <div class="callout"><b class="t">{{scorecard.calloutTitle}}</b>{{scorecard.calloutBody}}</div>
   </div>
   <div class="ftr"><span>Qtonix Software Pvt. Ltd. · Confidential</span><span class="pn">05</span></div>

@@ -279,8 +279,8 @@ async function buildCompetitorViewModel(input) {
   // ---- data block handed to Claude as the sole source of truth ----
   const dataForAI = {
     market: marketLabel,
-    client: { name: clientName, domain: clientDomain, ...numsFor(client), topKeywords: client.kwRows.slice(0, 40), topAnchors: client.topAnchors, topPages: client.topPages, crawl: crawlEvidence(clientCrawl) },
-    competitor: { name: competitorName, domain: compDomain, ...numsFor(comp), topKeywords: comp.kwRows.slice(0, 40), topAnchors: comp.topAnchors, topPages: comp.topPages, topTlds: comp.topTlds, topCountries: comp.topCountries, crawl: crawlEvidence(compCrawl) },
+    client: { name: clientName, domain: clientDomain, ...numsFor(client), topKeywords: client.kwRows.slice(0, 40), topAnchors: client.topAnchors, topPages: client.topPages, refdomainsByTld: client.topTlds, refdomainsByCountry: client.topCountries, crawl: crawlEvidence(clientCrawl) },
+    competitor: { name: competitorName, domain: compDomain, ...numsFor(comp), topKeywords: comp.kwRows.slice(0, 40), topAnchors: comp.topAnchors, topPages: comp.topPages, refdomainsByTld: comp.topTlds, refdomainsByCountry: comp.topCountries, crawl: crawlEvidence(compCrawl) },
     clientLeads,
     // When the comparison runs in the competitor's market but the client is
     // actually strongest elsewhere, the model should acknowledge this so the
@@ -331,6 +331,7 @@ async function buildCompetitorViewModel(input) {
       lead: `These are Google ${marketShort} figures for ${monthName(today)}${clientStronghold ? ` — ${competitorName}'s strongest market` : ''}. "Top 10" means page one of Google — where almost all clicks happen.`,
       bars: scorecardBars,
       rows: buildScorecardRows(client, comp, clientName, clientLeads),
+      footnote: BUCKET_FOOTNOTE,
       calloutTitle: narrative.scorecard.calloutTitle,
       // Always append the client-stronghold note when the comparison runs on the
       // competitor's turf, so the client's real strength is acknowledged.
@@ -414,20 +415,27 @@ function buildScorecardRows(client, comp, clientName, clientLeads) {
     { metric: 'Ranking keywords', compHtml: cell(comp.keywords, comp.keywords > client.keywords), clientHtml: cell(client.keywords, client.keywords >= comp.keywords), means: 'How many searches the site appears for' },
     { metric: 'Est. visits / month', compHtml: cell(comp.traffic, comp.traffic > client.traffic), clientHtml: cell(client.traffic, client.traffic >= comp.traffic), means: `People arriving from Google` },
     { metric: 'Traffic value / month', compHtml: '$' + fmt(comp.trafficValue), clientHtml: '$' + fmt(client.trafficValue), means: 'What those clicks would cost as ads' },
-    { metric: 'Keywords in top 5', compHtml: cell(comp.top5, comp.top5 > client.top5), clientHtml: cell(client.top5, client.top5 >= comp.top5), means: 'Strong positions that get clicks' },
-    { metric: 'Keywords position 6–10', compHtml: cell(comp.tops.top6_10, false), clientHtml: cell(client.tops.top6_10, client.tops.top6_10 >= comp.tops.top6_10), means: 'Still page one' },
-    { metric: 'Keywords position 11–20', compHtml: cell(comp.tops.top11_20, false), clientHtml: cell(client.tops.top11_20, client.tops.top11_20 >= comp.tops.top11_20), means: 'Page two — closest to quick wins' },
-    { metric: 'Keywords position 21–100', compHtml: fmt(comp.tops.top21_50 + comp.tops.top51_100), clientHtml: fmt(client.tops.top21_50 + client.tops.top51_100), means: 'Visible but rarely clicked' },
+    { metric: 'Keywords in top 5', compHtml: cell(comp.top5, comp.top5 > client.top5), clientHtml: cell(client.top5, client.top5 >= comp.top5), means: 'Strong positions that get clicks *' },
+    { metric: 'Keywords position 6–10', compHtml: cell(comp.tops.top6_10, false), clientHtml: cell(client.tops.top6_10, client.tops.top6_10 >= comp.tops.top6_10), means: 'Still page one *' },
+    { metric: 'Keywords position 11–20', compHtml: cell(comp.tops.top11_20, false), clientHtml: cell(client.tops.top11_20, client.tops.top11_20 >= comp.tops.top11_20), means: 'Page two — closest to quick wins *' },
+    { metric: 'Keywords position 21–100', compHtml: fmt(comp.tops.top21_50 + comp.tops.top51_100), clientHtml: fmt(client.tops.top21_50 + client.tops.top51_100), means: 'Visible but rarely clicked *' },
     { metric: "This month's movement", compHtml: movement(comp), clientHtml: movement(client), means: client.keywords >= comp.keywords ? `${clientName}'s ranking movement` : 'Ranking movement' },
   ];
 }
+
+// The position-band rows (* ) count keyword+URL ranking positions, so a keyword
+// that ranks with more than one page is counted in more than one band. That is
+// why the bands can add up to more than the "Ranking keywords" total — it is not
+// an error. This note is rendered under the scorecard table and in the glossary.
+const BUCKET_FOOTNOTE = '* A keyword can rank with more than one page, so these position bands count ranking positions and can add up to more than the total number of keywords.';
 
 function buildNotes(marketShort, dataMonth, reviewDate, stronghold) {
   const about = [
     `All search figures are for <b>Google ${marketShort}, ${dataMonth}</b>, and include all subdomains of each website.`,
     'Search volumes and visits are <b>estimates</b> based on industry search data. They show scale and direction, not exact counts. Your own Google Search Console and Analytics will show the precise numbers.',
-    `Website observations were taken from a live review of both sites on ${reviewDate}.`,
+    `Website observations were taken from a live review of both sites on ${reviewDate}. Page counts are the number of pages we found on each site, not the number Google has indexed.`,
     'Backlink figures reflect links found at the time of the review; numbers change as links are added or removed.',
+    'A keyword can rank with more than one page, so the position bands in the scorecard count ranking positions and can total more than the headline keyword count.',
   ];
   if (stronghold) about.push(`This comparison is run in <b>${stronghold.marketLabel}</b> — ${stronghold.competitorName}'s strongest market — so the two sites are measured on the same ground. ${stronghold.clientName}'s own strongest market is <b>${stronghold.strongholdLabel}</b>, where its figures are higher than shown here.`);
   return {
@@ -441,9 +449,9 @@ function buildNotes(marketShort, dataMonth, reviewDate, stronghold) {
       { term: 'Traffic value', def: 'What the same visits would cost if bought as Google Ads.' },
       { term: 'Backlink', def: 'A link from another website to yours — like a recommendation.' },
       { term: 'Dofollow / nofollow', def: "Dofollow links pass trust to your site; nofollow links mostly don't." },
-      { term: 'Domain authority score', def: "A 0–100 score of how trusted a website's link profile is." },
+      { term: 'Domain authority score', def: "A third-party 0–100 estimate of a site's link-profile strength. It is not a Google ranking factor — a lower-DA site can still outrank a higher-DA one." },
       { term: '301 redirect', def: 'A permanent forward from an old page address to a new one, keeping its rankings and links.' },
-      { term: 'Disavow', def: 'Telling Google to ignore specific harmful links.' },
+      { term: 'Disavow', def: 'Telling Google to ignore specific links. Google advises using it only after a manual review confirms harmful links — not on a pattern alone.' },
       { term: 'Structured data', def: 'Hidden code that helps Google show extras like star ratings and FAQs in results.' },
     ],
   };
@@ -471,7 +479,16 @@ const NARRATIVE_SYSTEM = [
   '- Never invent numbers. Use only figures present in the data.',
   '- Every claim about a website must be grounded in that site\'s crawl evidence, and wherever possible quote that evidence. If the evidence does not support a claim, do not make it. Fewer true, quoted points beat many vague ones.',
   '- Read the crawl closely and surface what actually matters for THIS pair: what each business sells and how it positions itself, placeholder/dummy text, missing reviews or proof, thin content, dead links, trust signals, the intent behind the keywords, open keyword gaps, link-profile quality and risks. You are NOT limited to any fixed set of points — add whatever is clearly evidenced and useful.',
-  '- Plain, confident British-business English. Concrete and specific. Active voice. No hype, no emojis, no hedging ("it could be argued", "potentially"). Say it plainly.',
+  '',
+  'CALIBRATION — stay credible, never overclaim (an expert reader WILL check these):',
+  '- DISAVOW: Never recommend disavowing links, and never name a number of domains to disavow. A suspicious anchor pattern is a reason to INVESTIGATE, not proof of harm. The correct wording is always: "flag for a manual backlink review" / "worth auditing" — never "disavow these N domains". Do not predict a penalty or ranking collapse; say a pattern "carries risk and should be reviewed", not that it "would" cause devaluation.',
+  '- DOMAIN AUTHORITY: DA is a third-party estimate, NOT a Google ranking factor. Never say or imply a higher DA means a site will rank faster, higher, or "leapfrog" a competitor. You may note DA as one comparative signal of link-profile strength, alongside relevance, content and intent — never as a promise of ranking outcomes. Banned phrasings: "DA of 57 means pages will rank faster", "can outrank quickly because of its DA".',
+  '- SUSPICIOUS LINKS / TLDs: An unusual TLD (.store, .site, .shop, .online, .space) or a salesy anchor is a SIGNAL worth reviewing, not proof a link is spam or part of a paid network. Do not state as fact that links were "bought" or are "a link farm" unless the data proves it — say the pattern "is consistent with" low-quality or paid links and "warrants a review".',
+  '- CRAWLED vs INDEXED: We discovered/crawled these pages; we do NOT know how many Google has indexed. Always say "pages we found" or "pages on the site" — never "indexed pages" or "indexed by Google".',
+  '- SCOPE OF CLAIMS: Only claim what the DATA SHOWN supports. If you can see a sample of keywords, say "of the terms we can see" or "the visible keywords", not "the overwhelming majority of all N". Never generalise a sample to the whole set as proven fact.',
+  '- Prefer calibrated verbs: "suggests", "points to", "is consistent with", "worth reviewing" over "proves", "will", "guarantees". Keep the confident, plain tone — confidence about what the data SHOWS, caution about what it IMPLIES.',
+  '- Plain, confident British-business English. Concrete and specific. Active voice. No hype, no emojis, no empty hedging. Say it plainly, within the calibration above.',
+  '- DO NOT REPEAT. Each section must ADD something — a new angle, new evidence, a deeper read — not restate the same 3-4 findings (branded rankings, DA gap, the placeholder, the anchor text). It is fine to reference a point once, but every section should earn its place with new substance.',
   'Return STRICT, VALID JSON only — no markdown fence, no prose around it.',
 ].join('\n');
 
@@ -519,9 +536,10 @@ Write the opening + comparison sections. STRICT JSON:
  "who":{"title":"headline","lead":"intro","rows":[{"label":"What they sell","compHtml":"quote the site's own wording where possible","clientHtml":"..."},{"label":"How customers buy","compHtml":"...","clientHtml":"..."},{"label":"Headline claim","compHtml":"quote the actual H1/hero claim in double quotes","clientHtml":"..."},{"label":"Positioning","compHtml":"...","clientHtml":"..."},{"label":"Proof & trust","compHtml":"name the actual certifications/awards/review figures found","clientHtml":"..."},{"label":"Website","compHtml":"...","clientHtml":"..."},{"label":"Social presence","compHtml":"...","clientHtml":"..."}],"compWins":["3-5 bullets — concrete, each tied to evidence"],"clientWins":["3-5 bullets"],"sideNote":"optional cross-site observation ONLY if genuinely relevant, else empty string"},
  "scorecard":{"title":"a VERDICT headline about who really leads (e.g. 'On raw numbers X leads — but the margin is smaller than it looks')","calloutTitle":"...","calloutBody":"2-3 sentences interpreting the gap: what the numbers mean for the business and why the leader's lead is or isn't solid. Not a restatement of the numbers."},
  "backlinkLead":"1-2 sentence plain-English intro to backlinks",
- "back":{"title":"backlink section headline","compPoints":["3-4 bullets on the competitor's link profile"],"clientPoints":["3-4 bullets on the client's link profile"],"risksTitle":"Two risks to fix OR empty string","risks":[{"risk":"...","detailHtml":"...","priority":"High|Medium","pill":"p-r|p-a"}]}
+ "back":{"title":"backlink section headline","compPoints":["3-4 bullets on the competitor's link profile"],"clientPoints":["3-4 bullets on the client's link profile"],"risksTitle":"Risks worth reviewing OR empty string","risks":[{"risk":"...","detailHtml":"...","priority":"High|Medium","pill":"p-r|p-a"}]}
 }
-Give exactly 5 findings, each the kind of thing a sharp consultant would flag — and QUOTE the real evidence (placeholder text, anchor text, title tags, review figures) in double quotes wherever you can. Fill who-is rows ONLY from crawl evidence (use "—" where a site shows nothing). Make win-boxes specific to each business. ${data.primaryMarketNote ? 'IMPORTANT: ' + data.primaryMarketNote + ' Reflect this in the exec lead and the scorecard callout so the client is framed fairly.' : ''}`, 4000, diag, 'A');
+Give exactly 5 findings, each the kind of thing a sharp consultant would flag — and QUOTE the real evidence (placeholder text, anchor text, title tags, review figures) in double quotes wherever you can. Fill who-is rows ONLY from crawl evidence (use "—" where a site shows nothing). Make win-boxes specific to each business.
+BACKLINK CARE: "refdomainsByTld" counts referring domains by their web address ending (e.g. .ca as a TLD); "refdomainsByCountry" counts them by geographic location. These are DIFFERENT measures — never merge them into one "Canadian domains" number, and say which one you mean. For any suspicious anchor/TLD pattern, recommend a "backlink review" only — NEVER recommend disavowing links or name a count of domains to disavow, and never predict a penalty. Do not claim links were bought or are a link farm; say the pattern "is consistent with" low-quality links and "warrants review".${data.primaryMarketNote ? ' IMPORTANT: ' + data.primaryMarketNote + ' Reflect this in the exec lead and the scorecard callout so the client is framed fairly.' : ''}`, 4000, diag, 'A');
 
   // --- Group B: competitor keywords + client keyword health + opportunity map ---
   const pB = callJson(keysObj, `${ctx}
