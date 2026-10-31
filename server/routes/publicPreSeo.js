@@ -66,7 +66,7 @@ function injectScreenMargin(html) {
   // The override is sized for the US-Letter Pre-SEO/Brand templates (816px). The
   // Competitor Analysis template is A4 and ships its own @media screen rules, so
   // skip injection for it or the on-screen layout would be distorted.
-  if (/width:\s*210mm/.test(s) || s.includes('competitorReport')) return s;
+  if (/width:\s*210mm/.test(s) || s.includes('competitorReport') || /@page\s*\{\s*size:\s*A4/.test(s) || s.includes('Keyword Analysis ·')) return s;
   if (s.includes('</head>')) return s.replace('</head>', SCREEN_MARGIN_OVERRIDE + '</head>');
   return SCREEN_MARGIN_OVERRIDE + s;
 }

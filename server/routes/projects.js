@@ -183,7 +183,7 @@ router.get('/:id', guard, requireHrAdmin, async (req, res, next) => {
   // "preseo" and "preseo-diag" are reserved sub-paths (the Pre-SEO report
   // routes), not project ids — let those routes handle them. A real project id
   // is always numeric, so anything non-numeric falls through safely.
-  if (/^(preseo|brandguide|competitor)/i.test(String(req.params.id))) return next();
+  if (/^(preseo|brandguide|competitor|keyword)/i.test(String(req.params.id))) return next();
   try {
     const act = await actor(req);
     const p = await Project.findByPk(req.params.id); if (!p) return res.status(404).json({ error: 'Project not found.' });
@@ -1152,6 +1152,159 @@ router.get('/competitor/:rid/download', guard, requireHrAdmin, async (req, res, 
   } catch (e) { next(e); }
 });
 router.get('/competitor/:rid/view', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    res.set('Cache-Control', 'no-store');
+    if (r.htmlPath && fsSync.existsSync(r.htmlPath)) return res.sendFile(path.resolve(r.htmlPath));
+    if (r.htmlUrl) return res.redirect(302, r.htmlUrl);
+    return res.status(404).json({ error: 'Not ready.' });
+  } catch (e) { next(e); }
+});
+
+// =====================================================================
+// Keyword Analysis report (kind='keyword'). Mirrors the competitor routes.
+// =====================================================================
+const KW_KIND = 'keyword';
+const keywordRunner = require('../services/keywordRunner');
+
+function splitList(v) {
+  if (Array.isArray(v)) return v.map((x) => String(x).trim()).filter(Boolean);
+  return String(v || '').split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
+}
+
+// Create + start a keyword analysis report.
+router.post('/:id/keyword', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const act = await actor(req);
+    const project = req.params.id !== 'none' ? await Project.findByPk(req.params.id) : null;
+    const b = req.body || {};
+    const website = normWebsite(b.website || (project && project.website) || '');
+    if (!website || website.length < 8) return res.status(400).json({ error: 'A client website URL is required.' });
+    const domain = hostOf(website);
+    const competitorSites = splitList(b.competitorSites || b.competitors).map(normWebsite).filter((u) => u && u.length >= 8).slice(0, 5);
+    const report = await PreSeoReport.create({
+      projectId: project ? project.id : null, kind: KW_KIND, website,
+      domain, businessName: b.businessName || (project && project.customerName) || domain,
+      createdById: act.id, createdByName: act.name || 'Qtonix', status: 'capturing', progress: 5,
+      runOptions: {
+        competitorSites,
+        competitorNames: splitList(b.competitorNames).slice(0, 5),
+        seeds: splitList(b.seeds).slice(0, 25),
+        source: String(b.market || b.source || 'us').toLowerCase().slice(0, 12),
+        recommendCount: Math.min(Math.max(parseInt(b.recommendCount, 10) || 30, 10), 60),
+        preparedBy: act.name || 'Qtonix',
+        preparedByRole: 'Project Manager, Qtonix',
+      },
+      data: {},
+    });
+    keywordRunner.run(report.id).catch((e) => console.error('[keyword] run error:', e.message));
+    res.status(201).json({ id: report.id, status: report.status });
+  } catch (e) { next(e); }
+});
+
+// Poll status + current data.
+router.get('/keyword/:rid', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    res.json({ id: r.id, status: r.status, progress: r.progress, currentStep: r.currentStep, error: r.error, domain: r.domain, businessName: r.businessName, website: r.website, createdByName: r.createdByName, completedAt: r.completedAt, runOptions: r.runOptions || {}, data: r.data || null });
+  } catch (e) { next(e); }
+});
+
+// Re-run (fresh data unless within the 24h cache window).
+router.post('/keyword/:rid/rerun', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    const forceData = !!(req.body && req.body.forceData);
+    r.runOptions = { ...(r.runOptions || {}), forceData };
+    r.status = 'capturing'; r.progress = 5; r.currentStep = 'Re-running the analysis'; r.error = null;
+    await r.save();
+    keywordRunner.run(r.id).catch((e) => console.error('[keyword] rerun error:', e.message));
+    res.json({ ok: true, status: 'capturing' });
+  } catch (e) { next(e); }
+});
+
+// Delete.
+router.delete('/keyword/:rid', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    try {
+      const ik = require('../services/imagekit');
+      if (r.pdfFileId) ik.deleteFile(r.pdfFileId).catch(() => {});
+      if (r.htmlFileId) ik.deleteFile(r.htmlFileId).catch(() => {});
+    } catch {}
+    await r.destroy();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Share link (same /pr/ public pattern as the other reports).
+router.post('/keyword/:rid/share', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    if (!r.publicSlug) {
+      let slug = preseoSlug(r.businessName || r.domain);
+      const exists = await PreSeoReport.findOne({ where: { publicSlug: slug } });
+      if (exists && exists.id !== r.id) slug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
+      r.publicSlug = slug;
+    }
+    r.publicEnabled = true; await r.save();
+    const base = await publicUrl.baseFor('reports', req);
+    res.json({ slug: r.publicSlug, url: `${base}/pr/${r.publicSlug}`, enabled: true });
+  } catch (e) { next(e); }
+});
+router.post('/keyword/:rid/share/disable', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    r.publicEnabled = false; await r.save();
+    res.json({ enabled: false });
+  } catch (e) { next(e); }
+});
+router.get('/keyword/:rid/share', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    const base = await publicUrl.baseFor('reports', req);
+    const views = Array.isArray(r.publicViews) ? r.publicViews : [];
+    res.json({
+      slug: r.publicSlug, enabled: !!r.publicEnabled,
+      url: r.publicSlug ? `${base}/pr/${r.publicSlug}` : null,
+      views, viewCount: views.filter((v) => v.type === 'view').length,
+      downloadCount: views.filter((v) => v.type === 'download').length,
+      lastViewedAt: views.length ? views[views.length - 1].at : null,
+    });
+  } catch (e) { next(e); }
+});
+
+// Download PDF / view HTML / download the .xlsx.
+router.get('/keyword/:rid/download', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    const fname = `${(r.businessName || r.domain || 'report').replace(/[^\w-]/g, '_')}-Keyword-Analysis.pdf`;
+    if (r.pdfPath && fsSync.existsSync(r.pdfPath)) return res.download(r.pdfPath, fname);
+    if (r.pdfUrl) return res.redirect(302, r.pdfUrl);
+    return res.status(404).json({ error: 'PDF not ready.' });
+  } catch (e) { next(e); }
+});
+router.get('/keyword/:rid/xlsx', guard, requireHrAdmin, async (req, res, next) => {
+  try {
+    const r = await PreSeoReport.findByPk(req.params.rid);
+    if (!r) return res.status(404).json({ error: 'Report not found.' });
+    const fname = `${(r.businessName || r.domain || 'report').replace(/[^\w-]/g, '_')}-Keywords.xlsx`;
+    const xlsxPath = (r.pdfPath || '').replace(/\.pdf$/, '.xlsx');
+    if (xlsxPath && fsSync.existsSync(xlsxPath)) return res.download(xlsxPath, fname);
+    const xlsxUrl = r.runOptions && r.runOptions.xlsxUrl;
+    if (xlsxUrl) return res.redirect(302, xlsxUrl);
+    return res.status(404).json({ error: 'Keyword file not ready.' });
+  } catch (e) { next(e); }
+});
+router.get('/keyword/:rid/view', guard, requireHrAdmin, async (req, res, next) => {
   try {
     const r = await PreSeoReport.findByPk(req.params.rid);
     if (!r) return res.status(404).json({ error: 'Report not found.' });

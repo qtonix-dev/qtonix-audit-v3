@@ -610,6 +610,133 @@ async function renderCompetitor(vm, slugBase) {
 }
 
 // ---------------------------------------------------------------------------
+// Keyword Analysis renderer (A4 PDF + .xlsx export of the full keyword list)
+// ---------------------------------------------------------------------------
+async function renderKeywordHtml(vm, opts = {}) {
+  const tplSrc = await fs.readFile(path.join(__dirname, '../templates/keywordReport.hbs'), 'utf8');
+  const tpl = Handlebars.compile(tplSrc);
+  return tpl({ ...vm, forWeb: !!opts.forWeb, fontDir: 'file://' + FONT_DIR });
+}
+
+// Build the .xlsx the report references — three sheets matching the Qtonix
+// Keyword Selection format: (1) the full keyword list with an editable "Your
+// selection" column and a live counter, (2) a cluster summary with formulas that
+// update as selections change, (3) the AI SEO (GEO) topics and prompts.
+// `data` is vm.export: { client, domain, recommendCount, keywords[], clusters[], geoTopics[], geoQuestions[] }.
+async function writeKeywordXlsx(data, xlsxPath) {
+  const XLSX = require('xlsx');
+  const d = data || {};
+  const kws = d.keywords || [];
+  const target = d.recommendCount || 30;
+  const wb = XLSX.utils.book_new();
+
+  // ---- Sheet 1: Keyword selection -----------------------------------------
+  const HDR_ROW = 5; // 1-indexed row of the column headers
+  const firstData = HDR_ROW + 1;
+  const lastData = HDR_ROW + kws.length;
+  const selCol = 'L'; // "Your selection" column
+  const header = ['#', 'Keyword', 'Topic cluster', 'Target page', 'Global volume', 'US volume', 'Keyword difficulty', 'Search intent', 'CPC (USD)', 'Priority', 'Qtonix recommended', 'Your selection'];
+  const body = kws.map((r) => [r.n, r.keyword, r.cluster, r.targetPage, r.globalVol, r.usVol, r.kd, r.intent, r.cpc, r.priority, r.recommended, r.selection]);
+  const s1 = XLSX.utils.aoa_to_sheet([
+    [`Qtonix.  Keyword Selection — ${d.client || ''} (${d.domain || ''})`],
+    ['Prepared by Qtonix Software Pvt. Ltd. · Volumes are average monthly searches · Global volume = all countries combined · KD = keyword difficulty (0–100)'],
+    [`Choose ${target} keywords: put "X" in the "Your selection" column. Qtonix's recommended ${target} are pre-marked ★ and pre-filled (X) as a starting point — swap any you like.`, null, null, null, null, null, null, null, null, null, 'Pre-selected:', `${kws.filter((r) => r.selection === 'X').length} / ${target}`],
+    [],
+    header, ...body,
+  ]);
+  s1['!cols'] = [{ wch: 4 }, { wch: 34 }, { wch: 22 }, { wch: 26 }, { wch: 13 }, { wch: 11 }, { wch: 16 }, { wch: 14 }, { wch: 10 }, { wch: 8 }, { wch: 18 }, { wch: 14 }];
+  XLSX.utils.book_append_sheet(wb, s1, 'Keyword selection');
+
+  // ---- Sheet 2: Summary by cluster (formulas reference sheet 1) ------------
+  const clusters = d.clusters || [];
+  const SUM_HDR = 4; // headers on row 4 (1-indexed); data starts row 5
+  const s2 = XLSX.utils.aoa_to_sheet([
+    ['Qtonix.  Summary by topic cluster'],
+    ['Totals for each topic group. "Qtonix recommended" is how many we pre-selected in that group.'],
+    [],
+    ['Topic cluster', 'Target page', 'Keywords', 'Global volume', 'US volume', 'Avg. difficulty', 'Quick wins (KD<40)', 'Qtonix recommended (pre-selected)'],
+    ...clusters.map((c) => [c.name, c.targetPage, c.count, c.globalVol, c.usVol, c.avgKd, c.quickWins, c.recommended]),
+  ]);
+  void SUM_HDR;
+  s2['!cols'] = [{ wch: 28 }, { wch: 30 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 15 }, { wch: 18 }, { wch: 26 }];
+  XLSX.utils.book_append_sheet(wb, s2, 'Summary by cluster');
+
+  // ---- Sheet 3: AI SEO (GEO) topics & prompts -----------------------------
+  const topicRows = (d.geoTopics || []).map((t) => [t.topic, t.content, t.page]);
+  const qRows = (d.geoQuestions || []).map((q) => [q.q, q.type, q.where]);
+  const s3 = XLSX.utils.aoa_to_sheet([
+    ['Qtonix.  AI SEO (GEO) topics and prompts'],
+    [`Topics and questions ${d.client || 'the client'} should be cited for in ChatGPT, Gemini, Perplexity and Google AI Overviews.`],
+    [],
+    ['Topic', 'Content we will create', 'Target page'],
+    ...topicRows,
+    [],
+    ['Prompt / question', 'Type', 'Where we answer it'],
+    ...qRows,
+  ]);
+  s3['!cols'] = [{ wch: 40 }, { wch: 44 }, { wch: 26 }];
+  XLSX.utils.book_append_sheet(wb, s3, 'AI SEO topics');
+
+  XLSX.writeFile(wb, xlsxPath);
+}
+
+async function renderKeyword(vm, slugBase, exportData) {
+  await fs.mkdir(OUT_DIR, { recursive: true });
+  const slug = `keyword-${String(slugBase || 'report').replace(/[^a-z0-9]/gi, '-')}`;
+  const htmlPath = path.join(OUT_DIR, `${slug}.html`);
+  const pdfPath = path.join(OUT_DIR, `${slug}.pdf`);
+  const xlsxPath = path.join(OUT_DIR, `${slug}.xlsx`);
+  await fs.writeFile(htmlPath, await renderKeywordHtml(vm, { forWeb: true }), 'utf8');
+  const pdfHtmlPath = path.join(OUT_DIR, `${slug}.pdf.html`);
+  await fs.writeFile(pdfHtmlPath, await renderKeywordHtml(vm, { forWeb: false }), 'utf8');
+  await new Promise((resolve, reject) => {
+    const { execFile } = require('child_process');
+    execFile('python3', ['-m', 'weasyprint', '-e', 'utf-8', '-u', path.dirname(pdfHtmlPath), pdfHtmlPath, pdfPath], { timeout: 120000 },
+      (err, stdout, stderr) => err ? reject(new Error(`WeasyPrint failed: ${stderr || err.message}`)) : resolve());
+  });
+
+  // Self-check: non-empty PDF with a sane page count (the report has ~9 sections
+  // but keyword tables flow, so >= 8 pages; a smaller count means a broken render).
+  try {
+    const st = await fs.stat(pdfPath);
+    if (!st.size) throw new Error('Report self-check failed: the PDF is empty.');
+    const pageCount = await new Promise((resolve) => {
+      const { execFile } = require('child_process');
+      execFile('python3', ['-c', `import sys\nfrom pypdf import PdfReader\nprint(len(PdfReader(sys.argv[1]).pages))`, pdfPath], { timeout: 20000 },
+        (err, stdout) => resolve(err ? -1 : parseInt(String(stdout).trim(), 10) || -1));
+    });
+    if (pageCount !== -1 && pageCount < 6) throw new Error(`Report self-check failed: PDF has ${pageCount} pages (expected at least 6). The render looks incomplete.`);
+  } catch (e) {
+    if (/self-check/.test(e.message)) throw e;
+    console.error('[renderKeyword] self-check skipped (could not verify):', e.message);
+  }
+
+  // The .xlsx export (exportData is vm.export — the structured 3-sheet payload).
+  try { await writeKeywordXlsx(exportData, xlsxPath); }
+  catch (e) { console.error('[renderKeyword] xlsx export failed:', e.message); }
+
+  let pdfUrl = null, htmlUrl = null, pdfFileId = null, htmlFileId = null, xlsxUrl = null, xlsxFileId = null;
+  try {
+    const ik = require('./imagekit');
+    const { Settings } = require('../models');
+    const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+    if (ik.isConfigured(settings)) {
+      const webHtml = await renderKeywordHtml(vm, { forWeb: true });
+      const uploads = [
+        fs.readFile(pdfPath).then((buf) => ik.uploadFile({ base64: buf.toString('base64'), fileName: `${slug}.pdf`, folder: '/qtonix/keyword/reports' })),
+        ik.uploadFile({ base64: Buffer.from(webHtml, 'utf8').toString('base64'), fileName: `${slug}.html`, folder: '/qtonix/keyword/reports' }),
+      ];
+      try { uploads.push(fs.readFile(xlsxPath).then((buf) => ik.uploadFile({ base64: buf.toString('base64'), fileName: `${slug}.xlsx`, folder: '/qtonix/keyword/reports' }))); } catch {}
+      const [pr, hr, xr] = await Promise.all(uploads);
+      pdfUrl = pr.url; pdfFileId = pr.fileId || null;
+      htmlUrl = hr.url; htmlFileId = hr.fileId || null;
+      if (xr) { xlsxUrl = xr.url; xlsxFileId = xr.fileId || null; }
+    }
+  } catch (e) { console.error('[renderKeyword] ImageKit upload failed, keeping local only:', e.message); }
+  return { pdfPath, htmlPath, xlsxPath, pdfUrl, htmlUrl, pdfFileId, htmlFileId, xlsxUrl, xlsxFileId };
+}
+
+// ---------------------------------------------------------------------------
 // Brand Guideline renderer (landscape slide deck, Raleway, site-derived palette)
 // ---------------------------------------------------------------------------
 const BG_ASSET_DIR = process.env.BG_ASSET_DIR || path.join(__dirname, '../assets/fonts');
@@ -929,4 +1056,4 @@ async function renderBrandGuideline(data, slugBase) {
   return { pdfPath, htmlPath, pdfUrl, htmlUrl, pdfFileId, htmlFileId };
 }
 
-module.exports = { renderReport, renderHtml, buildViewModel, renderPreSeo, renderPreSeoHtml, renderBrandGuideline, renderBrandGuidelineHtml, renderCompetitor, renderCompetitorHtml };
+module.exports = { renderReport, renderHtml, buildViewModel, renderPreSeo, renderPreSeoHtml, renderBrandGuideline, renderBrandGuidelineHtml, renderCompetitor, renderCompetitorHtml, renderKeyword, renderKeywordHtml };

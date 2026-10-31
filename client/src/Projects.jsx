@@ -174,10 +174,12 @@ function PreSeoReports({ onBackTab }) {
   const [q, setQ] = useState('');
   const [view, setView] = useState(null); // a report id being viewed
   const [compView, setCompView] = useState(null); // a competitor report id being viewed
+  const [kwView, setKwView] = useState(null); // a keyword report id being viewed
   const [edit, setEdit] = useState(null); // a report object being edited
   const [run, setRun] = useState(false);
   const [runGuide, setRunGuide] = useState(false);
   const [runComp, setRunComp] = useState(false); // competitor analysis wizard open
+  const [runKw, setRunKw] = useState(false); // keyword analysis wizard open
   const [editGuide, setEditGuide] = useState(null); // a brand-guide report being edited
   const [pickType, setPickType] = useState(false);
   const [err, setErr] = useState('');
@@ -192,11 +194,13 @@ function PreSeoReports({ onBackTab }) {
 
   if (view) return <PreSeoReportView id={view} onBack={() => { setView(null); load(); }} onEdit={(rep) => { setView(null); setEdit(rep); }} />;
   if (compView) return <CompetitorReportView id={compView} onBack={() => { setCompView(null); load(); }} />;
+  if (kwView) return <KeywordReportView id={kwView} onBack={() => { setKwView(null); load(); }} />;
 
   const isGuide = (r) => r.kind === 'brand_guideline';
   const isComp = (r) => r.kind === 'competitor';
+  const isKw = (r) => r.kind === 'keyword';
   const shown = (items || []).filter((r) => !q || (r.businessName || '').toLowerCase().includes(q.toLowerCase()) || (r.domain || '').toLowerCase().includes(q.toLowerCase()));
-  const base = (r) => isGuide(r) ? 'brandguide' : isComp(r) ? 'competitor' : 'preseo';
+  const base = (r) => isGuide(r) ? 'brandguide' : isComp(r) ? 'competitor' : isKw(r) ? 'keyword' : 'preseo';
   const download = (r) => { const t = localStorage.getItem(PRESEO_TOKEN) || ''; window.open(`${API_BASE}/api/hr/projects/${base(r)}/${r.id}/download?token=${encodeURIComponent(t)}`, '_blank'); };
   const openEdit = (r) => { if (isGuide(r)) setEditGuide(r); else setEdit(r); };
   const del = async (r) => { if (!confirm(`Permanently delete the report for ${r.businessName}? This cannot be undone.`)) return; try { await hrApi(`/projects/${base(r)}/${r.id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); } };
@@ -238,7 +242,9 @@ function PreSeoReports({ onBackTab }) {
     ? <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#f5f3ff', color: '#7c3aed' }}>Brand Guideline</span>
     : isComp(r)
       ? <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#fff1e5', color: '#c14e00' }}>Competitor</span>
-      : <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#eff6ff', color: '#2563eb' }}>Pre-SEO</span>;
+      : isKw(r)
+        ? <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#ecfdf3', color: '#0e7a4f' }}>Keyword</span>
+        : <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#eff6ff', color: '#2563eb' }}>Pre-SEO</span>;
 
   return (
     <div className="pb-8">
@@ -295,9 +301,12 @@ function PreSeoReports({ onBackTab }) {
                         ? <button onClick={() => window.open(`${API_BASE}/api/hr/projects/brandguide/${r.id}/viewer?token=${encodeURIComponent(localStorage.getItem(TOKEN_KEY) || '')}`, '_blank')} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>
                         : isComp(r)
                           ? <button onClick={() => setCompView(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>
-                          : <button onClick={() => setView(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>}
+                          : isKw(r)
+                            ? <button onClick={() => setKwView(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>
+                            : <button onClick={() => setView(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-slate-600 hover:border-slate-300">View</button>}
                       <button onClick={() => download(r)} className="rounded-lg px-2.5 py-1.5 text-[11.5px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>PDF</button>
-                      {!isComp(r) && <button onClick={() => openEdit(r)} title="Edit" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:text-[#050A1F]">✎</button>}
+                      {isKw(r) && <button onClick={() => window.open(`${API_BASE}/api/hr/projects/keyword/${r.id}/xlsx?token=${encodeURIComponent(localStorage.getItem(PRESEO_TOKEN) || '')}`, '_blank')} title="Download Excel" className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11.5px] font-bold text-emerald-700 hover:border-emerald-300">Excel</button>}
+                      {!isComp(r) && !isKw(r) && <button onClick={() => openEdit(r)} title="Edit" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:text-[#050A1F]">✎</button>}
                       <button onClick={() => rerun(r)} title="Re-run with fresh data" className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:text-[#050A1F]">↻</button>
                     </>}
                     {(r.status === 'ready') && <>
@@ -315,12 +324,13 @@ function PreSeoReports({ onBackTab }) {
         </table></div>
       </div>
 
-      {pickType && <ReportTypePicker onClose={() => setPickType(false)} onPick={(k) => { setPickType(false); if (k === 'brand_guideline') setRunGuide(true); else if (k === 'competitor') setRunComp(true); else setRun(true); }} />}
+      {pickType && <ReportTypePicker onClose={() => setPickType(false)} onPick={(k) => { setPickType(false); if (k === 'brand_guideline') setRunGuide(true); else if (k === 'competitor') setRunComp(true); else if (k === 'keyword') setRunKw(true); else setRun(true); }} />}
       {run && <PreSeoReportWizard projectId={'none'} project={null} chooseProject onClose={() => setRun(false)} onStarted={() => { setRun(false); load(); }} onDone={load} />}
       {edit && <PreSeoReportWizard projectId={edit.projectId || 'none'} project={null} editReport={edit} onClose={() => { setEdit(null); load(); }} onDone={load} />}
       {runGuide && <BrandGuideWizard projectId={'none'} project={null} chooseProject onClose={() => setRunGuide(false)} onStarted={() => { setRunGuide(false); load(); }} onDone={load} />}
       {editGuide && <BrandGuideWizard projectId={editGuide.projectId || 'none'} project={null} editReport={editGuide} onClose={() => { setEditGuide(null); load(); }} onDone={load} />}
       {runComp && <CompetitorWizard chooseProject onClose={() => setRunComp(false)} onStarted={() => { setRunComp(false); load(); }} />}
+      {runKw && <KeywordWizard chooseProject onClose={() => setRunKw(false)} onStarted={() => { setRunKw(false); load(); }} />}
     </div>
   );
 }
@@ -517,6 +527,94 @@ function CompetitorReportView({ id, onBack }) {
             <div className="flex justify-between text-[12px] py-1.5 border-b border-dashed border-slate-100"><span className="text-slate-400">Client</span><span className="text-slate-700">{rep.domain}</span></div>
             {compName && <div className="flex justify-between text-[12px] py-1.5 border-b border-dashed border-slate-100"><span className="text-slate-400">Competitor</span><span className="text-slate-700">{(rep.runOptions && rep.runOptions.competitorSite) || compName}</span></div>}
             {rep.runOptions && rep.runOptions.source && <div className="flex justify-between text-[12px] py-1.5 border-b border-dashed border-slate-100"><span className="text-slate-400">Market</span><span className="text-slate-700 uppercase">{rep.runOptions.source}</span></div>}
+            <div className="flex justify-between text-[12px] py-1.5"><span className="text-slate-400">Agent</span><span className="text-slate-700">{rep.createdByName || '—'}</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Full-page keyword-report view — live preview + trackable link + Excel download.
+function KeywordReportView({ id, onBack }) {
+  const [rep, setRep] = useState(null);
+  const [share, setShare] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const [rerunning, setRerunning] = useState(false);
+  const token = localStorage.getItem(TOKEN_KEY) || '';
+  const loadShare = () => hrApi(`/projects/keyword/${id}/share`).then(setShare).catch(() => {});
+  const loadRep = () => hrApi(`/projects/keyword/${id}`).then(setRep).catch(() => {});
+  useEffect(() => { loadRep(); loadShare(); }, [id]);
+  const enable = async () => { try { await hrApi(`/projects/keyword/${id}/share`, { method: 'POST' }); loadShare(); } catch (e) { toast(e.message); } };
+  const disable = async () => { try { await hrApi(`/projects/keyword/${id}/share/disable`, { method: 'POST' }); loadShare(); } catch (e) { toast(e.message); } };
+  const copy = () => { if (share && share.url) { try { navigator.clipboard.writeText(share.url); } catch {} setCopied(true); setTimeout(() => setCopied(false), 1500); } };
+  const download = () => window.open(`${API_BASE}/api/hr/projects/keyword/${id}/download?token=${encodeURIComponent(token)}`, '_blank');
+  const downloadXlsx = () => window.open(`${API_BASE}/api/hr/projects/keyword/${id}/xlsx?token=${encodeURIComponent(token)}`, '_blank');
+  const rerun = async (forceData = false) => {
+    const msg = forceData ? 'Re-run with FRESH search data? This uses SE Ranking credits.' : 'Re-run (new write-up)? Search data from the last 24h is reused — no credits unless inputs changed.';
+    if (!confirm(msg)) return;
+    setRerunning(true);
+    try {
+      await hrApi(`/projects/keyword/${id}/rerun`, { method: 'POST', body: JSON.stringify({ forceData }) });
+      toast('Re-running — hold on…');
+      const poll = setInterval(async () => {
+        try { const r = await hrApi(`/projects/keyword/${id}`); setRep(r); if (['complete', 'failed'].includes(r.status)) { clearInterval(poll); setRerunning(false); loadShare(); } } catch {}
+      }, 2500);
+    } catch (e) { toast('Re-run failed: ' + e.message); setRerunning(false); }
+  };
+  if (!rep) return <div className="p-10 text-center text-slate-400 text-sm">Loading report…</div>;
+
+  return (
+    <div className="pb-8">
+      <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center text-white font-extrabold text-[13px]" style={{ background: favColor(rep.businessName) }}>{reportInitials(rep.businessName)}</div>
+          <div>
+            <h1 className="text-[18px] font-extrabold text-[#050A1F]">{rep.businessName} — Keyword Analysis</h1>
+            <div className="text-[12px] text-slate-400">{rep.domain}{rep.completedAt ? ` · ${new Date(rep.completedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}` : ''}</div>
+          </div>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={onBack} className="rounded-lg border border-slate-300 px-4 py-2 text-[13px] font-bold text-slate-600 hover:border-slate-400">← Back</button>
+          <button onClick={() => rerun(false)} disabled={rerunning} className="rounded-lg border border-slate-300 px-4 py-2 text-[13px] font-bold text-slate-600 hover:border-slate-400" title="New write-up; reuses search data from the last 24h">{rerunning ? 'Re-running…' : '↻ Re-run'}</button>
+          <button onClick={() => rerun(true)} disabled={rerunning} className="rounded-lg border border-slate-300 px-4 py-2 text-[13px] font-bold text-slate-600 hover:border-slate-400" title="Pull fresh numbers (uses credits)">↻ Fresh data</button>
+          <button onClick={downloadXlsx} className="rounded-lg border border-emerald-300 px-4 py-2 text-[13px] font-extrabold text-emerald-700 hover:bg-emerald-50">↓ Excel</button>
+          <button onClick={download} className="rounded-lg px-5 py-2 text-[13px] font-extrabold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>↓ Download PDF</button>
+        </div>
+      </div>
+
+      <div className="grid gap-4" style={{ gridTemplateColumns: 'minmax(0,1fr) 300px' }}>
+        <div className="rounded-2xl border border-slate-200 overflow-hidden bg-white" style={{ height: '80vh' }}>
+          <iframe title="report" src={`${API_BASE}/api/hr/projects/keyword/${id}/view?token=${encodeURIComponent(token)}&v=${rep.completedAt || ''}`} className="w-full h-full border-0" />
+        </div>
+        <div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 mb-3">
+            <h4 className="text-[12.5px] font-extrabold text-[#050A1F] mb-1.5">🔗 Trackable link</h4>
+            {!share || !share.enabled ? (
+              <>
+                <div className="text-[11.5px] text-slate-500 mb-2">Share this report with the client. Every open and download is logged with time and IP.</div>
+                <button onClick={enable} className="rounded-lg px-4 py-2 text-[12.5px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Create public link</button>
+              </>
+            ) : (
+              <>
+                <div className="flex gap-2 items-center">
+                  <input readOnly value={share.url} className="flex-1 min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-mono text-slate-600" />
+                  <button onClick={copy} className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-white" style={{ background: '#2563eb' }}>{copied ? 'Copied!' : 'Copy'}</button>
+                </div>
+                <div className="flex gap-4 mt-3">
+                  <div><div className="text-[18px] font-extrabold text-[#050A1F]" style={{ fontVariantNumeric: 'tabular-nums' }}>{share.viewCount || 0}</div><div className="text-[10px] text-slate-400">views</div></div>
+                  <div><div className="text-[18px] font-extrabold text-[#050A1F]" style={{ fontVariantNumeric: 'tabular-nums' }}>{share.downloadCount || 0}</div><div className="text-[10px] text-slate-400">downloads</div></div>
+                  <div><div className="text-[18px] font-extrabold" style={{ color: share.lastViewedAt ? '#16a34a' : '#cbd5e1' }}>●</div><div className="text-[10px] text-slate-400">{share.lastViewedAt ? 'seen' : 'unseen'}</div></div>
+                </div>
+                <button onClick={disable} className="mt-2 text-[11px] font-bold text-slate-400">Disable link</button>
+              </>
+            )}
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <h4 className="text-[12.5px] font-extrabold text-[#050A1F] mb-1.5">Details</h4>
+            <div className="flex justify-between text-[12px] py-1.5 border-b border-dashed border-slate-100"><span className="text-slate-400">Website</span><span className="text-slate-700">{rep.domain}</span></div>
+            {rep.runOptions && rep.runOptions.source && <div className="flex justify-between text-[12px] py-1.5 border-b border-dashed border-slate-100"><span className="text-slate-400">Market</span><span className="text-slate-700 uppercase">{rep.runOptions.source}</span></div>}
+            {rep.data && rep.data.stats && <div className="flex justify-between text-[12px] py-1.5 border-b border-dashed border-slate-100"><span className="text-slate-400">Keywords</span><span className="text-slate-700">{rep.data.stats.shortlisted}</span></div>}
             <div className="flex justify-between text-[12px] py-1.5"><span className="text-slate-400">Agent</span><span className="text-slate-700">{rep.createdByName || '—'}</span></div>
           </div>
         </div>
@@ -841,6 +939,7 @@ function ReportsTab({ id, data, onReload }) {
   const [editRep, setEditRep] = useState(null);
   const [viewRep, setViewRep] = useState(null);
   const [compViewRep, setCompViewRep] = useState(null);
+  const [kwViewRep, setKwViewRep] = useState(null);
   const [editGuide, setEditGuide] = useState(null);
   const cycle = (data.cycles || [])[0];
   const load = () => hrApi(`/projects/${id}/deliverables`).then((r) => setDels(r.deliverables || [])).catch(() => setDels([]));
@@ -854,7 +953,8 @@ function ReportsTab({ id, data, onReload }) {
   }, [reports]);
   const isGuide = (r) => r.kind === 'brand_guideline';
   const isComp = (r) => r.kind === 'competitor';
-  const base = (r) => isGuide(r) ? 'brandguide' : isComp(r) ? 'competitor' : 'preseo';
+  const isKw = (r) => r.kind === 'keyword';
+  const base = (r) => isGuide(r) ? 'brandguide' : isComp(r) ? 'competitor' : isKw(r) ? 'keyword' : 'preseo';
   const canApprove = data.myPerms && (data.myPerms.admin || data.myPerms.approveDeliverables);
   const canUpload = data.myPerms && (data.myPerms.admin || data.myPerms.uploadDeliverables);
   const approve = async (d, ok) => { try { await hrApi(`/projects/${id}/deliverables/${d.id}/approve`, { method: 'POST', body: JSON.stringify({ approved: ok }) }); load(); } catch (e) { toast(e.message); } };
@@ -875,10 +975,13 @@ function ReportsTab({ id, data, onReload }) {
     ? <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#f5f3ff', color: '#7c3aed' }}>Brand Guideline</span>
     : isComp(r)
       ? <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#fff1e5', color: '#c14e00' }}>Competitor</span>
-      : <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#eff6ff', color: '#2563eb' }}>Pre-SEO</span>;
+      : isKw(r)
+        ? <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#ecfdf3', color: '#0e7a4f' }}>Keyword</span>
+        : <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: '#eff6ff', color: '#2563eb' }}>Pre-SEO</span>;
 
   if (viewRep) return <PreSeoReportView id={viewRep} onBack={() => { setViewRep(null); loadReports(); }} onEdit={(rep) => { setViewRep(null); setEditRep(rep); }} />;
   if (compViewRep) return <CompetitorReportView id={compViewRep} onBack={() => { setCompViewRep(null); loadReports(); }} />;
+  if (kwViewRep) return <KeywordReportView id={kwViewRep} onBack={() => { setKwViewRep(null); loadReports(); }} />;
   if (!dels) return <div className="text-slate-400 text-sm py-6 text-center">Loading…</div>;
   return (
     <div>
@@ -902,9 +1005,12 @@ function ReportsTab({ id, data, onReload }) {
                           ? <button onClick={() => window.open(`${API_BASE}/api/hr/projects/brandguide/${r.id}/viewer?token=${encodeURIComponent(localStorage.getItem(TOKEN_KEY) || '')}`, '_blank')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>
                           : isComp(r)
                             ? <button onClick={() => setCompViewRep(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>
-                            : <button onClick={() => setViewRep(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>}
+                            : isKw(r)
+                              ? <button onClick={() => setKwViewRep(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>
+                              : <button onClick={() => setViewRep(r.id)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">View</button>}
                         <button onClick={() => download(r)} className="rounded-lg px-2.5 py-1 text-[11px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>PDF</button>
-                        {!isComp(r) && <button onClick={() => openEdit(r)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">Edit</button>}
+                        {isKw(r) && <button onClick={() => window.open(`${API_BASE}/api/hr/projects/keyword/${r.id}/xlsx?token=${encodeURIComponent(localStorage.getItem(TOKEN_KEY) || '')}`, '_blank')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-emerald-700">Excel</button>}
+                        {!isComp(r) && !isKw(r) && <button onClick={() => openEdit(r)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">Edit</button>}
                         <button onClick={() => rerun(r)} title="Re-run with fresh data" className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-bold text-slate-600">↻</button>
                       </>}
                       {r.status === 'ready' && <button onClick={() => openEdit(r)} className="rounded-lg border border-orange-300 px-2.5 py-1 text-[11px] font-bold text-orange-600">Review</button>}
@@ -1429,11 +1535,96 @@ function CompetitorWizard({ projectId, project, chooseProject, onClose, onStarte
   );
 }
 
+// ---- Keyword Analysis wizard ---------------------------------------------
+function KeywordWizard({ projectId, project, chooseProject, onClose, onStarted }) {
+  const [projectSel, setProjectSel] = useState(projectId && projectId !== 'none' ? String(projectId) : '');
+  const [projectList, setProjectList] = useState([]);
+  const [website, setWebsite] = useState((project && project.website) || '');
+  const [bizName, setBizName] = useState((project && project.customerName) || '');
+  const [competitors, setCompetitors] = useState('');   // one per line
+  const [seeds, setSeeds] = useState('');               // comma or newline
+  const [market, setMarket] = useState('us');
+  const [recommendCount, setRecommendCount] = useState(30);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (chooseProject) hrApi('/projects').then((r) => setProjectList(r.projects || [])).catch(() => {}); }, [chooseProject]);
+
+  const inp = 'w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-[13.5px] focus:outline-none focus:ring-2 focus:ring-orange-200';
+  const ready = website.trim().length > 3;
+
+  const launch = async () => {
+    if (!ready) { toast('A client website is required.'); return; }
+    setBusy(true);
+    try {
+      const pid = projectSel || projectId || 'none';
+      await hrApi(`/projects/${pid}/keyword`, { method: 'POST', body: JSON.stringify({
+        website: website.trim(), businessName: bizName.trim(),
+        competitorSites: competitors, seeds, market, recommendCount,
+      }) });
+      toast('Started — researching keywords. Watch progress in the list.');
+      if (onStarted) { onStarted(); return; }
+    } catch (e) { toast(e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[230]">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <aside className="absolute top-0 right-0 h-full w-full max-w-[560px] bg-white shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between px-5 py-4 border-b border-slate-100">
+          <div><div className="text-[16px] font-extrabold text-[#050A1F]">🎯 Keyword Analysis</div><div className="text-[11.5px] text-slate-400 mt-0.5">Research the best keywords for the client, grouped and prioritised, with an Excel export.</div></div>
+          <button onClick={onClose} className="text-slate-300 hover:text-slate-600 text-[20px] leading-none">×</button>
+        </div>
+
+        <div className="flex-1 overflow-auto px-5 py-4">
+          {chooseProject && (
+            <div className="mb-3">
+              <FLbl>Project <span className="font-normal text-slate-400 normal-case">(optional — fills in the client name &amp; website)</span></FLbl>
+              <select value={projectSel} onChange={(e) => { setProjectSel(e.target.value); const p = projectList.find((x) => String(x.id) === e.target.value); if (p) { setBizName(p.customerName || bizName); setWebsite(p.website || website); } }} className={inp}>
+                <option value="">— No project —</option>
+                {projectList.map((p) => <option key={p.id} value={p.id}>{p.customerName || p.name || ('Project #' + p.id)}</option>)}
+              </select>
+            </div>
+          )}
+
+          <div className="text-[11px] font-extrabold text-slate-400 uppercase mb-2">Client</div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><FLbl>Business name</FLbl><input className={inp} placeholder="StrataSound Music" value={bizName} onChange={(e) => setBizName(e.target.value)} /></div>
+            <div><FLbl>Website</FLbl><input className={inp} placeholder="stratasoundmusic.com" value={website} onChange={(e) => setWebsite(e.target.value)} /></div>
+          </div>
+
+          <div className="mt-4"><FLbl>Competitor websites <span className="font-normal text-slate-400 normal-case">(optional — one per line, up to 5)</span></FLbl>
+            <textarea className={inp} rows={3} placeholder={'suno.com\nbandlab.com\nudio.com'} value={competitors} onChange={(e) => setCompetitors(e.target.value)} /></div>
+
+          <div className="mt-4"><FLbl>Seed keywords <span className="font-normal text-slate-400 normal-case">(optional — if the client gave any; we expand them and research our own too)</span></FLbl>
+            <textarea className={inp} rows={2} placeholder="ai song generator, custom songs, ai singing" value={seeds} onChange={(e) => setSeeds(e.target.value)} /></div>
+
+          <div className="grid grid-cols-2 gap-3 mt-4">
+            <div><FLbl>Market</FLbl>
+              <select value={market} onChange={(e) => setMarket(e.target.value)} className={inp}>
+                {COMP_MARKETS.filter((m) => m.code).map((m) => <option key={m.code} value={m.code}>{m.name}</option>)}
+              </select>
+            </div>
+            <div><FLbl>Keywords to recommend</FLbl><input type="number" min={10} max={60} className={inp} value={recommendCount} onChange={(e) => setRecommendCount(e.target.value)} /></div>
+          </div>
+
+          <div className="text-[10.5px] text-slate-400 mt-4 leading-snug">We read the client site and competitors, pull ranked keywords, research related terms, then Claude groups and prioritises a shortlist. Produces a branded PDF + an Excel file. Takes a few minutes — close this and watch progress in the list.</div>
+        </div>
+
+        <div className="flex justify-end gap-2 px-5 py-4 border-t border-slate-100">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={launch} disabled={!ready || busy} className="rounded-lg px-6 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Starting…' : '▶ Run research'}</button>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 function ReportTypePicker({ onClose, onPick }) {
   const TYPES = [
     { k: 'pre_seo', icon: '🔍', name: 'Pre-SEO Audit', desc: 'Full technical + on-page SEO audit of a website, with screenshots, Core Web Vitals, NAP, schema and an AI-visibility check.', asks: 'Asks for: website, business name, sitemap and access details.' },
     { k: 'brand_guideline', icon: '★', name: 'Brand Guideline', desc: 'A complete brand book for the social team — foundation, logo, colour, typography, voice and a social-media playbook, built from the client\'s own site.', asks: 'Asks for: website, industry, audiences, posts per month, platforms and tone.' },
     { k: 'competitor', icon: '⚔', name: 'Competitor Analysis', desc: 'A side-by-side SEO comparison of your client vs a named competitor — keywords, traffic, rankings, backlinks, website quality, SWOT and a keyword opportunity map.', asks: 'Asks for: client website, competitor name & website, and the target market.' },
+    { k: 'keyword', icon: '🎯', name: 'Keyword Analysis', desc: 'A full keyword research report — we read the site and competitors, pull ranked keywords, research related terms, then group a shortlist by topic with volume, difficulty, CPC and priority. Includes a branded PDF + an Excel file to pick the final list.', asks: 'Asks for: client website, competitor sites, and any seed keywords (optional).' },
   ];
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[230] p-4" onClick={onClose}>

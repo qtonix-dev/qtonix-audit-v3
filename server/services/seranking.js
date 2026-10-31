@@ -284,6 +284,54 @@ class SERanking {
     });
   }
 
+  // -------------------------------------------------------------------------
+  // Keyword Research family (/keywords/*). Used by the Keyword Analysis report.
+  // These take a seed keyword (not a domain) and return expansion ideas with
+  // metrics (volume, difficulty, cpc). `source` is the regional database code.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Keywords semantically similar to a seed (same meaning / close variants).
+   * Cost: ~per-keyword. Returns rows with keyword + volume + difficulty + cpc.
+   */
+  getSimilarKeywords(keyword, source = 'us', limit = 100) {
+    return this.request('/keywords/similar', { source, keyword, limit });
+  }
+
+  /**
+   * Keywords related to a seed (same topic, broader net than "similar").
+   * This is the main expansion endpoint for seed research.
+   */
+  getRelatedKeywords(keyword, source = 'us', limit = 100) {
+    return this.request('/keywords/related', { source, keyword, limit });
+  }
+
+  /**
+   * Long-tail variations of a seed (lower-volume, lower-difficulty entry terms).
+   * Falls back gracefully if the endpoint isn't on the plan (caller uses safe()).
+   */
+  getLongTailKeywords(keyword, source = 'us', limit = 100) {
+    return this.request('/keywords/long-tail', { source, keyword, limit });
+  }
+
+  /**
+   * Metrics (volume, difficulty, cpc, competition) for an explicit list of
+   * keywords — used to enrich seeds the AI derived from the site crawl, which
+   * don't come with metrics attached. Accepts an array; sends comma-joined.
+   */
+  getKeywordsMetrics(keywords, source = 'us') {
+    const list = Array.isArray(keywords) ? keywords : [keywords];
+    return this.request('/keywords/overview', { source, keyword: list.join(',') });
+  }
+
+  /**
+   * Question-style keywords around a seed (how/what/can…), for the GEO / AI-SEO
+   * section and blog content angles.
+   */
+  getKeywordQuestions(keyword, source = 'us', limit = 50) {
+    return this.request('/keywords/questions', { source, keyword, limit });
+  }
+
   /**
    * Backlink summary. Cost: 100 credits/target.
    * NOTE: this family requires apikey as a GET param IN ADDITION to the header.

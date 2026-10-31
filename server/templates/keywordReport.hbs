@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8" />
+<title>Keyword Analysis · {{cover.client}}</title>
+<style>
+{{#if forWeb}}
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+@font-face{font-family:"PJS";src:local('Plus Jakarta Sans');font-weight:400 800}
+{{else}}
+@font-face{font-family:"PJS";src:url('{{fontDir}}/PlusJakartaSans-Regular.ttf');font-weight:400}
+@font-face{font-family:"PJS";src:url('{{fontDir}}/PlusJakartaSans-Medium.ttf');font-weight:500}
+@font-face{font-family:"PJS";src:url('{{fontDir}}/PlusJakartaSans-SemiBold.ttf');font-weight:600}
+@font-face{font-family:"PJS";src:url('{{fontDir}}/PlusJakartaSans-Bold.ttf');font-weight:700}
+@font-face{font-family:"PJS";src:url('{{fontDir}}/PlusJakartaSans-ExtraBold.ttf');font-weight:800}
+{{/if}}
+:root{--navy:#050A1F;--orange:#FF6A00;--orange2:#FF4600;--ink:#1A2234;--muted:#5B6275;--line:#E4E7EE;--soft:#F6F7FA;--green:#12A36B;--red:#E0412F;--amber:#C98A00;
+  --kg:#E7F6EF;--kgf:#0E7A4F;--ka:#FDF1DD;--kaf:#A9700A;--kr:#FCE9E6;--krf:#C23A28;--pill:#FFF1E8;--pillf:#C4490A;}
+*{box-sizing:border-box;margin:0;padding:0}
+@page{size:A4;margin:0}
+@page content{
+  size:A4; margin:16mm 16mm 15mm 16mm;
+  @bottom-left{ content:"Qtonix · Keyword Analysis Report · {{cover.client}}"; font-family:"PJS"; font-size:7.3pt; color:#9AA1B2; }
+  @bottom-right{ content:"Page " counter(page) " of " counter(pages); font-family:"PJS"; font-size:7.3pt; color:#9AA1B2; }
+}
+html,body{font-family:"PJS",sans-serif;color:var(--ink);font-size:10pt;line-height:1.55;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.sheet{page:content;page-break-before:always;break-before:page}
+.sheet:first-of-type{page-break-before:avoid;break-before:avoid}
+tr{break-inside:avoid;page-break-inside:avoid}
+.callout,.card,.stat,.audience{break-inside:avoid;page-break-inside:avoid}
+h1,h2,h3{break-after:avoid;page-break-after:avoid}
+thead{display:table-header-group}
+
+/* ---- Cover (full-bleed navy) ---- */
+.cover{width:210mm;height:296mm;position:relative;overflow:hidden;background:var(--navy);color:#fff;page-break-after:always}
+.cover .glow{position:absolute;right:-30mm;top:-40mm;width:150mm;height:150mm;border-radius:50%;background:radial-gradient(circle,rgba(255,106,0,.5) 0%,rgba(255,70,0,.14) 45%,rgba(5,10,31,0) 70%)}
+.cover .inner{position:absolute;inset:0;padding:22mm 20mm}
+.cover .logo{font-size:16pt;font-weight:800}.cover .logo b{color:var(--orange)}
+.cover .eyebrow{position:absolute;left:20mm;top:150mm;color:var(--orange);font-size:9pt;font-weight:700;letter-spacing:3px}
+.cover h1{position:absolute;left:20mm;top:160mm;font-size:34pt;font-weight:800;line-height:1.05;letter-spacing:-.5px}
+.cover .client{position:absolute;left:20mm;top:190mm;font-size:15pt;font-weight:700}
+.cover .csub{position:absolute;left:20mm;top:198mm;font-size:10.5pt;color:#AEB5C7}
+.cover .eq{position:absolute;right:22mm;bottom:95mm;display:flex;align-items:flex-end;gap:3mm;height:55mm}
+.cover .eq i{width:5mm;background:linear-gradient(180deg,var(--orange),var(--orange2));border-radius:2mm}
+.cover .meta{position:absolute;left:20mm;right:20mm;bottom:22mm;border-top:1px solid rgba(255,255,255,.14);padding-top:5mm;display:flex;gap:16mm}
+.cover .meta small{display:block;color:#9AA1B2;font-size:8pt;margin-bottom:1.5mm}
+.cover .meta b{font-size:10.5pt;font-weight:700}
+
+/* ---- Interior ---- */
+.content{position:relative}
+.eyebrow{color:var(--orange);font-size:8.5pt;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;margin-bottom:2mm}
+h2{font-size:19pt;font-weight:800;color:var(--navy);line-height:1.12;letter-spacing:-.3px;margin-bottom:3mm}
+h3{font-size:12pt;font-weight:800;color:var(--navy);margin:6mm 0 2mm}
+.lead{font-size:10.5pt;color:#394056;margin-bottom:4mm}
+p{margin-bottom:2.5mm}
+
+.stats{display:flex;gap:4mm;margin:4mm 0}
+.stat{flex:1;border:1px solid var(--line);border-top:2.5px solid var(--orange);border-radius:2mm;padding:3.5mm 4mm;background:var(--soft)}
+.stat .n{font-size:21pt;font-weight:800;color:var(--navy);line-height:1}
+.stat .l{font-size:8.3pt;color:var(--muted);margin-top:1.5mm;line-height:1.35}
+
+.findings{list-style:none;margin:2mm 0}
+.findings li{position:relative;padding-left:5mm;margin-bottom:2.5mm;font-size:9.8pt}
+.findings li:before{content:"";position:absolute;left:0;top:2mm;width:2mm;height:2mm;border-radius:50%;background:var(--orange)}
+.findings b{color:var(--navy)}
+
+.callout{border-left:3px solid var(--orange);background:var(--pill);padding:3.5mm 5mm;border-radius:0 2mm 2mm 0;margin:4mm 0;font-size:9.6pt}
+.callout b{color:var(--navy)}
+.panel{background:var(--navy);color:#fff;border-radius:3mm;padding:5mm 6mm;margin:4mm 0}
+.panel h4{font-size:11pt;font-weight:700;margin-bottom:2.5mm}
+.panel ul{list-style:none}
+.panel li{position:relative;padding-left:4.5mm;margin-bottom:1.8mm;font-size:9.4pt;color:#D3D8E4}
+.panel li:before{content:"";position:absolute;left:0;top:2mm;width:1.6mm;height:1.6mm;border-radius:50%;background:var(--orange)}
+.panel .note{color:#AEB5C7;font-size:9pt;margin-top:2.5mm}
+
+.cards{display:flex;flex-wrap:wrap;gap:4mm;margin:3mm 0}
+.card{flex:1 1 46%;border:1px solid var(--line);border-radius:2mm;padding:3.5mm 4mm}
+.card h4{font-size:10.5pt;font-weight:700;color:var(--navy);margin-bottom:1.5mm}
+.card p{font-size:9.2pt;color:var(--muted);margin:0}
+
+table{width:100%;border-collapse:collapse;margin:2.5mm 0;font-size:9.2pt}
+th{background:var(--navy);color:#fff;text-align:left;font-weight:600;font-size:8.2pt;padding:2.2mm 3mm}
+th.num{text-align:right}
+td{padding:2.3mm 3mm;border-bottom:1px solid #EEF0F5;vertical-align:top}
+td.num{text-align:right;white-space:nowrap}
+.steps{counter-reset:s;list-style:none;margin:3mm 0}
+.steps li{position:relative;padding-left:9mm;margin-bottom:3mm;font-size:9.8pt}
+.steps li:before{counter-increment:s;content:counter(s);position:absolute;left:0;top:-.5mm;width:6mm;height:6mm;border-radius:50%;background:var(--orange);color:#fff;font-weight:700;font-size:9pt;text-align:center;line-height:6mm}
+.steps b{color:var(--navy)}
+
+/* keyword group tables */
+.grp{margin-top:6mm}
+.grp .gh{display:flex;justify-content:space-between;align-items:baseline;gap:4mm}
+.grp .gt{font-size:12.5pt;font-weight:800;color:var(--navy)}
+.grp .gm{font-size:8.3pt;color:var(--muted);white-space:nowrap}
+.grp .gi{font-size:9pt;color:var(--muted);margin:.5mm 0 1mm}
+.grp .gi b{color:var(--ink)}
+.ktbl td.star{width:6mm;text-align:center;color:var(--orange);font-size:10pt}
+.ktbl tr.rec{background:var(--pill)}
+.pill{display:inline-block;border-radius:10mm;padding:.3mm 2mm;font-size:7.6pt;font-weight:700}
+.kd{display:inline-block;border-radius:10mm;padding:.3mm 2mm;font-size:8pt;font-weight:700;min-width:7mm;text-align:center}
+.p-g{background:var(--kg);color:var(--kgf)}.p-a{background:var(--ka);color:var(--kaf)}.p-r{background:var(--kr);color:var(--krf)}
+.pri{background:var(--pill);color:var(--pillf)}
+.src{font-size:7.8pt;color:#9AA1B2;margin-top:2.5mm}
+.fn{font-size:7.8pt;color:#9AA1B2;margin-top:2mm;line-height:1.4}
+</style></head>
+<body>
+
+<!-- COVER -->
+<section class="cover">
+  <div class="glow"></div>
+  <div class="inner">
+    <div class="logo">Qtonix<b>.</b></div>
+    <div class="eyebrow">SEO &amp; AI SEARCH</div>
+    <h1>Keyword Analysis<br>Report</h1>
+    <div class="client">{{cover.client}}</div>
+    <div class="csub">{{cover.domain}} · {{cover.marketLabel}}</div>
+    <div class="eq">
+      <i style="height:30%"></i><i style="height:42%"></i><i style="height:36%"></i><i style="height:58%"></i><i style="height:48%"></i><i style="height:70%"></i><i style="height:62%"></i><i style="height:88%"></i><i style="height:100%"></i>
+    </div>
+    <div class="meta">
+      <div><small>Prepared by</small><b>{{cover.preparedBy}}</b></div>
+      <div><small>Report date</small><b>{{cover.date}}</b></div>
+      <div><small>Markets analysed</small><b>{{cover.marketLabel}}</b></div>
+    </div>
+  </div>
+</section>
+
+<!-- 01 SUMMARY -->
+<section class="sheet"><div class="content">
+  <div class="eyebrow">01 · Summary</div>
+  <h2>{{summary.title}}</h2>
+  <p class="lead">{{{summary.lead}}}</p>
+  <div class="stats">
+    <div class="stat"><div class="n">{{stats.shortlisted}}</div><div class="l">Keywords shortlisted across {{stats.clusters}} topics</div></div>
+    <div class="stat"><div class="n">{{stats.recommend}}</div><div class="l">Recommended for the campaign</div></div>
+    <div class="stat"><div class="n">{{stats.volume}}</div><div class="l">Monthly searches ({{stats.usVolume}} in the US)</div></div>
+    <div class="stat"><div class="n">{{stats.quickWins}}</div><div class="l">Quick-win keywords (difficulty under 40)</div></div>
+  </div>
+  <h3>Key findings</h3>
+  <ul class="findings">{{#each summary.findings}}<li><b>{{this.title}}</b> {{{this.body}}}</li>{{/each}}</ul>
+  <div class="callout"><b>Our recommendation:</b> {{{summary.recommendation}}}</div>
+</div></section>
+
+<!-- 02 BUSINESS -->
+<section class="sheet"><div class="content">
+  <div class="eyebrow">02 · Understanding the business</div>
+  <h2>{{business.title}}</h2>
+  <p class="lead">{{{business.lead}}}</p>
+  <div class="cards">{{#each business.audiences}}<div class="card"><h4>{{this.name}}</h4><p>{{this.desc}}</p></div>{{/each}}</div>
+  {{#if business.different}}<h3>{{business.differentTitle}}</h3><p>{{{business.different}}}</p>{{/if}}
+</div></section>
+
+<!-- 03 COMPETITOR LANDSCAPE -->
+<section class="sheet"><div class="content">
+  <div class="eyebrow">03 · Competitor landscape</div>
+  <h2>Who {{cover.client}} is competing with in search</h2>
+  <table>
+    <thead><tr><th>Website</th><th>Type</th><th class="num">Ranking keywords</th><th class="num">Monthly organic visits</th><th class="num">Domain Trust</th></tr></thead>
+    <tbody>{{#each landscape}}<tr{{#if this.self}} style="background:var(--pill)"{{/if}}><td><b>{{this.name}}</b></td><td>{{this.type}}</td><td class="num">{{this.keywords}}</td><td class="num">{{this.visits}}</td><td class="num">{{this.da}}</td></tr>{{/each}}</tbody>
+  </table>
+  <div class="src">Source: Qtonix SEO research tool, Google organic, {{cover.marketLabel}} database, {{cover.date}}. Domain Trust is the tool's 0–100 authority score.</div>
+</div></section>
+
+<!-- 04 METHOD -->
+<section class="sheet"><div class="content">
+  <div class="eyebrow">04 · How we chose the keywords</div>
+  <h2>Selection method and priority levels</h2>
+  <p class="lead">We started from a broad set of keyword ideas — the client's own features, the terms competitors rank for, and related searches — then checked each one against four questions:</p>
+  <ol class="steps">
+    <li><b>Relevance.</b> Would someone searching this be happy to land on {{cover.client}}?</li>
+    <li><b>Demand.</b> Is there real monthly search volume behind it?</li>
+    <li><b>Difficulty.</b> Can the site realistically reach page one, and how soon?</li>
+    <li><b>Intent.</b> Is the searcher ready to act now, or still researching?</li>
+  </ol>
+  <table>
+    <thead><tr><th>Priority</th><th>What it means</th><th>When we target it</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill p-g">Priority 1</span></td><td>Highly relevant, difficulty under 40. Realistic page-one targets soon.</td><td>Months 1–3</td></tr>
+      <tr><td><span class="pill p-a">Priority 2</span></td><td>Relevant, difficulty 40–69. Needs supporting content and a few links.</td><td>Months 3–6</td></tr>
+      <tr><td><span class="pill p-r">Priority 3</span></td><td>High-volume, difficulty 70+. Long-term targets as authority grows.</td><td>Months 6–12</td></tr>
+    </tbody>
+  </table>
+  <div class="fn">Difficulty (KD) is on a 0–100 scale: <span class="kd p-g">0–39</span> easier, <span class="kd p-a">40–69</span> moderate, <span class="kd p-r">70+</span> hard. Volumes are average monthly searches; global volume is the total across all countries. CPC is what advertisers pay per click on Google Ads — a signal of buyer intent.</div>
+</div></section>
+
+<!-- 05 RECOMMENDED KEYWORDS -->
+<section class="sheet"><div class="content">
+  <div class="eyebrow">05 · Recommended keywords</div>
+  <h2>{{stats.shortlisted}} keywords to choose from, grouped by topic</h2>
+  <p class="lead">Please choose {{stats.recommend}} of these for the campaign. Each group becomes one page (or set of pages) so the keywords support each other. Our recommendations are marked ★ and listed first in each group. The same list is in the Excel file, where you make your selection.</p>
+  {{#each clusters}}
+  <div class="grp">
+    <div class="gh"><div class="gt">{{inc @index}}. {{this.name}}</div><div class="gm">{{this.count}} keywords · {{this.recommended}} recommended · {{this.volLabel}}</div></div>
+    {{#if this.intro}}<div class="gi">{{this.intro}}{{#if this.targetPage}} <b>Target page:</b> {{this.targetPage}}{{/if}}</div>{{/if}}
+    <table class="ktbl">
+      <thead><tr><th></th><th>Keyword</th><th class="num">Global vol.</th><th class="num">US vol.</th><th class="num">KD</th><th class="num">CPC</th><th>Priority</th></tr></thead>
+      <tbody>{{#each this.rows}}<tr{{#if this.star}} class="rec"{{/if}}><td class="star">{{#if this.star}}★{{/if}}</td><td>{{this.kw}}</td><td class="num">{{this.globalVol}}</td><td class="num">{{this.usVol}}</td><td class="num"><span class="kd {{this.kdPill}}">{{this.kd}}</span></td><td class="num">{{this.cpc}}</td><td><span class="pill pri">{{this.priority}}</span></td></tr>{{/each}}</tbody>
+    </table>
+  </div>
+  {{/each}}
+  <div class="src">★ = Qtonix recommendation. KD = keyword difficulty (0–100). P1 = target first, P3 = long-term.</div>
+</div></section>
+
+<!-- 06 PAGE PLAN -->
+<section class="sheet"><div class="content">
+  <div class="eyebrow">06 · Keyword-to-page plan</div>
+  <h2>Where each keyword will live on the website</h2>
+  <p class="lead">One main keyword per page keeps Google clear about what each page is for.</p>
+  <table>
+    <thead><tr><th>Page</th><th>Main keyword</th><th>Topic group</th></tr></thead>
+    <tbody>{{#each pagePlan}}<tr><td><b>{{this.page}}</b></td><td>{{this.mainKeyword}}</td><td>{{this.cluster}}</td></tr>{{/each}}</tbody>
+  </table>
+</div></section>
+
+<!-- 07 AI SEO / GEO -->
+<section class="sheet"><div class="content">
+  <div class="eyebrow">07 · AI SEO (GEO)</div>
+  <h2>Questions to target in AI search</h2>
+  <p class="lead">{{{geo.intro}}}</p>
+  <table>
+    <thead><tr><th>Question asked to AI assistants</th><th>Type</th><th>Where we answer it</th></tr></thead>
+    <tbody>{{#each geo.questions}}<tr><td>{{this.q}}</td><td><span class="pill {{#if (eq this.type "Real AI prompt")}}p-g{{else}}p-a{{/if}}">{{this.type}}</span></td><td>{{this.where}}</td></tr>{{/each}}</tbody>
+  </table>
+  <div class="fn">“Real AI prompt” = a question AI assistants are already answering with tool recommendations. “Target prompt” = a high-value question we will target based on {{cover.client}}'s features.</div>
+</div></section>
+
+<!-- 08 READINESS -->
+<section class="sheet"><div class="content">
+  <div class="eyebrow">08 · Before the keywords can work</div>
+  <h2>Website readiness</h2>
+  <p class="lead">{{{readiness.intro}}}</p>
+  <table>
+    <thead><tr><th>What we found</th><th>Why it matters</th><th>What Qtonix will do</th></tr></thead>
+    <tbody>{{#each readiness.rows}}<tr><td><b>{{this.found}}</b></td><td>{{this.why}}</td><td>{{this.fix}}</td></tr>{{/each}}</tbody>
+  </table>
+</div></section>
+
+<!-- 09 NEXT STEPS -->
+<section class="sheet"><div class="content">
+  <div class="eyebrow">09 · Next steps</div>
+  <h2>How we will put these keywords to work</h2>
+  <ol class="steps">
+    <li><b>Choose your keywords.</b> In the Excel file, set “Your selection” to Selected for your chosen keywords.</li>
+    <li><b>Final sign-off.</b> We confirm the target page for each keyword and lock the list for tracking.</li>
+    <li><b>Technical set-up (weeks 1–2).</b> Qtonix fixes the readiness items, sets up Search Console and adds structured data.</li>
+    <li><b>Page optimisation (weeks 2–6).</b> We write and publish the optimised pages for each topic group.</li>
+    <li><b>Content &amp; AI SEO (month 2+).</b> Guides that answer the AI questions in section 07, plus comparison articles.</li>
+    <li><b>Monthly reporting.</b> Rankings, traffic and AI-assistant mentions, reviewed with you every month.</li>
+  </ol>
+  <div class="panel"><h4>Ready to start?</h4><div class="note">Once you approve the keyword list, we begin the website set-up within 7 working days and share progress every month.</div></div>
+  <h3 style="margin-top:8mm">Qtonix<span style="color:var(--orange)">.</span></h3>
+  <p style="font-size:9.4pt;color:var(--muted)">{{cover.preparedBy}} · {{cover.preparedByRole}}<br>Qtonix Software Pvt. Ltd.</p>
+</div></section>
+
+</body></html>
