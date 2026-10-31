@@ -527,13 +527,15 @@ function buildNotes(marketShort, dataMonth, reviewDate, stronghold) {
   };
 }
 
-// ---- the narrative: generated in THREE focused, resilient Claude calls -------
-// A single 8k-token JSON call was all-or-nothing: one malformed character made
-// the whole report drop to the generic fallback (which is what produced the thin
-// WebFx report). Splitting into three smaller, section-grouped calls means each
-// returns a small, reliably-parseable JSON, and a failure in one group only
-// degrades that group — the rest stay rich. Numbers are code-owned, so the
-// narrative can't invent figures regardless.
+// ---- the narrative: generated in FOUR focused, resilient Claude calls --------
+// A single big JSON call was all-or-nothing: one malformed character made the
+// whole report drop to the generic fallback. We split into section-grouped calls
+// so each returns a small, reliably-parseable JSON and a failure in one group
+// only degrades that group. The opening (A) was still the heaviest and, for
+// large competitors, half-parsed — silently dropping the exec findings and the
+// who-is table — so it is now TWO calls (A1 cover+exec, A2 who+scorecard+back),
+// and the two highest-value sections auto-retry once if they come back thin.
+// Numbers are code-owned, so the narrative can't invent figures regardless.
 const NARRATIVE_SYSTEM = [
   'You are a senior SEO strategist writing a detailed, client-facing competitor analysis for a digital agency (Qtonix). The reader is the CLIENT\'s owner or marketing lead — a smart business person, NOT an SEO. Write for them.',
   'You are given VERIFIED DATA: SE Ranking metrics plus a crawl of each website (title, meta description, H1s, schema types, social links, a body-text sample).',
@@ -593,23 +595,33 @@ async function generateNarrative(keys, data) {
   if (!anthropicKey && !openaiKey) { diag.result = 'no-ai-key'; return { vm: fallback, diag }; }
   const ctx = dataContext(data);
 
-  // --- Group A: cover + exec + who-is + scorecard callout + backlink framing ---
+  // --- Group A was the heaviest call (cover + exec + who + scorecard + back) and
+  // for large competitors its JSON overflowed/half-parsed, silently dropping the
+  // exec findings and the who-is table to fallback. Split into two smaller, more
+  // reliable calls: A1 (cover + exec) and A2 (who-is + scorecard + backlink). ---
   const keysObj = { anthropicKey, openaiKey };
-  const pA = callJson(keysObj, `${ctx}
+  const pA1 = callJson(keysObj, `${ctx}
 
-Write the opening + comparison sections. STRICT JSON:
+Write the cover + executive summary. STRICT JSON:
 {
  "cover":{"headlineHtml":"A SHORT, punchy editorial cover headline — a hook, NOT a description. Max 7 words total across up to 3 lines (use <br> between lines). Wrap ONE key phrase in <span>...</span> to colour it orange. Do NOT include the words 'competitor analysis', the market name, or the company names (those appear elsewhere on the cover). Think magazine cover line, e.g. 'Beating the filtration giant in search' or 'Winning the fryer-oil search market'."},
  "backCoverHeadlineHtml":"2-line closing headline; one phrase in <span>...</span>; <br> between lines",
  "sharedCount":<integer keywords both sites rank for; 0 if unknown/none>,
- "exec":{"title":"a VERDICT headline — a judgement with a consequence, not a description (e.g. 'X leads on visibility, but its lead sits on its own brand name — and that gap is closeable'). 8-16 words.","leadHtml":"2-3 sentences. State who leads and WHY, name the real limiting factor, and end with what the client should do. Use a quoted figure with its business meaning. <strong>/<em> ok.","kpiNotes":["ONE short line (max ~12 words) on what the ranking-keywords gap means","ONE short line on what the visits gap means","ONE short line on linking-websites","ONE short line on shared-keywords"],"findings":[{"n":"1","title":"Bold lead-in that states the finding as a claim.","bodyHtml":"KEEP IT SHORT — 2 to 3 sentences MAX, roughly 45 words. Quote the one key piece of evidence in double quotes, then its business consequence in a few words. Do not pile on multiple data points or caveats; one sharp point per finding. A reader should take it in at a glance.","impact":"High|Medium|Medium–High|Big opportunity|Opportunity|Info","pill":"p-r|p-a|p-g|p-n|p-o"}],"recommendation":"one-line recommendation — the single most important next move, stated as an instruction"},
+ "exec":{"title":"a VERDICT headline — a judgement with a consequence, not a description (e.g. 'X leads on visibility, but its lead sits on its own brand name — and that gap is closeable'). 8-16 words.","leadHtml":"2-3 sentences. State who leads and WHY, name the real limiting factor, and end with what the client should do. Use a quoted figure with its business meaning. <strong>/<em> ok.","kpiNotes":["ONE short line (max ~12 words) on what the ranking-keywords gap means","ONE short line on what the visits gap means","ONE short line on linking-websites","ONE short line on shared-keywords"],"findings":[{"n":"1","title":"Bold lead-in that states the finding as a claim.","bodyHtml":"KEEP IT SHORT — 2 to 3 sentences MAX, roughly 45 words. Quote the one key piece of evidence in double quotes, then its business consequence in a few words. Do not pile on multiple data points or caveats; one sharp point per finding. A reader should take it in at a glance.","impact":"High|Medium|Medium–High|Big opportunity|Opportunity|Info","pill":"p-r|p-a|p-g|p-n|p-o"}],"recommendation":"one-line recommendation — the single most important next move, stated as an instruction"}
+}
+Give EXACTLY 5 findings — this is required; never return fewer. Each is the kind of thing a sharp consultant would flag, QUOTING the real evidence (placeholder text, anchor text, title tags, review figures) in double quotes wherever you can.${data.primaryMarketNote ? ' IMPORTANT: ' + data.primaryMarketNote + ' Reflect this in the exec lead so the client is framed fairly.' : ''}`, 5000, diag, 'A1');
+
+  const pA2 = callJson(keysObj, `${ctx}
+
+Write the business comparison + scorecard framing + backlink framing. STRICT JSON:
+{
  "who":{"title":"headline","lead":"intro","rows":[{"label":"What they sell","compHtml":"quote the site's own wording where possible","clientHtml":"..."},{"label":"How customers buy","compHtml":"...","clientHtml":"..."},{"label":"Headline claim","compHtml":"quote the actual H1/hero claim in double quotes","clientHtml":"..."},{"label":"Positioning","compHtml":"...","clientHtml":"..."},{"label":"Proof & trust","compHtml":"name the actual certifications/awards/review figures found","clientHtml":"..."},{"label":"Website","compHtml":"...","clientHtml":"..."},{"label":"Social presence","compHtml":"...","clientHtml":"..."}],"compWins":["3-5 bullets — concrete, each tied to evidence"],"clientWins":["3-5 bullets"],"sideNote":"optional cross-site observation ONLY if genuinely relevant, else empty string"},
  "scorecard":{"title":"a VERDICT headline about who really leads (e.g. 'On raw numbers X leads — but the margin is smaller than it looks')","calloutTitle":"...","calloutBody":"2-3 sentences interpreting the gap: what the numbers mean for the business and why the leader's lead is or isn't solid. Not a restatement of the numbers."},
  "backlinkLead":"1-2 sentence plain-English intro to backlinks",
  "back":{"title":"backlink section headline","compPoints":["3-4 bullets on the competitor's link profile"],"clientPoints":["3-4 bullets on the client's link profile"],"risksTitle":"Risks worth reviewing OR empty string","risks":[{"risk":"...","detailHtml":"...","priority":"High|Medium","pill":"p-r|p-a"}]}
 }
-Give exactly 5 findings, each the kind of thing a sharp consultant would flag — and QUOTE the real evidence (placeholder text, anchor text, title tags, review figures) in double quotes wherever you can. Fill who-is rows ONLY from crawl evidence (use "—" where a site shows nothing). Make win-boxes specific to each business.
-BACKLINK CARE: "refdomainsByTld" counts referring domains by their web address ending (e.g. .ca as a TLD); "refdomainsByCountry" counts them by geographic location. These are DIFFERENT measures — never merge them into one "Canadian domains" number, and say which one you mean. For any suspicious anchor/TLD pattern, recommend a "backlink review" only — NEVER recommend disavowing links or name a count of domains to disavow, and never predict a penalty. Do not claim links were bought or are a link farm; say the pattern "is consistent with" low-quality links and "warrants review".${data.primaryMarketNote ? ' IMPORTANT: ' + data.primaryMarketNote + ' Reflect this in the exec lead and the scorecard callout so the client is framed fairly.' : ''}`, 8000, diag, 'A');
+Fill ALL 7 who-is rows from crawl evidence (use "—" ONLY where a site genuinely shows nothing) — never omit rows. Make win-boxes specific to each business.
+BACKLINK CARE: "refdomainsByTld" counts referring domains by their web address ending (e.g. .ca as a TLD); "refdomainsByCountry" counts them by geographic location. These are DIFFERENT measures — never merge them into one "Canadian domains" number, and say which one you mean. For any suspicious anchor/TLD pattern, recommend a "backlink review" only — NEVER recommend disavowing links or name a count of domains to disavow, and never predict a penalty. Do not claim links were bought or are a link farm; say the pattern "is consistent with" low-quality links and "warrants review".${data.primaryMarketNote ? ' IMPORTANT: ' + data.primaryMarketNote + ' Reflect this in the scorecard callout so the client is framed fairly.' : ''}`, 6000, diag, 'A2');
 
   // --- Group B: competitor keywords + client keyword health + opportunity map ---
   const pB = callJson(keysObj, `${ctx}
@@ -633,14 +645,44 @@ Write the website review + SWOT. STRICT JSON:
 Base every tech row on actual crawl evidence (title/meta/h1s/body/social) and QUOTE the specific string you saw in double quotes in the "sawHtml". Keep each "sawHtml" to 1-2 sentences ending with WHY it matters. Include a "What's working"/Strength row for the client when the evidence supports it.
 SWOT: give EXACTLY 4 bullets per box, and keep each bullet to ONE short line (max ~18 words) — a single sharp point, not a paragraph. Pick the 4 most important; do not pad. Strengths/weaknesses describe the COMPETITOR; opportunities/threats describe what that means for the CLIENT. The title headline must be ONE short line, not multiple.`, 6000, diag, 'C');
 
-  const [A, B, C] = await Promise.all([pA, pB, pC]);
+  let [A1, A2, B, C] = await Promise.all([pA1, pA2, pB, pC]);
+
+  // Per-section recovery: if a critical section came back missing or thin (which
+  // is what silently produced a generic exec/who for large competitors), retry
+  // just that one call once. Cheap insurance against an occasional bad parse.
+  const execThin = (x) => !x || !x.exec || !Array.isArray(x.exec.findings) || x.exec.findings.length < 3;
+  const whoThin = (x) => !x || !x.who || !Array.isArray(x.who.rows) || x.who.rows.length < 4;
+  if (execThin(A1)) {
+    diag.A1_retry = diag.A1; // record the first-attempt status
+    const retry = await callJson(keysObj, `${ctx}
+
+Return ONLY the executive summary as STRICT JSON (this is a retry — be concise and valid):
+{"cover":{"headlineHtml":"short hook, one <span>phrase</span>, <br> between up to 3 lines, no company names"},"backCoverHeadlineHtml":"2-line closing headline, one <span>phrase</span>","sharedCount":<int>,"exec":{"title":"verdict headline 8-16 words","leadHtml":"2-3 sentences","kpiNotes":["~12 words","~12 words","~12 words","~12 words"],"findings":[{"n":"1","title":"Bold claim.","bodyHtml":"2-3 sentences, quote one piece of evidence","impact":"High","pill":"p-r"}],"recommendation":"one line"}}
+EXACTLY 5 findings. Quote real evidence in double quotes.`, 5000, diag, 'A1');
+    if (!execThin(retry)) A1 = retry;
+  }
+  if (whoThin(A2)) {
+    diag.A2_retry = diag.A2;
+    const retry = await callJson(keysObj, `${ctx}
+
+Return ONLY the business comparison as STRICT JSON (this is a retry — be concise and valid):
+{"who":{"title":"headline","lead":"intro","rows":[{"label":"What they sell","compHtml":"...","clientHtml":"..."},{"label":"How customers buy","compHtml":"...","clientHtml":"..."},{"label":"Headline claim","compHtml":"...","clientHtml":"..."},{"label":"Positioning","compHtml":"...","clientHtml":"..."},{"label":"Proof & trust","compHtml":"...","clientHtml":"..."},{"label":"Website","compHtml":"...","clientHtml":"..."},{"label":"Social presence","compHtml":"...","clientHtml":"..."}],"compWins":["3-5 bullets"],"clientWins":["3-5 bullets"],"sideNote":""}}
+Fill ALL 7 rows from crawl evidence (use "—" only where truly empty).`, 5000, diag, 'A2');
+    if (!whoThin(retry)) A2 = retry;
+  }
+
   // Merge each group onto the fallback independently, so a failed group only
   // falls back for its own sections.
   let vm = fallback;
-  if (A) vm = mergeNarrative(vm, A);
+  if (A1) vm = mergeNarrative(vm, A1);
+  if (A2) vm = mergeNarrative(vm, A2);
   if (B) vm = mergeNarrative(vm, B);
   if (C) vm = mergeNarrative(vm, C);
-  diag.result = (A || B || C) ? 'ai' : 'all-fallback';
+  diag.result = (A1 || A2 || B || C) ? 'ai' : 'all-fallback';
+  // Flag any critical section still thin after retry, so the diagnostic chip
+  // shows it rather than the report silently shipping a generic section.
+  if (execThin(A1)) diag.execFallback = true;
+  if (whoThin(A2)) diag.whoFallback = true;
   return { vm, diag };
 }
 

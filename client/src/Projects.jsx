@@ -207,14 +207,19 @@ function PreSeoReports({ onBackTab }) {
   const aiDiagChip = (r) => {
     if (!isComp(r) || !r.aiDiag) return null;
     const d = r.aiDiag;
-    const groups = ['A', 'B', 'C'].map((g) => d[g]).filter(Boolean);
-    const allOk = groups.length === 3 && groups.every((x) => x === 'ok');
+    // Support both the new split labels (A1/A2) and older reports (A).
+    const labels = (d.A1 || d.A2) ? ['A1', 'A2', 'B', 'C'] : ['A', 'B', 'C'];
+    const groups = labels.map((g) => d[g]).filter(Boolean);
+    const sectionFellBack = d.execFallback || d.whoFallback;
+    const allOk = groups.length === labels.length && groups.every((x) => x === 'ok') && !sectionFellBack;
     const anyOk = groups.some((x) => x === 'ok');
     const bg = allOk ? '#ecfdf3' : anyOk ? '#fff7ed' : '#fef2f2';
     const fg = allOk ? '#16a34a' : anyOk ? '#c2410c' : '#b91c1c';
     const label = allOk ? 'AI ✓' : anyOk ? 'AI partial' : (d.result === 'no-ai-key' ? 'No AI key' : 'AI failed');
     // Full reason for the hover title.
-    const reason = `result=${d.result || '?'} · claudeKey=${d.hasAnthropicKey ? 'yes' : 'no'} · openaiKey=${d.hasOpenaiKey ? 'yes' : 'no'}\nA=${d.A || '-'}\nB=${d.B || '-'}\nC=${d.C || '-'}`;
+    const gLines = labels.map((g) => `${g}=${d[g] || '-'}`).join('\n');
+    const fb = [d.execFallback ? 'exec=fallback' : '', d.whoFallback ? 'who=fallback' : ''].filter(Boolean).join(' · ');
+    const reason = `result=${d.result || '?'} · claudeKey=${d.hasAnthropicKey ? 'yes' : 'no'} · openaiKey=${d.hasOpenaiKey ? 'yes' : 'no'}\n${gLines}${fb ? '\n' + fb : ''}`;
     return <span title={reason} className="text-[9.5px] font-bold rounded px-1.5 py-0.5 cursor-help" style={{ background: bg, color: fg }}>{label}</span>;
   };
   // Status cell: live progress while building, pill otherwise.
